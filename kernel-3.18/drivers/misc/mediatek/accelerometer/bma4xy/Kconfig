@@ -1,0 +1,7 @@
+#
+# Makefile for Bosch sensors driver.
+#
+
+config MTK_BMA4XY
+	bool "MTK_BMA4XY for MediaTek package"
+	default n

@@ -1,0 +1,8 @@
+#
+# Near Field Communication (NFC) devices
+#
+config HUAWEI_HW_I2C_DCT
+	bool "huawei hw dev dct"
+	default n
+	help
+	  Say yes if you want i2c device detect driver.
