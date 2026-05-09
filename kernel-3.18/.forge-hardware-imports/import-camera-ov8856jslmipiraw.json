@@ -1,0 +1,39 @@
+{
+  "component": {
+    "aliases": [
+      "ov8856jslmipiraw",
+      "ov8856jslmipi",
+      "ov8856jsl",
+      "ov8856"
+    ],
+    "bus": null,
+    "domain": "camera",
+    "name": "ov8856jslmipiraw",
+    "raw": "ov8856jslmipiraw",
+    "role": "sensor",
+    "target_paths": [
+      "drivers/misc/mediatek/imgsensor",
+      "drivers/media",
+      "arch/*/boot/dts"
+    ]
+  },
+  "copied_files": [
+    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856_otp.c",
+    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856mipiraw_Sensor.h",
+    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856mipiraw_Sensor.c",
+    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/Makefile"
+  ],
+  "key": "import:camera:ov8856jslmipiraw",
+  "kind": "kernel_hardware_candidate_import",
+  "next_steps": [
+    "review imported source for branch API drift before Kbuild registration",
+    "add Kconfig/Makefile or MTK driver-list registration in a separate commit",
+    "wire DTS/board data from stock bus/address evidence",
+    "run kernel defconfig/module build before enabling full ROM build"
+  ],
+  "source_path": "/srv/forge/work/kernel-driver-sources/ov8856jslmipiraw/SnowCat6-DOOGEE-kernel-3.18-d58aaff41f5839311e2f2acfafe35365e6e1a72e-drivers-misc-mediatek-imgsensor-src-mt6755-ov8856_mipi_raw/drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw",
+  "source_root": "/srv/forge/work/kernel-driver-sources/ov8856jslmipiraw/SnowCat6-DOOGEE-kernel-3.18-d58aaff41f5839311e2f2acfafe35365e6e1a72e-drivers-misc-mediatek-imgsensor-src-mt6755-ov8856_mipi_raw/drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw",
+  "target_base": "drivers/misc/mediatek/imgsensor/src/mt6755",
+  "updated_at": "2026-05-09T17:37:38.301577+00:00",
+  "version": 1
+}
