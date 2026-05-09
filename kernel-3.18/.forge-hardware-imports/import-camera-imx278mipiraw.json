@@ -1,0 +1,37 @@
+{
+  "component": {
+    "aliases": [
+      "imx278mipiraw",
+      "imx278mipi",
+      "imx278"
+    ],
+    "bus": null,
+    "domain": "camera",
+    "name": "imx278mipiraw",
+    "raw": "imx278mipiraw",
+    "role": "sensor",
+    "target_paths": [
+      "drivers/misc/mediatek/imgsensor",
+      "drivers/media",
+      "arch/*/boot/dts"
+    ]
+  },
+  "copied_files": [
+    "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/imx278mipiraw_Sensor.c",
+    "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/imx278mipiraw_Sensor.h",
+    "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/Makefile"
+  ],
+  "key": "import:camera:imx278mipiraw",
+  "kind": "kernel_hardware_candidate_import",
+  "next_steps": [
+    "review imported source for branch API drift before Kbuild registration",
+    "add Kconfig/Makefile or MTK driver-list registration in a separate commit",
+    "wire DTS/board data from stock bus/address evidence",
+    "run kernel defconfig/module build before enabling full ROM build"
+  ],
+  "source_path": "/srv/forge/work/kernel-driver-sources/imx278mipiraw/ulefoneofficial-ulefone-Metal-master-drivers-misc-mediatek-imgsensor-src-mt6753-imx278_mipi_raw/drivers/misc/mediatek/imgsensor/src/mt6753/imx278_mipi_raw",
+  "source_root": "/srv/forge/work/kernel-driver-sources/imx278mipiraw/ulefoneofficial-ulefone-Metal-master-drivers-misc-mediatek-imgsensor-src-mt6753-imx278_mipi_raw/drivers/misc/mediatek/imgsensor/src/mt6753/imx278_mipi_raw",
+  "target_base": "drivers/misc/mediatek/imgsensor/src/mt6755",
+  "updated_at": "2026-05-09T17:35:36.687594+00:00",
+  "version": 1
+}

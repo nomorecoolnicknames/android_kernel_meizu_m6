@@ -1,0 +1,40 @@
+{
+  "component": {
+    "aliases": [
+      "imx278mipiraw",
+      "imx278mipi",
+      "imx278"
+    ],
+    "bus": null,
+    "domain": "camera",
+    "name": "imx278mipiraw",
+    "raw": "imx278mipiraw",
+    "role": "sensor",
+    "target_paths": [
+      "drivers/misc/mediatek/imgsensor",
+      "drivers/media",
+      "arch/*/boot/dts"
+    ]
+  },
+  "defconfigs_changed": [
+    "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
+  ],
+  "driver_names": [
+    "imx278_mipi_raw"
+  ],
+  "kd_sensorlist_status": "needs_symbol_review",
+  "key": "import:camera:imx278mipiraw",
+  "kind": "kernel_hardware_registration",
+  "mode": "imgsensor_config",
+  "next_steps": [
+    "verify kd_sensorlist.c/kd_imgsensor.h has sensor ID/name and SensorInit symbol",
+    "verify camera power sequence and I2C channel from stock DTS/logs",
+    "run kernel build; missing SensorInit symbols mean kd_sensorlist registration must be patched"
+  ],
+  "source_files": [
+    "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/imx278mipiraw_Sensor.c",
+    "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/imx278mipiraw_Sensor.h"
+  ],
+  "updated_at": "2026-05-09T17:35:36.715042+00:00",
+  "version": 1
+}
