@@ -3,16 +3,22 @@
     "grep in local kernel tree finds the selected hardware alias in source files",
     "Kconfig/Makefile or MTK table references the selected source",
     "defconfig enables the required option or board list entry",
-    "DTS/board data matches stock bus/address/regulator evidence",
-    "LCM candidate appears in backend scan and CONFIG_CUSTOM_KERNEL_LCM points to it"
+    "DTS/board data matches stock bus/address/regulator evidence"
   ],
   "candidate_sources": [],
   "checks": [
     {
-      "detail": "no source file matched hardware aliases",
-      "files": [],
+      "detail": "driver-like source references found",
+      "files": [
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Kconfig",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Makefile",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.h",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.c",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/cust_alsps_ltr559.h",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/sensor_dts.h"
+      ],
       "name": "source_files",
-      "status": "missing"
+      "status": "pass"
     },
     {
       "detail": "defconfig enablement not proven",
@@ -27,38 +33,38 @@
       "status": "missing"
     },
     {
-      "detail": "Kbuild registration needs verification",
-      "files": [],
+      "detail": "Kconfig/Makefile references matched files",
+      "files": [
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Makefile",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Kconfig"
+      ],
       "name": "kbuild_refs",
-      "status": "missing"
-    },
-    {
-      "detail": "LCM table registration not proven",
-      "files": [],
-      "name": "lcm_table_refs",
-      "status": "missing"
+      "status": "pass"
     }
   ],
   "component": {
     "aliases": [
-      "ili9881p-hd-dsi-txd",
-      "ili9881p_hd_dsi_txd"
+      "ltr578"
     ],
-    "bus": null,
-    "domain": "display",
-    "name": "ili9881p_hd_dsi_txd",
-    "raw": "ili9881p_hd_dsi_txd",
-    "role": "lcm",
+    "bus": {
+      "address": "0x0053",
+      "bus": 1,
+      "type": "i2c"
+    },
+    "domain": "sensors",
+    "name": "ltr578",
+    "raw": "ltr578, i2c 1-0053",
+    "role": "alsps",
     "target_paths": [
-      "drivers/misc/mediatek/lcm",
-      "drivers/gpu/drm",
-      "arch/*/boot/dts",
-      "arch/*/configs"
+      "drivers/misc/mediatek/sensors",
+      "drivers/iio",
+      "drivers/input",
+      "arch/*/boot/dts"
     ]
   },
-  "key": "import:display:ili9881p_hd_dsi_txd",
+  "key": "register:sensors:ltr578",
   "kind": "kernel_hardware_work_item_task",
-  "mode": "import_driver_source",
+  "mode": "verify_driver_registration",
   "policy": "This is an executable adaptation task for the local kernel tree. Donor repos are sources only; source changes must happen in this worktree and be committed separately.",
   "profile_context": {
     "boot": {
@@ -92,9 +98,9 @@
       "blocked": 0,
       "found": 9,
       "info": 0,
-      "missing": 4,
+      "missing": 0,
       "needs_evidence": 0,
-      "partial": 0,
+      "partial": 4,
       "total": 13
     },
     "kernel_tree": {
@@ -105,30 +111,24 @@
     },
     "platform": "MT6755"
   },
-  "reason": "no alias matched in kernel source",
-  "search_queries": [
-    "ili9881p-hd-dsi-txd mt6755 android kernel driver",
-    "ili9881p-hd-dsi-txd drivers/misc/mediatek mt6755",
-    "ili9881p_hd_dsi_txd mt6755 android kernel driver",
-    "ili9881p_hd_dsi_txd drivers/misc/mediatek mt6755",
-    "ili9881p-hd-dsi-txd MTK_LCM_Collection"
-  ],
+  "reason": null,
+  "search_queries": [],
   "source_steps": [
-    "Use search_queries to find a same-kernel-generation display driver for ili9881p_hd_dsi_txd.",
+    "Use search_queries to find a same-kernel-generation sensors driver for ltr578.",
     "Copy source into one of target_paths inside this local kernel tree; do not build from donor path directly.",
     "Register source in nearby Makefile/Kconfig or MTK driver list.",
     "Enable required config in selected defconfig.",
-    "Register DTS/board data only after stock bus/address/irq/regulator evidence exists."
+    "Register DTS/board data with stock bus evidence: {\"address\": \"0x0053\", \"bus\": 1, \"type\": \"i2c\"}."
   ],
-  "summary": "import task prepared for missing kernel driver ili9881p_hd_dsi_txd",
+  "summary": "registration verification task prepared for ltr578",
   "target_paths": [
-    "drivers/misc/mediatek/lcm",
-    "drivers/gpu/drm",
-    "arch/*/boot/dts",
-    "arch/*/configs"
+    "drivers/misc/mediatek/sensors",
+    "drivers/iio",
+    "drivers/input",
+    "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T16:21:27.878723+00:00",
+  "updated_at": "2026-05-09T19:21:39.088812+00:00",
   "version": 1,
-  "work_item_kind": "driver_import_candidate",
-  "work_item_status": "blocked"
+  "work_item_kind": "driver_registration_check",
+  "work_item_status": "action"
 }

@@ -10,16 +10,22 @@
     {
       "detail": "driver-like source references found",
       "files": [
-        "drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h"
+        "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/imx278mipiraw_Sensor.c",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/imx278mipiraw_Sensor.h",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/Makefile",
+        "drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h",
+        "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
       ],
       "name": "source_files",
       "status": "pass"
     },
     {
-      "detail": "defconfig enablement not proven",
-      "files": [],
+      "detail": "defconfig references hardware alias",
+      "files": [
+        "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
+      ],
       "name": "defconfig_refs",
-      "status": "missing"
+      "status": "pass"
     },
     {
       "detail": "DTS bus/address binding not proven",
@@ -28,16 +34,21 @@
       "status": "missing"
     },
     {
-      "detail": "Kbuild registration needs verification",
-      "files": [],
+      "detail": "Kconfig/Makefile references matched files",
+      "files": [
+        "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/Makefile",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/Makefile",
+        "arch/arm64/Makefile",
+        "arch/arm64/Kconfig"
+      ],
       "name": "kbuild_refs",
-      "status": "warn"
+      "status": "pass"
     }
   ],
   "component": {
     "aliases": [
-      "imx278",
       "imx278mipi",
+      "imx278",
       "imx278mipiraw"
     ],
     "bus": null,
@@ -87,9 +98,9 @@
       "blocked": 0,
       "found": 9,
       "info": 0,
-      "missing": 4,
+      "missing": 0,
       "needs_evidence": 0,
-      "partial": 0,
+      "partial": 4,
       "total": 13
     },
     "kernel_tree": {
@@ -115,7 +126,7 @@
     "drivers/media",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T16:24:49.229309+00:00",
+  "updated_at": "2026-05-09T19:21:39.910471+00:00",
   "version": 1,
   "work_item_kind": "config_dts_check",
   "work_item_status": "verify"

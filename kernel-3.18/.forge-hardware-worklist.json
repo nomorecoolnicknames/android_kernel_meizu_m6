@@ -5,9 +5,9 @@
     "blocked": 0,
     "found": 9,
     "info": 0,
-    "missing": 4,
+    "missing": 0,
     "needs_evidence": 0,
-    "partial": 0,
+    "partial": 4,
     "total": 13
   },
   "kernel_tree": {
@@ -49,8 +49,8 @@
     "components": [
       {
         "aliases": [
-          "ili9881p-hd-dsi-txd",
-          "ili9881p_hd_dsi_txd"
+          "ili9881p_hd_dsi_txd",
+          "ili9881p-hd-dsi-txd"
         ],
         "bus": null,
         "domain": "display",
@@ -145,8 +145,8 @@
       },
       {
         "aliases": [
-          "imx278",
           "imx278mipi",
+          "imx278",
           "imx278mipiraw"
         ],
         "bus": null,
@@ -162,10 +162,10 @@
       },
       {
         "aliases": [
+          "ov8856jslmipiraw",
           "ov8856jsl",
           "ov8856",
-          "ov8856jslmipi",
-          "ov8856jslmipiraw"
+          "ov8856jslmipi"
         ],
         "bus": null,
         "domain": "camera",
@@ -257,8 +257,8 @@
       },
       {
         "aliases": [
-          "sunwave_fp",
-          "sunwave-fp"
+          "sunwave-fp",
+          "sunwave_fp"
         ],
         "bus": null,
         "domain": "input",
@@ -354,14 +354,14 @@
       "snapshot": true
     }
   },
-  "updated_at": "2026-05-09T16:20:37.602674+00:00",
+  "updated_at": "2026-05-09T19:21:38.570956+00:00",
   "version": 1,
   "work_items": [
     {
       "component": {
         "aliases": [
-          "ili9881p-hd-dsi-txd",
-          "ili9881p_hd_dsi_txd"
+          "ili9881p_hd_dsi_txd",
+          "ili9881p-hd-dsi-txd"
         ],
         "bus": null,
         "domain": "display",
@@ -375,25 +375,21 @@
           "arch/*/configs"
         ]
       },
-      "key": "import:display:ili9881p_hd_dsi_txd",
-      "kind": "driver_import_candidate",
-      "next_action": "Search compatible driver source, stage into local kernel tree, then register DTS/config.",
-      "reason": "no alias matched in kernel source",
-      "search_queries": [
-        "ili9881p-hd-dsi-txd mt6755 android kernel driver",
-        "ili9881p-hd-dsi-txd drivers/misc/mediatek mt6755",
-        "ili9881p_hd_dsi_txd mt6755 android kernel driver",
-        "ili9881p_hd_dsi_txd drivers/misc/mediatek mt6755",
-        "ili9881p-hd-dsi-txd MTK_LCM_Collection"
+      "files": [
+        "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs/ili9881c_hd_dsi_vdo_ilitek_nt50358/Makefile",
+        "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs/ili9881c_hd_dsi_vdo_ilitek_nt50358/ili9881c_hd_dsi_vdo_ilitek_nt50358.c"
       ],
-      "status": "blocked",
+      "key": "register:display:ili9881p_hd_dsi_txd",
+      "kind": "driver_registration_check",
+      "next_action": "Verify source file, defconfig, driver table and DTS binding point.",
+      "status": "action",
       "target_paths": [
         "drivers/misc/mediatek/lcm",
         "drivers/gpu/drm",
         "arch/*/boot/dts",
         "arch/*/configs"
       ],
-      "title": "Find/import ili9881p_hd_dsi_txd"
+      "title": "Register/verify ili9881p_hd_dsi_txd"
     },
     {
       "component": {
@@ -417,25 +413,20 @@
           "arch/*/boot/dts"
         ]
       },
-      "key": "import:camera:leds-AW3643",
-      "kind": "driver_import_candidate",
-      "next_action": "Search compatible driver source, stage into local kernel tree, then register DTS/config.",
-      "reason": "no alias matched in kernel source",
-      "search_queries": [
-        "aw3643 mt6755 android kernel driver",
-        "aw3643 drivers/misc/mediatek mt6755",
-        "leds_aw3643 mt6755 android kernel driver",
-        "leds_aw3643 drivers/misc/mediatek mt6755",
-        "leds-aw3643 mt6755 android kernel driver",
-        "leds-aw3643 drivers/misc/mediatek mt6755"
+      "files": [
+        "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383/constant_flashlight/Makefile",
+        "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383/constant_flashlight/leds_strobe.c"
       ],
-      "status": "blocked",
+      "key": "register:camera:leds-AW3643",
+      "kind": "driver_registration_check",
+      "next_action": "Verify source file, defconfig, driver table and DTS binding point.",
+      "status": "action",
       "target_paths": [
         "drivers/misc/mediatek/imgsensor",
         "drivers/media",
         "arch/*/boot/dts"
       ],
-      "title": "Find/import leds-AW3643"
+      "title": "Register/verify leds-AW3643"
     },
     {
       "component": {
@@ -458,30 +449,33 @@
           "arch/*/boot/dts"
         ]
       },
-      "key": "import:sensors:ltr578",
-      "kind": "driver_import_candidate",
-      "next_action": "Search compatible driver source, stage into local kernel tree, then register DTS/config.",
-      "reason": "no alias matched in kernel source",
-      "search_queries": [
-        "ltr578 mt6755 android kernel driver",
-        "ltr578 drivers/misc/mediatek mt6755"
+      "files": [
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Kconfig",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Makefile",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.h",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.c",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/cust_alsps_ltr559.h",
+        "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/sensor_dts.h"
       ],
-      "status": "blocked",
+      "key": "register:sensors:ltr578",
+      "kind": "driver_registration_check",
+      "next_action": "Verify source file, defconfig, driver table and DTS binding point.",
+      "status": "action",
       "target_paths": [
         "drivers/misc/mediatek/sensors",
         "drivers/iio",
         "drivers/input",
         "arch/*/boot/dts"
       ],
-      "title": "Find/import ltr578"
+      "title": "Register/verify ltr578"
     },
     {
       "component": {
         "aliases": [
+          "ov8856jslmipiraw",
           "ov8856jsl",
           "ov8856",
-          "ov8856jslmipi",
-          "ov8856jslmipiraw"
+          "ov8856jslmipi"
         ],
         "bus": null,
         "domain": "camera",
@@ -494,25 +488,23 @@
           "arch/*/boot/dts"
         ]
       },
-      "key": "import:camera:ov8856jslmipiraw",
-      "kind": "driver_import_candidate",
-      "next_action": "Search compatible driver source, stage into local kernel tree, then register DTS/config.",
-      "reason": "no alias matched in kernel source",
-      "search_queries": [
-        "ov8856jsl mt6755 android kernel driver",
-        "ov8856jsl drivers/misc/mediatek mt6755",
-        "ov8856 mt6755 android kernel driver",
-        "ov8856 drivers/misc/mediatek mt6755",
-        "ov8856jslmipi mt6755 android kernel driver",
-        "ov8856jslmipi drivers/misc/mediatek mt6755"
+      "files": [
+        "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856_otp.c",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856mipiraw_Sensor.h",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856mipiraw_Sensor.c",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/Makefile",
+        "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
       ],
-      "status": "blocked",
+      "key": "register:camera:ov8856jslmipiraw",
+      "kind": "driver_registration_check",
+      "next_action": "Verify source file, defconfig, driver table and DTS binding point.",
+      "status": "action",
       "target_paths": [
         "drivers/misc/mediatek/imgsensor",
         "drivers/media",
         "arch/*/boot/dts"
       ],
-      "title": "Find/import ov8856jslmipiraw"
+      "title": "Register/verify ov8856jslmipiraw"
     },
     {
       "component": {
@@ -581,6 +573,9 @@
         ]
       },
       "files": [
+        "drivers/misc/mediatek/power/mt6755/Makefile",
+        "drivers/misc/mediatek/power/mt6755/bq24157/bq24157_charger.c",
+        "drivers/misc/mediatek/power/mt6755/bq24157/bq24157.dtsi",
         "drivers/misc/mediatek/include/mt-plat/mt6755/include/mach/mt_charging.h",
         "drivers/power/mediatek/Makefile"
       ],
@@ -640,8 +635,8 @@
     {
       "component": {
         "aliases": [
-          "imx278",
           "imx278mipi",
+          "imx278",
           "imx278mipiraw"
         ],
         "bus": null,
@@ -656,7 +651,11 @@
         ]
       },
       "files": [
-        "drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h"
+        "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/imx278mipiraw_Sensor.c",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/imx278mipiraw_Sensor.h",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/Makefile",
+        "drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h",
+        "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
       ],
       "key": "verify:camera:imx278mipiraw",
       "kind": "config_dts_check",
@@ -764,8 +763,8 @@
     {
       "component": {
         "aliases": [
-          "sunwave_fp",
-          "sunwave-fp"
+          "sunwave-fp",
+          "sunwave_fp"
         ],
         "bus": null,
         "domain": "input",
@@ -779,8 +778,8 @@
         ]
       },
       "files": [
-        "drivers/input/fingerprint/gn_w_sunwave/Makefile",
         "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.c",
+        "drivers/input/fingerprint/gn_w_sunwave/Makefile",
         "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.h"
       ],
       "key": "verify:input:sunwave-fp",

@@ -114,9 +114,9 @@
       "blocked": 0,
       "found": 9,
       "info": 0,
-      "missing": 4,
+      "missing": 0,
       "needs_evidence": 0,
-      "partial": 0,
+      "partial": 4,
       "total": 13
     },
     "kernel_tree": {
@@ -142,7 +142,7 @@
     "drivers/misc/mediatek/power",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T16:24:49.677467+00:00",
+  "updated_at": "2026-05-09T19:21:40.362392+00:00",
   "version": 1,
   "work_item_kind": "config_dts_check",
   "work_item_status": "verify"

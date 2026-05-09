@@ -10,6 +10,9 @@
     {
       "detail": "driver-like source references found",
       "files": [
+        "drivers/misc/mediatek/power/mt6755/Makefile",
+        "drivers/misc/mediatek/power/mt6755/bq24157/bq24157_charger.c",
+        "drivers/misc/mediatek/power/mt6755/bq24157/bq24157.dtsi",
         "drivers/misc/mediatek/include/mt-plat/mt6755/include/mach/mt_charging.h",
         "drivers/power/mediatek/Makefile"
       ],
@@ -31,6 +34,7 @@
     {
       "detail": "Kconfig/Makefile references matched files",
       "files": [
+        "drivers/misc/mediatek/power/mt6755/Makefile",
         "drivers/power/mediatek/Makefile",
         "drivers/power/mediatek/Kconfig",
         "drivers/power/Makefile",
@@ -95,9 +99,9 @@
       "blocked": 0,
       "found": 9,
       "info": 0,
-      "missing": 4,
+      "missing": 0,
       "needs_evidence": 0,
-      "partial": 0,
+      "partial": 4,
       "total": 13
     },
     "kernel_tree": {
@@ -123,7 +127,7 @@
     "drivers/misc/mediatek/power",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T16:24:48.873394+00:00",
+  "updated_at": "2026-05-09T19:21:39.577280+00:00",
   "version": 1,
   "work_item_kind": "config_dts_check",
   "work_item_status": "verify"

@@ -8,16 +8,24 @@
   "candidate_sources": [],
   "checks": [
     {
-      "detail": "no source file matched hardware aliases",
-      "files": [],
+      "detail": "driver-like source references found",
+      "files": [
+        "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856_otp.c",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856mipiraw_Sensor.h",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856mipiraw_Sensor.c",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/Makefile",
+        "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
+      ],
       "name": "source_files",
-      "status": "missing"
+      "status": "pass"
     },
     {
-      "detail": "defconfig enablement not proven",
-      "files": [],
+      "detail": "defconfig references hardware alias",
+      "files": [
+        "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
+      ],
       "name": "defconfig_refs",
-      "status": "missing"
+      "status": "pass"
     },
     {
       "detail": "DTS bus/address binding not proven",
@@ -26,18 +34,22 @@
       "status": "missing"
     },
     {
-      "detail": "Kbuild registration needs verification",
-      "files": [],
+      "detail": "Kconfig/Makefile references matched files",
+      "files": [
+        "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/Makefile",
+        "drivers/misc/mediatek/imgsensor/src/mt6755/Makefile",
+        "arch/arm64/Makefile"
+      ],
       "name": "kbuild_refs",
-      "status": "missing"
+      "status": "pass"
     }
   ],
   "component": {
     "aliases": [
+      "ov8856jslmipiraw",
       "ov8856jsl",
       "ov8856",
-      "ov8856jslmipi",
-      "ov8856jslmipiraw"
+      "ov8856jslmipi"
     ],
     "bus": null,
     "domain": "camera",
@@ -50,9 +62,9 @@
       "arch/*/boot/dts"
     ]
   },
-  "key": "import:camera:ov8856jslmipiraw",
+  "key": "register:camera:ov8856jslmipiraw",
   "kind": "kernel_hardware_work_item_task",
-  "mode": "import_driver_source",
+  "mode": "verify_driver_registration",
   "policy": "This is an executable adaptation task for the local kernel tree. Donor repos are sources only; source changes must happen in this worktree and be committed separately.",
   "profile_context": {
     "boot": {
@@ -86,9 +98,9 @@
       "blocked": 0,
       "found": 9,
       "info": 0,
-      "missing": 4,
+      "missing": 0,
       "needs_evidence": 0,
-      "partial": 0,
+      "partial": 4,
       "total": 13
     },
     "kernel_tree": {
@@ -99,15 +111,8 @@
     },
     "platform": "MT6755"
   },
-  "reason": "no alias matched in kernel source",
-  "search_queries": [
-    "ov8856jsl mt6755 android kernel driver",
-    "ov8856jsl drivers/misc/mediatek mt6755",
-    "ov8856 mt6755 android kernel driver",
-    "ov8856 drivers/misc/mediatek mt6755",
-    "ov8856jslmipi mt6755 android kernel driver",
-    "ov8856jslmipi drivers/misc/mediatek mt6755"
-  ],
+  "reason": null,
+  "search_queries": [],
   "source_steps": [
     "Use search_queries to find a same-kernel-generation camera driver for ov8856jslmipiraw.",
     "Copy source into one of target_paths inside this local kernel tree; do not build from donor path directly.",
@@ -115,14 +120,14 @@
     "Enable required config in selected defconfig.",
     "Register DTS/board data only after stock bus/address/irq/regulator evidence exists."
   ],
-  "summary": "import task prepared for missing kernel driver ov8856jslmipiraw",
+  "summary": "registration verification task prepared for ov8856jslmipiraw",
   "target_paths": [
     "drivers/misc/mediatek/imgsensor",
     "drivers/media",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T16:24:48.693237+00:00",
+  "updated_at": "2026-05-09T19:21:39.400981+00:00",
   "version": 1,
-  "work_item_kind": "driver_import_candidate",
-  "work_item_status": "blocked"
+  "work_item_kind": "driver_registration_check",
+  "work_item_status": "action"
 }
