@@ -1,0 +1,42 @@
+{
+  "component": {
+    "aliases": [
+      "bq24157"
+    ],
+    "bus": {
+      "address": "0x006a",
+      "bus": 1,
+      "type": "i2c"
+    },
+    "domain": "power",
+    "name": "bq24157",
+    "raw": "bq24157, i2c 1-006a",
+    "role": "charger",
+    "target_paths": [
+      "drivers/power",
+      "drivers/misc/mediatek/power",
+      "arch/*/boot/dts"
+    ]
+  },
+  "config": null,
+  "defconfigs_changed": [],
+  "driver_dirs": [
+    "drivers/misc/mediatek/power/mt6755/bq24157"
+  ],
+  "key": "import:power:bq24157",
+  "kind": "kernel_hardware_registration",
+  "makefile_changes": [
+    "drivers/misc/mediatek/power/mt6755/Makefile"
+  ],
+  "mode": "charger",
+  "next_steps": [
+    "verify DTS/custom board bus/address/irq/regulator data",
+    "run kernel build gate"
+  ],
+  "source_files": [
+    "drivers/misc/mediatek/power/mt6755/bq24157/bq24157_reg.h",
+    "drivers/misc/mediatek/power/mt6755/bq24157/bq24157_charger.c"
+  ],
+  "updated_at": "2026-05-09T17:34:00.298094+00:00",
+  "version": 1
+}

@@ -65,3 +65,4 @@ else
      endif
 endif
 obj-$(CONFIG_TCPC_CLASS) += rt_pd_manager.o
+obj-y	+=  bq24157/

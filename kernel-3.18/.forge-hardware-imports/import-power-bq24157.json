@@ -1,0 +1,39 @@
+{
+  "component": {
+    "aliases": [
+      "bq24157"
+    ],
+    "bus": {
+      "address": "0x006a",
+      "bus": 1,
+      "type": "i2c"
+    },
+    "domain": "power",
+    "name": "bq24157",
+    "raw": "bq24157, i2c 1-006a",
+    "role": "charger",
+    "target_paths": [
+      "drivers/power",
+      "drivers/misc/mediatek/power",
+      "arch/*/boot/dts"
+    ]
+  },
+  "copied_files": [
+    "drivers/misc/mediatek/power/mt6755/bq24157/bq24157_reg.h",
+    "drivers/misc/mediatek/power/mt6755/bq24157/bq24157_charger.c",
+    "drivers/misc/mediatek/power/mt6755/bq24157/bq24157.dtsi"
+  ],
+  "key": "import:power:bq24157",
+  "kind": "kernel_hardware_candidate_import",
+  "next_steps": [
+    "review imported source for branch API drift before Kbuild registration",
+    "add Kconfig/Makefile or MTK driver-list registration in a separate commit",
+    "wire DTS/board data from stock bus/address evidence",
+    "run kernel defconfig/module build before enabling full ROM build"
+  ],
+  "source_path": "/srv/forge/work/kernel-driver-sources/bq24157/tibms-mtk-ref-master-kernel-bq24157/kernel/bq24157",
+  "source_root": "/srv/forge/work/kernel-driver-sources/bq24157/tibms-mtk-ref-master-kernel-bq24157/kernel/bq24157",
+  "target_base": "drivers/misc/mediatek/power/mt6755",
+  "updated_at": "2026-05-09T17:34:00.294168+00:00",
+  "version": 1
+}
