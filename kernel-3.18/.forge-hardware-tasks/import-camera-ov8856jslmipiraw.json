@@ -34,10 +34,10 @@
   ],
   "component": {
     "aliases": [
-      "ov8856jslmipi",
-      "ov8856jsl",
+      "ov8856",
       "ov8856jslmipiraw",
-      "ov8856"
+      "ov8856jslmipi",
+      "ov8856jsl"
     ],
     "bus": null,
     "domain": "camera",
@@ -101,12 +101,12 @@
   },
   "reason": "no alias matched in kernel source",
   "search_queries": [
-    "ov8856jslmipi mt6755 android kernel driver",
-    "ov8856jslmipi drivers/misc/mediatek mt6755",
-    "ov8856jsl mt6755 android kernel driver",
-    "ov8856jsl drivers/misc/mediatek mt6755",
+    "ov8856 mt6755 android kernel driver",
+    "ov8856 drivers/misc/mediatek mt6755",
     "ov8856jslmipiraw mt6755 android kernel driver",
-    "ov8856jslmipiraw drivers/misc/mediatek mt6755"
+    "ov8856jslmipiraw drivers/misc/mediatek mt6755",
+    "ov8856jslmipi mt6755 android kernel driver",
+    "ov8856jslmipi drivers/misc/mediatek mt6755"
   ],
   "source_steps": [
     "Use search_queries to find a same-kernel-generation camera driver for ov8856jslmipiraw.",
@@ -121,7 +121,7 @@
     "drivers/media",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T14:37:48.823501+00:00",
+  "updated_at": "2026-05-09T15:31:06.531886+00:00",
   "version": 1,
   "work_item_kind": "driver_import_candidate",
   "work_item_status": "blocked"

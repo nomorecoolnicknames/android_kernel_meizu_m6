@@ -142,7 +142,7 @@
     "drivers/misc/mediatek/power",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T14:37:49.837831+00:00",
+  "updated_at": "2026-05-09T15:31:07.487797+00:00",
   "version": 1,
   "work_item_kind": "config_dts_check",
   "work_item_status": "verify"

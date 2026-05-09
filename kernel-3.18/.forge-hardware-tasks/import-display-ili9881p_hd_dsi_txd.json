@@ -41,8 +41,8 @@
   ],
   "component": {
     "aliases": [
-      "ili9881p-hd-dsi-txd",
-      "ili9881p_hd_dsi_txd"
+      "ili9881p_hd_dsi_txd",
+      "ili9881p-hd-dsi-txd"
     ],
     "bus": null,
     "domain": "display",
@@ -107,11 +107,11 @@
   },
   "reason": "no alias matched in kernel source",
   "search_queries": [
-    "ili9881p-hd-dsi-txd mt6755 android kernel driver",
-    "ili9881p-hd-dsi-txd drivers/misc/mediatek mt6755",
     "ili9881p_hd_dsi_txd mt6755 android kernel driver",
     "ili9881p_hd_dsi_txd drivers/misc/mediatek mt6755",
-    "ili9881p-hd-dsi-txd MTK_LCM_Collection"
+    "ili9881p-hd-dsi-txd mt6755 android kernel driver",
+    "ili9881p-hd-dsi-txd drivers/misc/mediatek mt6755",
+    "ili9881p_hd_dsi_txd MTK_LCM_Collection"
   ],
   "source_steps": [
     "Use search_queries to find a same-kernel-generation display driver for ili9881p_hd_dsi_txd.",
@@ -127,7 +127,7 @@
     "arch/*/boot/dts",
     "arch/*/configs"
   ],
-  "updated_at": "2026-05-09T14:34:27.991471+00:00",
+  "updated_at": "2026-05-09T15:27:45.635225+00:00",
   "version": 1,
   "work_item_kind": "driver_import_candidate",
   "work_item_status": "blocked"
