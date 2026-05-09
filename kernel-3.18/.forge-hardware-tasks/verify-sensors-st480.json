@@ -1,0 +1,154 @@
+{
+  "acceptance_criteria": [
+    "grep in local kernel tree finds the selected hardware alias in source files",
+    "Kconfig/Makefile or MTK table references the selected source",
+    "defconfig enables the required option or board list entry",
+    "DTS/board data matches stock bus/address/regulator evidence"
+  ],
+  "candidate_sources": [],
+  "checks": [
+    {
+      "detail": "driver-like source references found",
+      "files": [
+        "drivers/misc/mediatek/magnetometer/st480/st480.h",
+        "drivers/misc/mediatek/magnetometer/st480/Makefile",
+        "drivers/misc/mediatek/magnetometer/st480/st480.c",
+        "drivers/misc/mediatek/magnetometer/st480/Kconfig",
+        "drivers/misc/mediatek/magnetometer/Makefile",
+        "drivers/misc/mediatek/magnetometer/st480mc-new/st480.h",
+        "drivers/misc/mediatek/magnetometer/st480mc-new/Makefile",
+        "drivers/misc/mediatek/magnetometer/st480mc-new/st480.c",
+        "drivers/misc/mediatek/magnetometer/st480mc-new/Kconfig",
+        "drivers/misc/mediatek/magnetometer/Kconfig",
+        "arch/avr32/mach-at32ap/intc.h",
+        "arch/arm64/boot/dts/huawei6750_66_n.dts"
+      ],
+      "name": "source_files",
+      "status": "pass"
+    },
+    {
+      "detail": "defconfig references hardware alias",
+      "files": [
+        "arch/arm64/configs/huawei6750_66_n_defconfig",
+        "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig",
+        "arch/arm64/configs/al00_huawei6750_66_n_debug_defconfig",
+        "arch/arm64/configs/huawei6750_66_n_debug_defconfig",
+        "arch/arm64/configs/al00_ato_huawei6750_66_n_debug_defconfig"
+      ],
+      "name": "defconfig_refs",
+      "status": "pass"
+    },
+    {
+      "detail": "DTS references hardware alias",
+      "files": [
+        "arch/arm64/boot/dts/huawei6750_66_n.dts"
+      ],
+      "name": "dts_refs",
+      "status": "pass"
+    },
+    {
+      "detail": "Kconfig/Makefile references matched files",
+      "files": [
+        "drivers/misc/mediatek/magnetometer/st480/Makefile",
+        "drivers/misc/mediatek/magnetometer/st480/Kconfig",
+        "drivers/misc/mediatek/magnetometer/Makefile",
+        "drivers/misc/mediatek/magnetometer/Kconfig",
+        "drivers/misc/mediatek/Makefile",
+        "drivers/misc/mediatek/Kconfig",
+        "drivers/misc/mediatek/magnetometer/st480mc-new/Makefile",
+        "drivers/misc/mediatek/magnetometer/st480mc-new/Kconfig"
+      ],
+      "name": "kbuild_refs",
+      "status": "pass"
+    }
+  ],
+  "component": {
+    "aliases": [
+      "st480"
+    ],
+    "bus": {
+      "address": "0x000c",
+      "bus": 1,
+      "type": "i2c"
+    },
+    "domain": "sensors",
+    "name": "st480",
+    "raw": "st480, i2c 1-000c",
+    "role": "magnetometer",
+    "target_paths": [
+      "drivers/misc/mediatek/sensors",
+      "drivers/iio",
+      "drivers/input",
+      "arch/*/boot/dts"
+    ]
+  },
+  "key": "verify:sensors:st480",
+  "kind": "kernel_hardware_work_item_task",
+  "mode": "verify_driver_registration",
+  "policy": "This is an executable adaptation task for the local kernel tree. Donor repos are sources only; source changes must happen in this worktree and be committed separately.",
+  "profile_context": {
+    "boot": {
+      "androidboot.bootreason": "wdt_by_pass_pwk",
+      "androidboot.hardware": "mt6755",
+      "androidboot.selinux": "permissive",
+      "androidboot.serialno": "711HEBSR277K5",
+      "androidboot.verifiedbootstate": "orange",
+      "boot_reason": "4",
+      "bootopt": "64S3,32N2,64N2",
+      "bootprof.lk_t": "2980",
+      "bootprof.pl_t": "4803",
+      "color_type": "711L",
+      "console": "ttyMT0,921600n1",
+      "gpt": "1",
+      "hw_version": "0x10000000",
+      "mrdump.lk": "MRDUMP04",
+      "mrdump_ddr_reserve_ready": "yes",
+      "mrdump_rsvmem": "0x46000000,0x400000,0x44800000,0xdc240,0x44000000,0x200000",
+      "printk.disable_uart": "0",
+      "psn": "711HZZ116E30FEB0",
+      "root": "/dev/ram",
+      "slub_debug": "O",
+      "slub_max_order": "0",
+      "sw_version": "71151003",
+      "usb2jtag_mode": "0",
+      "vmalloc": "496M"
+    },
+    "coverage_summary": {
+      "actionable_missing": 4,
+      "blocked": 0,
+      "found": 9,
+      "info": 0,
+      "missing": 4,
+      "needs_evidence": 0,
+      "partial": 0,
+      "total": 13
+    },
+    "kernel_tree": {
+      "defconfig": "al00_ato_huawei6750_66_n_defconfig",
+      "path": "/srv/forge/android/kernel-meizu_M6-N-ex6/kernel-3.18",
+      "ready": true,
+      "registered": true
+    },
+    "platform": "MT6755"
+  },
+  "reason": null,
+  "search_queries": [],
+  "source_steps": [
+    "Use search_queries to find a same-kernel-generation sensors driver for st480.",
+    "Copy source into one of target_paths inside this local kernel tree; do not build from donor path directly.",
+    "Register source in nearby Makefile/Kconfig or MTK driver list.",
+    "Enable required config in selected defconfig.",
+    "Register DTS/board data with stock bus evidence: {\"address\": \"0x000c\", \"bus\": 1, \"type\": \"i2c\"}."
+  ],
+  "summary": "registration verification task prepared for st480",
+  "target_paths": [
+    "drivers/misc/mediatek/sensors",
+    "drivers/iio",
+    "drivers/input",
+    "arch/*/boot/dts"
+  ],
+  "updated_at": "2026-05-09T14:37:49.546355+00:00",
+  "version": 1,
+  "work_item_kind": "config_dts_check",
+  "work_item_status": "verify"
+}

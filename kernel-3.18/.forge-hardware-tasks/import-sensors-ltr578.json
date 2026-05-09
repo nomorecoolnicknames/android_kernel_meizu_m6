@@ -34,23 +34,25 @@
   ],
   "component": {
     "aliases": [
-      "ov8856jslmipi",
-      "ov8856jsl",
-      "ov8856jslmipiraw",
-      "ov8856"
+      "ltr578"
     ],
-    "bus": null,
-    "domain": "camera",
-    "name": "ov8856jslmipiraw",
-    "raw": "ov8856jslmipiraw",
-    "role": "sensor",
+    "bus": {
+      "address": "0x0053",
+      "bus": 1,
+      "type": "i2c"
+    },
+    "domain": "sensors",
+    "name": "ltr578",
+    "raw": "ltr578, i2c 1-0053",
+    "role": "alsps",
     "target_paths": [
-      "drivers/misc/mediatek/imgsensor",
-      "drivers/media",
+      "drivers/misc/mediatek/sensors",
+      "drivers/iio",
+      "drivers/input",
       "arch/*/boot/dts"
     ]
   },
-  "key": "import:camera:ov8856jslmipiraw",
+  "key": "import:sensors:ltr578",
   "kind": "kernel_hardware_work_item_task",
   "mode": "import_driver_source",
   "policy": "This is an executable adaptation task for the local kernel tree. Donor repos are sources only; source changes must happen in this worktree and be committed separately.",
@@ -101,27 +103,24 @@
   },
   "reason": "no alias matched in kernel source",
   "search_queries": [
-    "ov8856jslmipi mt6755 android kernel driver",
-    "ov8856jslmipi drivers/misc/mediatek mt6755",
-    "ov8856jsl mt6755 android kernel driver",
-    "ov8856jsl drivers/misc/mediatek mt6755",
-    "ov8856jslmipiraw mt6755 android kernel driver",
-    "ov8856jslmipiraw drivers/misc/mediatek mt6755"
+    "ltr578 mt6755 android kernel driver",
+    "ltr578 drivers/misc/mediatek mt6755"
   ],
   "source_steps": [
-    "Use search_queries to find a same-kernel-generation camera driver for ov8856jslmipiraw.",
+    "Use search_queries to find a same-kernel-generation sensors driver for ltr578.",
     "Copy source into one of target_paths inside this local kernel tree; do not build from donor path directly.",
     "Register source in nearby Makefile/Kconfig or MTK driver list.",
     "Enable required config in selected defconfig.",
-    "Register DTS/board data only after stock bus/address/irq/regulator evidence exists."
+    "Register DTS/board data with stock bus evidence: {\"address\": \"0x0053\", \"bus\": 1, \"type\": \"i2c\"}."
   ],
-  "summary": "import task prepared for missing kernel driver ov8856jslmipiraw",
+  "summary": "import task prepared for missing kernel driver ltr578",
   "target_paths": [
-    "drivers/misc/mediatek/imgsensor",
-    "drivers/media",
+    "drivers/misc/mediatek/sensors",
+    "drivers/iio",
+    "drivers/input",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T14:37:48.823501+00:00",
+  "updated_at": "2026-05-09T14:36:08.395468+00:00",
   "version": 1,
   "work_item_kind": "driver_import_candidate",
   "work_item_status": "blocked"

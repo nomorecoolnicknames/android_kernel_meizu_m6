@@ -1,0 +1,149 @@
+{
+  "acceptance_criteria": [
+    "grep in local kernel tree finds the selected hardware alias in source files",
+    "Kconfig/Makefile or MTK table references the selected source",
+    "defconfig enables the required option or board list entry",
+    "DTS/board data matches stock bus/address/regulator evidence"
+  ],
+  "candidate_sources": [],
+  "checks": [
+    {
+      "detail": "driver-like source references found",
+      "files": [
+        "drivers/misc/mediatek/lcm/ili9881c_hd720_dsi_vdo_dijing/ili9881c_hd720_dsi_vdo_dijing.c",
+        "drivers/misc/mediatek/lcm/r63419_wqhd_truly_phantom_2k_cmd_ok/r63419_wqhd_truly_phantom_2k_cmd_ok.c",
+        "drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_vdo_auo_nt50358/nt35695B_fhd_dsi_vdo_auo_nt50358.c",
+        "drivers/misc/mediatek/lcm/r63419_wqhd_truly_phantom_2k_vdo_ok/r63419_wqhd_truly_phantom_2k_vdo_ok.c",
+        "drivers/misc/mediatek/lcm/mt65xx_lcm_list.h",
+        "drivers/misc/mediatek/lcm/r63417_fhd_dsi_vdo_truly_nt50358/r63417_fhd_dsi_vdo_truly_nt50358.c",
+        "drivers/misc/mediatek/lcm/nt35595_fhd_dsi_cmd_truly_nt50358/nt35595_fhd_dsi_cmd_truly_nt50358.c",
+        "drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_vdo_auo_nt50358_extern/nt35695B_fhd_dsi_vdo_auo_nt50358_extern.c",
+        "drivers/misc/mediatek/lcm/r63419_fhd_truly_phantom_2k_cmd_ok/r63419_fhd_truly_phantom_2k_cmd_ok.c",
+        "drivers/misc/mediatek/lcm/nt35695_fhd_dsi_vdo_truly_nt50358_720p/nt35695_fhd_dsi_vdo_truly_nt50358_720p.c",
+        "drivers/misc/mediatek/lcm/nt35695_fhd_dsi_vdo_truly_nt50358_laneswap/nt35695_fhd_dsi_vdo_truly_nt50358_laneswap.c",
+        "drivers/misc/mediatek/lcm/nt35595_fhd_dsi_cmd_truly_nt50358_6735/nt35595_fhd_dsi_cmd_truly_nt50358_6735.c"
+      ],
+      "name": "source_files",
+      "status": "pass"
+    },
+    {
+      "detail": "defconfig enablement not proven",
+      "files": [],
+      "name": "defconfig_refs",
+      "status": "missing"
+    },
+    {
+      "detail": "DTS bus/address binding not proven",
+      "files": [],
+      "name": "dts_refs",
+      "status": "missing"
+    },
+    {
+      "detail": "Kconfig/Makefile references matched files",
+      "files": [
+        "drivers/misc/mediatek/lcm/ili9881c_hd720_dsi_vdo_dijing/Makefile",
+        "drivers/misc/mediatek/lcm/r63419_wqhd_truly_phantom_2k_cmd_ok/Makefile",
+        "drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_vdo_auo_nt50358/Makefile",
+        "drivers/misc/mediatek/lcm/r63419_wqhd_truly_phantom_2k_vdo_ok/Makefile",
+        "drivers/misc/mediatek/lcm/Makefile",
+        "drivers/misc/mediatek/lcm/Kconfig",
+        "drivers/misc/mediatek/Makefile",
+        "drivers/misc/mediatek/Kconfig",
+        "drivers/misc/mediatek/lcm/r63417_fhd_dsi_vdo_truly_nt50358/Makefile",
+        "drivers/misc/mediatek/lcm/nt35595_fhd_dsi_cmd_truly_nt50358/Makefile",
+        "drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_vdo_auo_nt50358_extern/Makefile",
+        "drivers/misc/mediatek/lcm/r63419_fhd_truly_phantom_2k_cmd_ok/Makefile",
+        "drivers/misc/mediatek/lcm/nt35695_fhd_dsi_vdo_truly_nt50358_720p/Makefile"
+      ],
+      "name": "kbuild_refs",
+      "status": "pass"
+    }
+  ],
+  "component": {
+    "aliases": [
+      "tps65132"
+    ],
+    "bus": {
+      "address": "0x003e",
+      "bus": 0,
+      "type": "i2c"
+    },
+    "domain": "power",
+    "name": "tps65132",
+    "raw": "tps65132, i2c 0-003e",
+    "role": "pmic",
+    "target_paths": [
+      "drivers/power",
+      "drivers/misc/mediatek/power",
+      "arch/*/boot/dts"
+    ]
+  },
+  "key": "verify:power:tps65132",
+  "kind": "kernel_hardware_work_item_task",
+  "mode": "verify_driver_registration",
+  "policy": "This is an executable adaptation task for the local kernel tree. Donor repos are sources only; source changes must happen in this worktree and be committed separately.",
+  "profile_context": {
+    "boot": {
+      "androidboot.bootreason": "wdt_by_pass_pwk",
+      "androidboot.hardware": "mt6755",
+      "androidboot.selinux": "permissive",
+      "androidboot.serialno": "711HEBSR277K5",
+      "androidboot.verifiedbootstate": "orange",
+      "boot_reason": "4",
+      "bootopt": "64S3,32N2,64N2",
+      "bootprof.lk_t": "2980",
+      "bootprof.pl_t": "4803",
+      "color_type": "711L",
+      "console": "ttyMT0,921600n1",
+      "gpt": "1",
+      "hw_version": "0x10000000",
+      "mrdump.lk": "MRDUMP04",
+      "mrdump_ddr_reserve_ready": "yes",
+      "mrdump_rsvmem": "0x46000000,0x400000,0x44800000,0xdc240,0x44000000,0x200000",
+      "printk.disable_uart": "0",
+      "psn": "711HZZ116E30FEB0",
+      "root": "/dev/ram",
+      "slub_debug": "O",
+      "slub_max_order": "0",
+      "sw_version": "71151003",
+      "usb2jtag_mode": "0",
+      "vmalloc": "496M"
+    },
+    "coverage_summary": {
+      "actionable_missing": 4,
+      "blocked": 0,
+      "found": 9,
+      "info": 0,
+      "missing": 4,
+      "needs_evidence": 0,
+      "partial": 0,
+      "total": 13
+    },
+    "kernel_tree": {
+      "defconfig": "al00_ato_huawei6750_66_n_defconfig",
+      "path": "/srv/forge/android/kernel-meizu_M6-N-ex6/kernel-3.18",
+      "ready": true,
+      "registered": true
+    },
+    "platform": "MT6755"
+  },
+  "reason": null,
+  "search_queries": [],
+  "source_steps": [
+    "Use search_queries to find a same-kernel-generation power driver for tps65132.",
+    "Copy source into one of target_paths inside this local kernel tree; do not build from donor path directly.",
+    "Register source in nearby Makefile/Kconfig or MTK driver list.",
+    "Enable required config in selected defconfig.",
+    "Register DTS/board data with stock bus evidence: {\"address\": \"0x003e\", \"bus\": 0, \"type\": \"i2c\"}."
+  ],
+  "summary": "registration verification task prepared for tps65132",
+  "target_paths": [
+    "drivers/power",
+    "drivers/misc/mediatek/power",
+    "arch/*/boot/dts"
+  ],
+  "updated_at": "2026-05-09T14:37:49.837831+00:00",
+  "version": 1,
+  "work_item_kind": "config_dts_check",
+  "work_item_status": "verify"
+}

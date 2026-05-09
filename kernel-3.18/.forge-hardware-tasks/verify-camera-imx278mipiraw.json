@@ -8,10 +8,12 @@
   "candidate_sources": [],
   "checks": [
     {
-      "detail": "no source file matched hardware aliases",
-      "files": [],
+      "detail": "driver-like source references found",
+      "files": [
+        "drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h"
+      ],
       "name": "source_files",
-      "status": "missing"
+      "status": "pass"
     },
     {
       "detail": "defconfig enablement not proven",
@@ -29,20 +31,19 @@
       "detail": "Kbuild registration needs verification",
       "files": [],
       "name": "kbuild_refs",
-      "status": "missing"
+      "status": "warn"
     }
   ],
   "component": {
     "aliases": [
-      "ov8856jslmipi",
-      "ov8856jsl",
-      "ov8856jslmipiraw",
-      "ov8856"
+      "imx278",
+      "imx278mipi",
+      "imx278mipiraw"
     ],
     "bus": null,
     "domain": "camera",
-    "name": "ov8856jslmipiraw",
-    "raw": "ov8856jslmipiraw",
+    "name": "imx278mipiraw",
+    "raw": "imx278mipiraw",
     "role": "sensor",
     "target_paths": [
       "drivers/misc/mediatek/imgsensor",
@@ -50,9 +51,9 @@
       "arch/*/boot/dts"
     ]
   },
-  "key": "import:camera:ov8856jslmipiraw",
+  "key": "verify:camera:imx278mipiraw",
   "kind": "kernel_hardware_work_item_task",
-  "mode": "import_driver_source",
+  "mode": "verify_driver_registration",
   "policy": "This is an executable adaptation task for the local kernel tree. Donor repos are sources only; source changes must happen in this worktree and be committed separately.",
   "profile_context": {
     "boot": {
@@ -99,30 +100,23 @@
     },
     "platform": "MT6755"
   },
-  "reason": "no alias matched in kernel source",
-  "search_queries": [
-    "ov8856jslmipi mt6755 android kernel driver",
-    "ov8856jslmipi drivers/misc/mediatek mt6755",
-    "ov8856jsl mt6755 android kernel driver",
-    "ov8856jsl drivers/misc/mediatek mt6755",
-    "ov8856jslmipiraw mt6755 android kernel driver",
-    "ov8856jslmipiraw drivers/misc/mediatek mt6755"
-  ],
+  "reason": null,
+  "search_queries": [],
   "source_steps": [
-    "Use search_queries to find a same-kernel-generation camera driver for ov8856jslmipiraw.",
+    "Use search_queries to find a same-kernel-generation camera driver for imx278mipiraw.",
     "Copy source into one of target_paths inside this local kernel tree; do not build from donor path directly.",
     "Register source in nearby Makefile/Kconfig or MTK driver list.",
     "Enable required config in selected defconfig.",
     "Register DTS/board data only after stock bus/address/irq/regulator evidence exists."
   ],
-  "summary": "import task prepared for missing kernel driver ov8856jslmipiraw",
+  "summary": "registration verification task prepared for imx278mipiraw",
   "target_paths": [
     "drivers/misc/mediatek/imgsensor",
     "drivers/media",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T14:37:48.823501+00:00",
+  "updated_at": "2026-05-09T14:37:49.350858+00:00",
   "version": 1,
-  "work_item_kind": "driver_import_candidate",
-  "work_item_status": "blocked"
+  "work_item_kind": "config_dts_check",
+  "work_item_status": "verify"
 }

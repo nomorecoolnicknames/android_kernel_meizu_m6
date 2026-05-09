@@ -1,0 +1,771 @@
+{
+  "ai_status": "ready",
+  "codename": "meizu_M6",
+  "compact_prompt": "MTK hardware adaptation input, compact v2:\n{\"device\":{\"codename\":\"meizu_M6\",\"brand\":\"Meizu\",\"marketing_name\":\"MEIZU M6\",\"soc_model\":\"mt6750\",\"soc_family\":\"mtk-mt6750\",\"kernel_version\":\"3.18.35+\"},\"stock_hardware_profile\":{\"device_name\":\"Meizu MEIZU M6\",\"platform\":\"MT6755\",\"boot_summary\":{\"androidboot.hardware\":\"mt6755\",\"bootopt\":\"64S3,32N2,64N2\",\"console\":\"ttyMT0,921600n1\",\"root\":\"/dev/ram\",\"hw_version\":\"0x10000000\",\"sw_version\":\"71151003\",\"androidboot.selinux\":\"permissive\"},\"components\":[{\"domain\":\"display\",\"role\":\"lcm\",\"name\":\"ili9881p_hd_dsi_txd\",\"bus\":null,\"aliases\":[\"ili9881p-hd-dsi-txd\",\"ili9881p_hd_dsi_txd\"],\"target_paths\":[\"drivers/misc/mediatek/lcm\",\"drivers/gpu/drm\",\"arch/*/boot/dts\",\"arch/*/configs\"]},{\"domain\":\"input\",\"role\":\"touchscreen\",\"name\":\"ft5x0x\",\"bus\":{\"type\":\"i2c\",\"bus\":0,\"address\":\"0x005d\"},\"aliases\":[\"ft5x0x\"],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"]},{\"domain\":\"sensors\",\"role\":\"accelerometer\",\"name\":\"BMA253\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x0018\"},\"aliases\":[\"bma253\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},{\"domain\":\"sensors\",\"role\":\"alsps\",\"name\":\"ltr578\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x0053\"},\"aliases\":[\"ltr578\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},{\"domain\":\"sensors\",\"role\":\"magnetometer\",\"name\":\"st480\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x000c\"},\"aliases\":[\"st480\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},{\"domain\":\"camera\",\"role\":\"sensor\",\"name\":\"imx278mipiraw\",\"bus\":null,\"aliases\":[\"imx278\",\"imx278mipi\",\"imx278mipiraw\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},{\"domain\":\"camera\",\"role\":\"sensor\",\"name\":\"ov8856jslmipiraw\",\"bus\":null,\"aliases\":[\"ov8856jslmipi\",\"ov8856jsl\",\"ov8856jslmipiraw\",\"ov8856\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},{\"domain\":\"power\",\"role\":\"charger\",\"name\":\"bq24157\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x006a\"},\"aliases\":[\"bq24157\"],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},{\"domain\":\"power\",\"role\":\"pmic\",\"name\":\"mt6311\",\"bus\":{\"type\":\"i2c\",\"bus\":3,\"address\":\"0x006b\"},\"aliases\":[\"mt6311\"],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},{\"domain\":\"power\",\"role\":\"pmic\",\"name\":\"tps65132\",\"bus\":{\"type\":\"i2c\",\"bus\":0,\"address\":\"0x003e\"},\"aliases\":[\"tps65132\"],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},{\"domain\":\"connectivity\",\"role\":\"nfc\",\"name\":\"mt6605\",\"bus\":{\"type\":\"i2c\",\"bus\":4,\"address\":\"0x0028\"},\"aliases\":[\"mt6605\"],\"target_paths\":[\"drivers/misc/mediatek/connectivity\",\"drivers/net/wireless\",\"drivers/nfc\",\"arch/*/boot/dts\"]},{\"domain\":\"input\",\"role\":\"fingerprint\",\"name\":\"sunwave-fp\",\"bus\":null,\"aliases\":[\"sunwave-fp\",\"sunwave_fp\"],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"]},{\"domain\":\"camera\",\"role\":\"flash\",\"name\":\"leds-AW3643\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x0063\"},\"aliases\":[\"leds_aw3643\",\"leds-aw3643\",\"aw3643\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]}],\"informational_count\":10,\"source_flags\":{\"pasted_text\":true,\"deviceinfohw_meta\":false,\"snapshot\":true}},\"kernel_tree\":{\"registered\":true,\"ready\":true,\"path\":\"/srv/forge/android/kernel-meizu_M6-N-ex6/kernel-3.18\",\"defconfig\":\"al00_ato_huawei6750_66_n_defconfig\",\"missing\":[],\"lcm_candidates\":[{\"name\":\"b080uan01_2_wuxga_dsi_vdo\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\",\"lcm filename\",\"mt65xx_lcm_list\"],\"files\":[\"drivers/misc/mediatek/lcm/b080uan01_2_wuxga_dsi_vdo/lcm_drv_b080uan01_2_wuxga_dsi_vdo.c\",\"drivers/misc/mediatek/lcm/b080uan01_2_wuxga_dsi_vdo/b080uan01_2_wuxga_dsi_vdo.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"cpt_clap070wp03xg_lvds\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\",\"lcm filename\",\"mt65xx_lcm_list\"],\"files\":[\"drivers/misc/mediatek/lcm/cpt_clap070wp03xg_lvds/cpt_clap070wp03xg_lvds.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"cpt_clap070wp03xg_sn65dsi83\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\",\"lcm filename\",\"mt65xx_lcm_list\"],\"files\":[\"drivers/misc/mediatek/lcm/cpt_clap070wp03xg_sn65dsi83/cpt_clap070wp03xg_sn65dsi83.c\",\"drivers/misc/mediatek/lcm/cpt_clap070wp03xg_sn65dsi83/lcm_drv_cpt_clap070wp03xg_sn65dsi83.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"hx8394c_wxga_dsi_vdo\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\",\"lcm filename\",\"mt65xx_lcm_list\"],\"files\":[\"drivers/misc/mediatek/lcm/hx8394c_wxga_dsi_vdo/hx8394c_wxga_dsi_vdo.c\",\"drivers/misc/mediatek/lcm/hx8394c_wxga_dsi_vdo/lcm_drv_hx8394c_wxga_dsi_vdo.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"hx8394f_hd720_dsi_vdo_truly\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\",\"defconfig\",\"lcm filename\",\"mt65xx_lcm_list\"],\"files\":[\"arch/arm64/configs/huawei6750_66_n_defconfig\",\"arch/arm64/configs/al00_huawei6750_66_n_defconfig\",\"arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig\",\"arch/arm64/configs/al00_huawei6750_66_n_debug_defconfig\",\"arch/arm64/configs/huawei6750_66_n_debug_defconfig\",\"arch/arm64/configs/al00_ato_huawei6750_66_n_debug_defconfig\",\"drivers/misc/mediatek/lcm/hx8394f_hd720_dsi_vdo_truly/hx8394f_hd720_dsi_vdo_truly.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"ili9881c_hd720_dsi_vdo_dijing\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\",\"defconfig\",\"lcm filename\",\"mt65xx_lcm_list\"],\"files\":[\"arch/arm64/configs/huawei6750_66_n_defconfig\",\"arch/arm64/configs/al00_huawei6750_66_n_defconfig\",\"arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig\",\"arch/arm64/configs/al00_huawei6750_66_n_debug_defconfig\",\"arch/arm64/configs/huawei6750_66_n_debug_defconfig\",\"arch/arm64/configs/al00_ato_huawei6750_66_n_debug_defconfig\",\"drivers/misc/mediatek/lcm/ili9881c_hd720_dsi_vdo_dijing/ili9881c_hd720_dsi_vdo_dijing.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"ili9881c_hd720_dsi_vdo_helitec\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\",\"defconfig\",\"lcm filename\",\"mt65xx_lcm_list\"],\"files\":[\"arch/arm64/configs/huawei6750_66_n_defconfig\",\"arch/arm64/configs/al00_huawei6750_66_n_defconfig\",\"arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig\",\"arch/arm64/configs/al00_huawei6750_66_n_debug_defconfig\",\"arch/arm64/configs/huawei6750_66_n_debug_defconfig\",\"arch/arm64/configs/al00_ato_huawei6750_66_n_debug_defconfig\",\"drivers/misc/mediatek/lcm/ili9881c_hd720_dsi_vdo_helitec/ili9881c_hd720_dsi_vdo_helitec.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"mtk_lcm\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\"],\"files\":[\"drivers/misc/mediatek/lcm/sy20810800210132_wuxga_dsi_vdo/sy20810800210132_wuxga_dsi_vdo.c\",\"drivers/misc/mediatek/lcm/KR070IA4T_DSI_VDO/KR070IA4T_DSI_VDO.c\",\"drivers/misc/mediatek/lcm/CPT_CLAA101FP01_DSI_VDO_8163/CPT_CLAA101FP01_DSI_VDO_8163.c\",\"drivers/misc/mediatek/lcm/s6d7aa0_wxga_dsi_vdo/s6d7aa0_wxga_dsi_vdo.c\",\"drivers/misc/mediatek/lcm/ek79023_dsi_wsvga_vdo/ek79023_dsi_wsvga_vdo.c\",\"drivers/misc/mediatek/lcm/clap070wp03xg_lvds_8163/clap070wp03xg_lvds_8163.c\",\"drivers/misc/mediatek/lcm/nt35595_fhd_dsi_cmd_truly_8163/nt35595_fhd_dsi_cmd_truly_8163.c\",\"drivers/misc/mediatek/lcm/cpt_clap070wp03xg_lvds/lcm_drv_cpt_clap070wp03xg_lvds.c\",\"drivers/misc/mediatek/lcm/hx8392a_dsi_vdo_2lane/lcm_drv_hx8392a_dsi_vdo_2lane.c\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"nt35695B_fhd_dsi_cmd_auo_nt50358_drv\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\"],\"files\":[\"drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_vdo_auo_nt50358/nt35695B_fhd_dsi_vdo_auo_nt50358.c\",\"drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_vdo_auo_nt50358_extern/nt35695B_fhd_dsi_vdo_auo_nt50358_extern.c\",\"drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_cmd_auo_nt50358_extern/nt35695B_fhd_dsi_cmd_auo_nt50358_extern.c\",\"drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_cmd_auo_nt50358/nt35695B_fhd_dsi_cmd_auo_nt50358.c\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"nt35695B_fhd_dsi_vdo_auo_nt50358_drv\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\"],\"files\":[\"drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_vdo_auo_nt50358/nt35695B_fhd_dsi_vdo_auo_nt50358.c\",\"drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_vdo_auo_nt50358_extern/nt35695B_fhd_dsi_vdo_auo_nt50358_extern.c\",\"drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_cmd_auo_nt50358_extern/nt35695B_fhd_dsi_cmd_auo_nt50358_extern.c\",\"drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_cmd_auo_nt50358/nt35695B_fhd_dsi_cmd_auo_nt50358.c\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"nt35695_fhd_dsi_cmd_truly_nt50358\",\"confidence\":95,\"sources\":[\"defconfig\",\"lcm filename\",\"mt65xx_lcm_list\"],\"files\":[\"arch/arm64/configs/huawei6750_65_n_debug_defconfig\",\"arch/arm64/configs/huawei6750_65_n_defconfig\",\"drivers/misc/mediatek/lcm/nt35695_fhd_dsi_cmd_truly_nt50358/nt35695_fhd_dsi_cmd_truly_nt50358.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"note\":\"verify against stock DTS/LK logs before import\"},{\"name\":\"r69429_wqxga_dsi_vdo\",\"confidence\":95,\"sources\":[\"LCM_DRIVER.name\",\"lcm filename\",\"mt65xx_lcm_list\"],\"files\":[\"drivers/misc/mediatek/lcm/r69429_wqxga_dsi_vdo/lcm_drv_r69429_wqxga_dsi_vdo.c\",\"drivers/misc/mediatek/lcm/r69429_wqxga_dsi_vdo/r69429_wqxga_dsi_vdo.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"note\":\"verify against stock DTS/LK logs before import\"}]},\"coverage_summary\":{\"total\":13,\"found\":9,\"partial\":0,\"missing\":4,\"blocked\":0,\"info\":0,\"needs_evidence\":0,\"actionable_missing\":4},\"driver_coverage\":[{\"component\":{\"domain\":\"display\",\"role\":\"lcm\",\"name\":\"ili9881p_hd_dsi_txd\",\"bus\":null,\"aliases\":[\"ili9881p-hd-dsi-txd\",\"ili9881p_hd_dsi_txd\"],\"target_paths\":[\"drivers/misc/mediatek/lcm\",\"drivers/gpu/drm\",\"arch/*/boot/dts\",\"arch/*/configs\"]},\"status\":\"missing\",\"reason\":\"no alias matched in kernel source\",\"files\":[],\"search_queries\":[\"ili9881p-hd-dsi-txd mt6755 android kernel driver\",\"ili9881p-hd-dsi-txd drivers/misc/mediatek mt6755\",\"ili9881p_hd_dsi_txd mt6755 android kernel driver\"],\"target_paths\":[\"drivers/misc/mediatek/lcm\",\"drivers/gpu/drm\",\"arch/*/boot/dts\",\"arch/*/configs\"]},{\"component\":{\"domain\":\"input\",\"role\":\"touchscreen\",\"name\":\"ft5x0x\",\"bus\":{\"type\":\"i2c\",\"bus\":0,\"address\":\"0x005d\"},\"aliases\":[\"ft5x0x\"],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"]},\"status\":\"found\",\"reason\":\"matched kernel files\",\"files\":[\"drivers/input/touchscreen/mediatek/ft5x26/ft5x26_driver.c\",\"drivers/input/touchscreen/mediatek/ft5x0x/ft5x0x_driver.c\",\"drivers/input/touchscreen/mediatek/ft5x0x/ft5x0x_upgrade.c\",\"drivers/input/touchscreen/mediatek/ft5x0x/Makefile\",\"drivers/input/touchscreen/mediatek/ft5x0x/include/firmware1/tpd_custom_upgrade.h\"],\"search_queries\":[],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"sensors\",\"role\":\"accelerometer\",\"name\":\"BMA253\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x0018\"},\"aliases\":[\"bma253\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},\"status\":\"found\",\"reason\":\"matched kernel files\",\"files\":[\"drivers/misc/mediatek/accelerometer/Makefile\",\"drivers/misc/mediatek/accelerometer/bma253-new/bma2x2.c\",\"drivers/misc/mediatek/accelerometer/bma253-new/Kconfig\",\"drivers/misc/mediatek/accelerometer/Kconfig\",\"arch/arm64/boot/dts/huawei6750_66_n.dts\"],\"search_queries\":[],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"sensors\",\"role\":\"alsps\",\"name\":\"ltr578\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x0053\"},\"aliases\":[\"ltr578\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},\"status\":\"missing\",\"reason\":\"no alias matched in kernel source\",\"files\":[],\"search_queries\":[\"ltr578 mt6755 android kernel driver\",\"ltr578 drivers/misc/mediatek mt6755\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"sensors\",\"role\":\"magnetometer\",\"name\":\"st480\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x000c\"},\"aliases\":[\"st480\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},\"status\":\"found\",\"reason\":\"matched kernel files\",\"files\":[\"drivers/misc/mediatek/magnetometer/st480/st480.h\",\"drivers/misc/mediatek/magnetometer/st480/Makefile\",\"drivers/misc/mediatek/magnetometer/st480/st480.c\",\"drivers/misc/mediatek/magnetometer/st480/Kconfig\",\"drivers/misc/mediatek/magnetometer/Makefile\"],\"search_queries\":[],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"camera\",\"role\":\"sensor\",\"name\":\"imx278mipiraw\",\"bus\":null,\"aliases\":[\"imx278\",\"imx278mipi\",\"imx278mipiraw\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},\"status\":\"found\",\"reason\":\"matched kernel files\",\"files\":[\"drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h\"],\"search_queries\":[],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"camera\",\"role\":\"sensor\",\"name\":\"ov8856jslmipiraw\",\"bus\":null,\"aliases\":[\"ov8856jslmipi\",\"ov8856jsl\",\"ov8856jslmipiraw\",\"ov8856\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},\"status\":\"missing\",\"reason\":\"no alias matched in kernel source\",\"files\":[],\"search_queries\":[\"ov8856jslmipi mt6755 android kernel driver\",\"ov8856jslmipi drivers/misc/mediatek mt6755\",\"ov8856jsl mt6755 android kernel driver\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"power\",\"role\":\"charger\",\"name\":\"bq24157\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x006a\"},\"aliases\":[\"bq24157\"],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},\"status\":\"found\",\"reason\":\"matched kernel files\",\"files\":[\"drivers/misc/mediatek/include/mt-plat/mt6755/include/mach/mt_charging.h\",\"drivers/power/mediatek/Makefile\"],\"search_queries\":[],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"power\",\"role\":\"pmic\",\"name\":\"mt6311\",\"bus\":{\"type\":\"i2c\",\"bus\":3,\"address\":\"0x006b\"},\"aliases\":[\"mt6311\"],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},\"status\":\"found\",\"reason\":\"matched kernel files\",\"files\":[\"drivers/misc/mediatek/i2c/mt6755/i2c.c\",\"drivers/misc/mediatek/power/mt6755/pmic.c\",\"drivers/misc/mediatek/power/mt6755/charging_hw_sy6923d.c\",\"drivers/misc/mediatek/power/mt6755/pmic.h\",\"drivers/misc/mediatek/power/mt6755/mt6311.h\"],\"search_queries\":[],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"power\",\"role\":\"pmic\",\"name\":\"tps65132\",\"bus\":{\"type\":\"i2c\",\"bus\":0,\"address\":\"0x003e\"},\"aliases\":[\"tps65132\"],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},\"status\":\"found\",\"reason\":\"matched kernel files\",\"files\":[\"drivers/misc/mediatek/lcm/ili9881c_hd720_dsi_vdo_dijing/ili9881c_hd720_dsi_vdo_dijing.c\",\"drivers/misc/mediatek/lcm/r63419_wqhd_truly_phantom_2k_cmd_ok/r63419_wqhd_truly_phantom_2k_cmd_ok.c\",\"drivers/misc/mediatek/lcm/nt35695B_fhd_dsi_vdo_auo_nt50358/nt35695B_fhd_dsi_vdo_auo_nt50358.c\",\"drivers/misc/mediatek/lcm/r63419_wqhd_truly_phantom_2k_vdo_ok/r63419_wqhd_truly_phantom_2k_vdo_ok.c\",\"drivers/misc/mediatek/lcm/mt65xx_lcm_list.h\"],\"search_queries\":[],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"connectivity\",\"role\":\"nfc\",\"name\":\"mt6605\",\"bus\":{\"type\":\"i2c\",\"bus\":4,\"address\":\"0x0028\"},\"aliases\":[\"mt6605\"],\"target_paths\":[\"drivers/misc/mediatek/connectivity\",\"drivers/net/wireless\",\"drivers/nfc\",\"arch/*/boot/dts\"]},\"status\":\"found\",\"reason\":\"matched kernel files\",\"files\":[\"drivers/misc/mediatek/nfc/mt6755/mt6605.c\",\"drivers/misc/mediatek/nfc/mt6755/Makefile\",\"drivers/misc/mediatek/nfc/Kconfig\",\"drivers/misc/mediatek/eccci/port_rpc.c\",\"drivers/misc/mediatek/eccci/mt6755/cldma_platform.c\"],\"search_queries\":[],\"target_paths\":[\"drivers/misc/mediatek/connectivity\",\"drivers/net/wireless\",\"drivers/nfc\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"input\",\"role\":\"fingerprint\",\"name\":\"sunwave-fp\",\"bus\":null,\"aliases\":[\"sunwave-fp\",\"sunwave_fp\"],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"]},\"status\":\"found\",\"reason\":\"matched kernel files\",\"files\":[\"drivers/input/fingerprint/gn_w_sunwave/sf_ctl.c\",\"drivers/input/fingerprint/gn_w_sunwave/Makefile\",\"drivers/input/fingerprint/gn_w_sunwave/sf_ctl.h\"],\"search_queries\":[],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"]},{\"component\":{\"domain\":\"camera\",\"role\":\"flash\",\"name\":\"leds-AW3643\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x0063\"},\"aliases\":[\"leds_aw3643\",\"leds-aw3643\",\"aw3643\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},\"status\":\"missing\",\"reason\":\"no alias matched in kernel source\",\"files\":[],\"search_queries\":[\"leds_aw3643 mt6755 android kernel driver\",\"leds_aw3643 drivers/misc/mediatek mt6755\",\"leds-aw3643 mt6755 android kernel driver\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]}],\"work_items\":[{\"key\":\"import:display:ili9881p_hd_dsi_txd\",\"kind\":\"driver_import_candidate\",\"status\":\"blocked\",\"title\":\"Find/import ili9881p_hd_dsi_txd\",\"component\":{\"domain\":\"display\",\"role\":\"lcm\",\"name\":\"ili9881p_hd_dsi_txd\",\"bus\":null,\"aliases\":[\"ili9881p-hd-dsi-txd\",\"ili9881p_hd_dsi_txd\"],\"target_paths\":[\"drivers/misc/mediatek/lcm\",\"drivers/gpu/drm\",\"arch/*/boot/dts\",\"arch/*/configs\"]},\"search_queries\":[\"ili9881p-hd-dsi-txd mt6755 android kernel driver\",\"ili9881p-hd-dsi-txd drivers/misc/mediatek mt6755\",\"ili9881p_hd_dsi_txd mt6755 android kernel driver\"],\"target_paths\":[\"drivers/misc/mediatek/lcm\",\"drivers/gpu/drm\",\"arch/*/boot/dts\",\"arch/*/configs\"],\"next_action\":\"Search compatible driver source, stage into local kernel tree, then register DTS/config.\"},{\"key\":\"import:camera:leds-AW3643\",\"kind\":\"driver_import_candidate\",\"status\":\"blocked\",\"title\":\"Find/import leds-AW3643\",\"component\":{\"domain\":\"camera\",\"role\":\"flash\",\"name\":\"leds-AW3643\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x0063\"},\"aliases\":[\"leds_aw3643\",\"leds-aw3643\",\"aw3643\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},\"search_queries\":[\"leds_aw3643 mt6755 android kernel driver\",\"leds_aw3643 drivers/misc/mediatek mt6755\",\"leds-aw3643 mt6755 android kernel driver\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"],\"next_action\":\"Search compatible driver source, stage into local kernel tree, then register DTS/config.\"},{\"key\":\"import:sensors:ltr578\",\"kind\":\"driver_import_candidate\",\"status\":\"blocked\",\"title\":\"Find/import ltr578\",\"component\":{\"domain\":\"sensors\",\"role\":\"alsps\",\"name\":\"ltr578\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x0053\"},\"aliases\":[\"ltr578\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},\"search_queries\":[\"ltr578 mt6755 android kernel driver\",\"ltr578 drivers/misc/mediatek mt6755\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"],\"next_action\":\"Search compatible driver source, stage into local kernel tree, then register DTS/config.\"},{\"key\":\"import:camera:ov8856jslmipiraw\",\"kind\":\"driver_import_candidate\",\"status\":\"blocked\",\"title\":\"Find/import ov8856jslmipiraw\",\"component\":{\"domain\":\"camera\",\"role\":\"sensor\",\"name\":\"ov8856jslmipiraw\",\"bus\":null,\"aliases\":[\"ov8856jslmipi\",\"ov8856jsl\",\"ov8856jslmipiraw\",\"ov8856\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},\"search_queries\":[\"ov8856jslmipi mt6755 android kernel driver\",\"ov8856jslmipi drivers/misc/mediatek mt6755\",\"ov8856jsl mt6755 android kernel driver\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"],\"next_action\":\"Search compatible driver source, stage into local kernel tree, then register DTS/config.\"},{\"key\":\"verify:sensors:BMA253\",\"kind\":\"config_dts_check\",\"status\":\"verify\",\"title\":\"Verify BMA253 DTS/config\",\"component\":{\"domain\":\"sensors\",\"role\":\"accelerometer\",\"name\":\"BMA253\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x0018\"},\"aliases\":[\"bma253\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},\"search_queries\":[],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"],\"next_action\":\"Check bus/address, Kconfig/Makefile, DTS node and defconfig enablement.\"},{\"key\":\"verify:power:bq24157\",\"kind\":\"config_dts_check\",\"status\":\"verify\",\"title\":\"Verify bq24157 DTS/config\",\"component\":{\"domain\":\"power\",\"role\":\"charger\",\"name\":\"bq24157\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x006a\"},\"aliases\":[\"bq24157\"],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},\"search_queries\":[],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"],\"next_action\":\"Check bus/address, Kconfig/Makefile, DTS node and defconfig enablement.\"},{\"key\":\"verify:input:ft5x0x\",\"kind\":\"config_dts_check\",\"status\":\"verify\",\"title\":\"Verify ft5x0x DTS/config\",\"component\":{\"domain\":\"input\",\"role\":\"touchscreen\",\"name\":\"ft5x0x\",\"bus\":{\"type\":\"i2c\",\"bus\":0,\"address\":\"0x005d\"},\"aliases\":[\"ft5x0x\"],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"]},\"search_queries\":[],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"],\"next_action\":\"Check bus/address, Kconfig/Makefile, DTS node and defconfig enablement.\"},{\"key\":\"verify:camera:imx278mipiraw\",\"kind\":\"config_dts_check\",\"status\":\"verify\",\"title\":\"Verify imx278mipiraw DTS/config\",\"component\":{\"domain\":\"camera\",\"role\":\"sensor\",\"name\":\"imx278mipiraw\",\"bus\":null,\"aliases\":[\"imx278\",\"imx278mipi\",\"imx278mipiraw\"],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"]},\"search_queries\":[],\"target_paths\":[\"drivers/misc/mediatek/imgsensor\",\"drivers/media\",\"arch/*/boot/dts\"],\"next_action\":\"Check bus/address, Kconfig/Makefile, DTS node and defconfig enablement.\"},{\"key\":\"verify:power:mt6311\",\"kind\":\"config_dts_check\",\"status\":\"verify\",\"title\":\"Verify mt6311 DTS/config\",\"component\":{\"domain\":\"power\",\"role\":\"pmic\",\"name\":\"mt6311\",\"bus\":{\"type\":\"i2c\",\"bus\":3,\"address\":\"0x006b\"},\"aliases\":[\"mt6311\"],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},\"search_queries\":[],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"],\"next_action\":\"Check bus/address, Kconfig/Makefile, DTS node and defconfig enablement.\"},{\"key\":\"verify:sensors:st480\",\"kind\":\"config_dts_check\",\"status\":\"verify\",\"title\":\"Verify st480 DTS/config\",\"component\":{\"domain\":\"sensors\",\"role\":\"magnetometer\",\"name\":\"st480\",\"bus\":{\"type\":\"i2c\",\"bus\":1,\"address\":\"0x000c\"},\"aliases\":[\"st480\"],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"]},\"search_queries\":[],\"target_paths\":[\"drivers/misc/mediatek/sensors\",\"drivers/iio\",\"drivers/input\",\"arch/*/boot/dts\"],\"next_action\":\"Check bus/address, Kconfig/Makefile, DTS node and defconfig enablement.\"},{\"key\":\"verify:input:sunwave-fp\",\"kind\":\"config_dts_check\",\"status\":\"verify\",\"title\":\"Verify sunwave-fp DTS/config\",\"component\":{\"domain\":\"input\",\"role\":\"fingerprint\",\"name\":\"sunwave-fp\",\"bus\":null,\"aliases\":[\"sunwave-fp\",\"sunwave_fp\"],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"]},\"search_queries\":[],\"target_paths\":[\"drivers/input\",\"drivers/misc/mediatek\",\"arch/*/boot/dts\"],\"next_action\":\"Check bus/address, Kconfig/Makefile, DTS node and defconfig enablement.\"},{\"key\":\"verify:power:tps65132\",\"kind\":\"config_dts_check\",\"status\":\"verify\",\"title\":\"Verify tps65132 DTS/config\",\"component\":{\"domain\":\"power\",\"role\":\"pmic\",\"name\":\"tps65132\",\"bus\":{\"type\":\"i2c\",\"bus\":0,\"address\":\"0x003e\"},\"aliases\":[\"tps65132\"],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"]},\"search_queries\":[],\"target_paths\":[\"drivers/power\",\"drivers/misc/mediatek/power\",\"arch/*/boot/dts\"],\"next_action\":\"Check bus/address, Kconfig/Makefile, DTS node and defconfig enablement.\"}],\"rules\":[\"Boot cmdline keys are kernel/runtime context, not devices. Do not create driver tasks for androidboot.*, mrdump, bootopt, serialno, console/root/vmalloc/slub/printk.\",\"Platform SoC is context, not a missing driver. Do not mark MT6755/MT6750 platform default as missing.\",\"Use local adapted kernel/device tree, not upstream donor identity.\",\"For missing real external chips, propose exact repo search queries and import target paths; do not claim import happened.\",\"For found drivers, propose config/DTS/list registration checks.\",\"For display, verify LCM driver source, LCM table registration, defconfig CONFIG_CUSTOM_KERNEL_LCM, DTS/LK panel evidence.\",\"Output JSON only with concise arrays.\"]}",
+  "cost_usd": 0.195582,
+  "coverage_summary": {
+    "actionable_missing": 4,
+    "blocked": 0,
+    "found": 9,
+    "info": 0,
+    "missing": 4,
+    "needs_evidence": 0,
+    "partial": 0,
+    "total": 13
+  },
+  "kind": "kernel_hardware_ai_expertise",
+  "model": "cx/gpt-5.5-xhigh",
+  "plan": {
+    "build_checks": [
+      {
+        "checks": [
+          "Defconfig expands with exactly the intended LCM name and no unrelated donor LCM selected as primary.",
+          "All imported drivers have Kconfig symbols and Makefile objects reachable from the selected defconfig.",
+          "DTS contains no duplicate devices at I2C0:0x3e, I2C0:0x5d, I2C1:0x0c, I2C1:0x18, I2C1:0x53, I2C1:0x63, I2C1:0x6a, I2C3:0x6b, or I2C4:0x28.",
+          "Camera sensor list contains imx278mipiraw and ov8856jslmipiraw only after real source implementations are present.",
+          "Battery/charger profile is Meizu-specific, not Huawei donor-only."
+        ],
+        "stage": "pre_build"
+      },
+      {
+        "checks": [
+          "Kernel image builds without undefined references from imported LCM, ALS/PS, camera, flashlight, charger, NFC, or fingerprint objects.",
+          "DTB builds without unresolved phandles, duplicate unit-address warnings, or pinctrl reference errors.",
+          "No imported driver uses incompatible post-3.18 APIs without adaptation.",
+          "No driver registration is hidden behind an unselected project macro."
+        ],
+        "stage": "compile"
+      },
+      {
+        "checks": [
+          "Display initializes with ili9881p_hd_dsi_txd evidence-confirmed sequence.",
+          "Touch probes on I2C0 address 0x5d and emits input events.",
+          "BMA253, LTR578, and ST480 probe on I2C1 at 0x18, 0x53, and 0x0c.",
+          "BQ24157 charger probes on I2C1 address 0x6a and reports safe charge state.",
+          "MT6311 probes or is initialized through the expected PMIC path.",
+          "TPS65132 bias is enabled before panel DSI init and disabled in the correct suspend order.",
+          "NFC MT6605 probes on I2C4 address 0x28 and exposes expected userspace node.",
+          "Sunwave fingerprint exposes expected userspace node and interrupt works.",
+          "Camera sensors read expected IDs for imx278 and ov8856jsl.",
+          "AW3643 torch/flash current limits match stock values.",
+          "Wi-Fi and audio are tested only after chip identities are recovered."
+        ],
+        "stage": "first_boot"
+      }
+    ],
+    "confidence": {
+      "overall": 0.56,
+      "per_domain": {
+        "audio": 0.1,
+        "camera": 0.34,
+        "display_lcm": 0.25,
+        "fingerprint": 0.68,
+        "nfc": 0.72,
+        "power": 0.48,
+        "sensors": 0.62,
+        "touch": 0.75,
+        "wifi": 0.1
+      },
+      "reason": "Local scan coverage is useful, but the selected tree is a Huawei MT6755 donor, the stock device is Meizu M6, the exact LCM is absent, and several matches are not strong enough to claim functional driver support."
+    },
+    "file_plan": [
+      {
+        "action": "Create or adapt a Meizu-specific DTS/DTSI layer instead of blindly editing Huawei donor board data.",
+        "area": "device_dts",
+        "content_requirements": [
+          "Represent I2C0/I2C1/I2C3/I2C4 bus devices with stock addresses.",
+          "Carry Meizu reset/IRQ/power GPIOs from stock DTB/DTS.",
+          "Avoid inheriting Huawei-only panel, camera, charger, and GPIO assumptions."
+        ],
+        "paths": [
+          "arch/arm64/boot/dts/",
+          "arch/arm64/boot/dts/huawei6750_66_n.dts"
+        ]
+      },
+      {
+        "action": "Import exact ili9881p_hd_dsi_txd driver only after source is found.",
+        "area": "display_lcm",
+        "content_requirements": [
+          "LCM_DRIVER.name must match ili9881p_hd_dsi_txd or the exact stock name expected by LK/kernel.",
+          "Register the driver in mt65xx_lcm_list.h.",
+          "Set CONFIG_CUSTOM_KERNEL_LCM to include only proven Meizu panel candidates.",
+          "Preserve stock DSI mode, lane count, timing, reset sequence, TPS65132/bias sequence, and backlight behavior."
+        ],
+        "paths": [
+          "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/",
+          "drivers/misc/mediatek/lcm/mt65xx_lcm_list.h",
+          "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
+        ]
+      },
+      {
+        "action": "Wire existing ft5x0x source to Meizu DTS/config.",
+        "area": "touchscreen",
+        "content_requirements": [
+          "I2C0 address 0x5d.",
+          "Correct interrupt/reset GPIOs and pinctrl states.",
+          "Correct maximum X/Y coordinates and firmware configuration."
+        ],
+        "paths": [
+          "drivers/input/touchscreen/mediatek/ft5x0x/",
+          "drivers/input/touchscreen/mediatek/Kconfig",
+          "drivers/input/touchscreen/mediatek/Makefile",
+          "arch/arm64/boot/dts/"
+        ]
+      },
+      {
+        "action": "Use existing BMA253 and ST480 sources; import LTR578.",
+        "area": "sensors",
+        "content_requirements": [
+          "BMA253 on I2C1 address 0x18.",
+          "LTR578 on I2C1 address 0x53.",
+          "ST480 on I2C1 address 0x0c.",
+          "Correct sensor direction/layout values from stock.",
+          "No duplicate donor devices on I2C1."
+        ],
+        "paths": [
+          "drivers/misc/mediatek/accelerometer/bma253-new/",
+          "drivers/misc/mediatek/magnetometer/st480/",
+          "drivers/misc/mediatek/alsps/ltr578/",
+          "drivers/misc/mediatek/alsps/Kconfig",
+          "drivers/misc/mediatek/alsps/Makefile",
+          "arch/arm64/boot/dts/"
+        ]
+      },
+      {
+        "action": "Verify or import imx278mipiraw; import ov8856jslmipiraw.",
+        "area": "camera_sensors",
+        "content_requirements": [
+          "Register both sensor driver names exactly as expected by stock userspace.",
+          "Preserve power rails, AVDD/DVDD/IOVDD, MCLK, reset, power-down GPIO, and MIPI lane configuration.",
+          "Confirm front/rear camera ordering against stock HAL/NVRAM.",
+          "Do not treat kd_imgsensor.h alone as implementation evidence."
+        ],
+        "paths": [
+          "drivers/misc/mediatek/imgsensor/src/mt6755/",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.c",
+          "drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/Makefile",
+          "arch/arm64/boot/dts/"
+        ]
+      },
+      {
+        "action": "Import AW3643 flashlight driver and register with MTK flashlight list.",
+        "area": "camera_flash",
+        "content_requirements": [
+          "I2C1 address 0x63.",
+          "Correct torch/flash current limits from stock.",
+          "Correct enable/strobe GPIOs if present.",
+          "Camera sensor driver must reference the same flashlight device ID expected by the HAL."
+        ],
+        "paths": [
+          "drivers/misc/mediatek/flashlight/aw3643/",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/flashlight/",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/kd_flashlightlist.c",
+          "arch/arm64/boot/dts/"
+        ]
+      },
+      {
+        "action": "Validate mt6311, bq24157, and tps65132 paths before enabling charger/panel power.",
+        "area": "power",
+        "content_requirements": [
+          "MT6311 on I2C3 address 0x6b.",
+          "BQ24157 on I2C1 address 0x6a with correct charge-current/termination/OTG settings.",
+          "TPS65132 on I2C0 address 0x3e or integrated into LCM bias sequence.",
+          "Battery profile, thermistor table, JEITA policy, and charger current limits must be Meizu-specific."
+        ],
+        "paths": [
+          "drivers/misc/mediatek/power/mt6755/",
+          "drivers/power/mediatek/",
+          "drivers/misc/mediatek/lcm/",
+          "arch/arm64/boot/dts/"
+        ]
+      },
+      {
+        "action": "Wire existing mt6605 source to Meizu DTS/config.",
+        "area": "nfc",
+        "content_requirements": [
+          "I2C4 address 0x28.",
+          "Correct IRQ/VEN/RST GPIOs and wake capability.",
+          "Device node permissions and ABI must match stock NFC HAL."
+        ],
+        "paths": [
+          "drivers/misc/mediatek/nfc/mt6755/",
+          "drivers/misc/mediatek/nfc/Kconfig",
+          "drivers/misc/mediatek/nfc/Makefile",
+          "arch/arm64/boot/dts/"
+        ]
+      },
+      {
+        "action": "Wire existing Sunwave source only after bus and GPIOs are recovered.",
+        "area": "fingerprint",
+        "content_requirements": [
+          "Recover bus type from stock evidence.",
+          "Correct reset/IRQ/power pins.",
+          "Keep device node name compatible with stock fingerprint userspace."
+        ],
+        "paths": [
+          "drivers/input/fingerprint/gn_w_sunwave/",
+          "drivers/input/fingerprint/Kconfig",
+          "drivers/input/fingerprint/Makefile",
+          "arch/arm64/boot/dts/"
+        ]
+      },
+      {
+        "action": "Add separate evidence-gathering tasks; no driver enablement until chips are identified.",
+        "area": "wifi_audio",
+        "content_requirements": [
+          "Identify Wi-Fi/BT combo chip, firmware path, and coexistence requirements.",
+          "Identify audio codec, amp, headset detect, mic bias, receiver, and speaker GPIOs.",
+          "Avoid copying Huawei donor audio/WLAN assumptions without Meizu evidence."
+        ],
+        "paths": [
+          "drivers/misc/mediatek/connectivity/",
+          "sound/soc/mediatek/",
+          "arch/arm64/boot/dts/",
+          "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
+        ]
+      }
+    ],
+    "missing_components": [
+      {
+        "do_not_substitute_without_evidence": [
+          "ili9881c_hd720_dsi_vdo_dijing",
+          "ili9881c_hd720_dsi_vdo_helitec",
+          "hx8394f_hd720_dsi_vdo_truly"
+        ],
+        "domain": "display",
+        "evidence": "No alias matched in selected kernel tree. Existing LCM candidates include ili9881c/hx8394f/nt35695 variants but not ili9881p_hd_dsi_txd.",
+        "import_target_paths": [
+          "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/",
+          "drivers/misc/mediatek/lcm/mt65xx_lcm_list.h",
+          "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig",
+          "arch/arm64/boot/dts/"
+        ],
+        "name": "ili9881p_hd_dsi_txd",
+        "role": "lcm",
+        "status": "missing_exact_driver"
+      },
+      {
+        "domain": "sensors",
+        "evidence": "No alias matched in selected kernel tree.",
+        "import_target_paths": [
+          "drivers/misc/mediatek/alsps/ltr578/",
+          "drivers/misc/mediatek/alsps/Kconfig",
+          "drivers/misc/mediatek/alsps/Makefile",
+          "arch/arm64/boot/dts/"
+        ],
+        "name": "ltr578",
+        "role": "alsps",
+        "status": "missing_driver"
+      },
+      {
+        "domain": "camera",
+        "evidence": "No ov8856jsl/ov8856jslmipiraw implementation matched in selected kernel tree.",
+        "import_target_paths": [
+          "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856jsl_mipi_raw/",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.c",
+          "drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/Makefile",
+          "arch/arm64/boot/dts/"
+        ],
+        "name": "ov8856jslmipiraw",
+        "role": "sensor",
+        "status": "missing_driver"
+      },
+      {
+        "domain": "camera",
+        "evidence": "Scan only listed drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h; this is insufficient to claim sensor implementation exists.",
+        "import_target_paths": [
+          "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.c",
+          "drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/Makefile",
+          "arch/arm64/boot/dts/"
+        ],
+        "name": "imx278mipiraw",
+        "role": "sensor",
+        "status": "implementation_not_verified"
+      },
+      {
+        "domain": "camera",
+        "evidence": "No aw3643/leds_aw3643 alias matched in selected kernel tree.",
+        "import_target_paths": [
+          "drivers/misc/mediatek/flashlight/aw3643/",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/flashlight/",
+          "drivers/misc/mediatek/imgsensor/src/mt6755/kd_flashlightlist.c",
+          "arch/arm64/boot/dts/"
+        ],
+        "name": "leds-AW3643",
+        "role": "flash",
+        "status": "missing_driver"
+      }
+    ],
+    "next_actions": [
+      {
+        "action": "Recover stock Meizu DTB/DTS, LK panel logs, and stock kernel probe logs.",
+        "goal": "Confirm exact LCM, GPIOs, regulators, camera ordering, Wi-Fi chip, and audio codec before editing the donor tree.",
+        "priority": 1
+      },
+      {
+        "action": "Perform exact local rescan for weak matches.",
+        "goal": "Reclassify imx278mipiraw, bq24157, and tps65132 as real implementations, unrelated matches, or missing imports.",
+        "priority": 2
+      },
+      {
+        "action": "Search and stage MTK 3.18-compatible missing drivers.",
+        "goal": "Import ili9881p_hd_dsi_txd, ltr578, ov8856jslmipiraw, imx278mipiraw if absent, AW3643, and bq24157 if absent.",
+        "priority": 3
+      },
+      {
+        "action": "Create a Meizu-specific DTS/DTSI layer.",
+        "goal": "Map all known I2C devices and GPIO/regulator dependencies without inheriting incompatible Huawei donor board data.",
+        "priority": 4
+      },
+      {
+        "action": "Patch defconfig and registration files only after source and DTS evidence are resolved.",
+        "goal": "Avoid enabling stale donor components or panel fallbacks.",
+        "priority": 5
+      },
+      {
+        "action": "Run build and first-boot validation by domain.",
+        "goal": "Validate display, touch, sensors, camera, power, NFC, fingerprint, Wi-Fi, and audio independently.",
+        "priority": 6
+      }
+    ],
+    "repo_search_queries": [
+      {
+        "component": "ili9881p_hd_dsi_txd",
+        "preferred_import_path": "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/",
+        "queries": [
+          "ili9881p_hd_dsi_txd mt6755 android kernel",
+          "ili9881p-hd-dsi-txd drivers/misc/mediatek/lcm",
+          "ili9881p_hd_dsi_txd mt6750 lcm driver",
+          "MEIZU M6 ili9881p_hd_dsi_txd kernel source",
+          "\"ili9881p_hd_dsi_txd\" \"mt65xx_lcm_list\""
+        ]
+      },
+      {
+        "component": "ltr578",
+        "preferred_import_path": "drivers/misc/mediatek/alsps/ltr578/",
+        "queries": [
+          "ltr578 mt6755 android kernel driver",
+          "ltr578 drivers/misc/mediatek/alsps",
+          "\"ltr578\" \"mediatek\" \"3.18\"",
+          "\"LTR578\" \"CUSTOM_KERNEL_ALSPS\"",
+          "ltr578 mt6750 alsps driver"
+        ]
+      },
+      {
+        "component": "ov8856jslmipiraw",
+        "preferred_import_path": "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856jsl_mipi_raw/",
+        "queries": [
+          "ov8856jslmipiraw mt6755 android kernel",
+          "ov8856jslmipi drivers/misc/mediatek/imgsensor",
+          "ov8856jsl mipi raw mt6750 kernel",
+          "\"ov8856jslmipiraw\" \"kd_sensorlist\"",
+          "\"ov8856jsl\" \"SENSOR_DRVNAME\""
+        ]
+      },
+      {
+        "component": "imx278mipiraw",
+        "preferred_import_path": "drivers/misc/mediatek/imgsensor/src/mt6755/imx278_mipi_raw/",
+        "queries": [
+          "imx278mipiraw mt6755 android kernel",
+          "imx278 mipi raw drivers/misc/mediatek/imgsensor",
+          "\"imx278mipiraw\" \"kd_sensorlist\"",
+          "\"imx278\" \"SENSOR_DRVNAME\" \"mt6755\"",
+          "imx278 mt6750 mipi raw kernel source"
+        ]
+      },
+      {
+        "component": "leds-AW3643",
+        "preferred_import_path": "drivers/misc/mediatek/flashlight/aw3643/",
+        "queries": [
+          "leds_aw3643 mt6755 android kernel driver",
+          "aw3643 drivers/misc/mediatek flashlight",
+          "\"AW3643\" \"kd_flashlightlist\"",
+          "\"leds-AW3643\" \"mediatek\"",
+          "aw3643 mt6750 flashlight driver"
+        ]
+      },
+      {
+        "component": "bq24157",
+        "preferred_import_path": "drivers/misc/mediatek/power/mt6755/",
+        "queries": [
+          "bq24157 mt6755 android kernel charging_hw",
+          "bq24157 drivers/misc/mediatek/power mt6750",
+          "\"bq24157\" \"mt_charging\"",
+          "\"bq24157\" \"charging_hw\" \"mediatek\"",
+          "MEIZU M6 bq24157 kernel source"
+        ]
+      }
+    ],
+    "risks": [
+      {
+        "details": "Using ili9881c/hx8394f donor panels instead of ili9881p_hd_dsi_txd can produce black display or wrong bias sequencing.",
+        "risk": "Wrong LCM fallback",
+        "severity": "high"
+      },
+      {
+        "details": "Huawei6750 DTS/defconfig may compile but encode wrong GPIOs, regulators, camera ordering, charger profile, and audio routing for Meizu M6.",
+        "risk": "Board donor mismatch",
+        "severity": "high"
+      },
+      {
+        "details": "BQ24157 support is not proven by the listed files. Wrong charge current or thermal policy can cause no-charge, overcurrent, or thermal faults.",
+        "risk": "Unsafe charger behavior",
+        "severity": "high"
+      },
+      {
+        "details": "imx278 header presence does not mean the sensor implementation exists. Stock HAL may fail if sensor order or driver name differs.",
+        "risk": "Camera false-positive",
+        "severity": "medium"
+      },
+      {
+        "details": "BMA253 and ST480 may probe but report wrong axes if donor layout values are retained.",
+        "risk": "Sensor orientation mismatch",
+        "severity": "medium"
+      },
+      {
+        "details": "Sunwave source exists, but the profile lacks bus type and GPIO evidence.",
+        "risk": "Fingerprint bus ambiguity",
+        "severity": "medium"
+      },
+      {
+        "details": "No Wi-Fi or audio hardware identities were supplied; enabling donor defaults may not work and can hide missing firmware or codec routing issues.",
+        "risk": "Wi-Fi/audio omitted",
+        "severity": "high"
+      },
+      {
+        "details": "NFC, fingerprint, camera, flashlight, and sensors must expose device nodes and names expected by stock Meizu userspace.",
+        "risk": "Userspace ABI mismatch",
+        "severity": "medium"
+      }
+    ],
+    "script_plan": [
+      {
+        "inputs": [
+          "stock_hardware_profile.components",
+          "kernel_tree.path",
+          "kernel_tree.defconfig"
+        ],
+        "name": "exact_symbol_rescan",
+        "notes": "No component should be promoted to present from a header-only or unrelated LCM-source match.",
+        "outputs": [
+          "strong_present",
+          "header_only",
+          "unrelated_match",
+          "missing"
+        ],
+        "purpose": "Reclassify weak matches by checking exact symbols, driver structs, Makefile entries, Kconfig symbols, and DTS compatible strings for each component."
+      },
+      {
+        "inputs": [
+          "stock boot image",
+          "stock dtb/dtbo if available",
+          "stock LK or preloader logs if available",
+          "stock dmesg/kmsg"
+        ],
+        "name": "stock_dtb_lk_evidence_extract",
+        "outputs": [
+          "panel evidence",
+          "i2c device map",
+          "gpio map",
+          "regulator map",
+          "wifi identity",
+          "audio identity"
+        ],
+        "purpose": "Extract authoritative Meizu board pins, regulators, panel name, camera ordering, charger settings, Wi-Fi, and audio data from stock DTB/LK/logs."
+      },
+      {
+        "inputs": [
+          "arch/arm64/boot/dts/huawei6750_66_n.dts",
+          "planned Meizu DTS overlay"
+        ],
+        "name": "dts_bus_conflict_audit",
+        "outputs": [
+          "i2c0 conflicts",
+          "i2c1 conflicts",
+          "i2c3 conflicts",
+          "i2c4 conflicts",
+          "gpio conflicts"
+        ],
+        "purpose": "Compare Meizu hardware addresses against existing Huawei DTS nodes and flag duplicates or wrong devices."
+      },
+      {
+        "inputs": [
+          "driver source paths",
+          "Kconfig files",
+          "Makefiles",
+          "al00_ato_huawei6750_66_n_defconfig"
+        ],
+        "name": "config_dependency_resolver",
+        "outputs": [
+          "required CONFIG additions",
+          "unused donor CONFIG removals",
+          "compile dependency list"
+        ],
+        "purpose": "Map each driver to its Kconfig symbol, Makefile object, and defconfig line."
+      },
+      {
+        "inputs": [
+          "source repository candidate",
+          "kernel_generation",
+          "component target path"
+        ],
+        "name": "driver_import_staging",
+        "outputs": [
+          "new files",
+          "modified registration files",
+          "required compatibility fixes"
+        ],
+        "purpose": "Stage only compatible MTK 3.18-era missing drivers into target paths and record all registration edits."
+      },
+      {
+        "inputs": [
+          "compiled kernel",
+          "compiled dtb",
+          "stock userspace"
+        ],
+        "name": "boot_probe_validation_matrix",
+        "outputs": [
+          "expected probe names",
+          "expected I2C addresses",
+          "expected device nodes",
+          "failure signatures"
+        ],
+        "purpose": "Define first-boot checks for each domain after build."
+      }
+    ],
+    "summary": {
+      "coverage_assessment": "The scan proves several compatible MTK 3.18-era driver sources exist, but some 'found' matches are weak header-only or unrelated-source matches. Exact stock LCM is absent. Camera, ALS/PS, flash, charger, LCD bias, Wi-Fi, and audio require extra evidence before deterministic enablement.",
+      "device": "Meizu MEIZU M6 / meizu_M6",
+      "kernel_generation": "MediaTek Android 3.18.35+",
+      "platform_context": "Stock evidence reports MT6755 platform/androidboot.hardware while device input says MT6750 family; treat as MT6750/MT6755-family context, not a missing driver.",
+      "primary_blockers": [
+        "Exact LCM driver ili9881p_hd_dsi_txd is missing from the selected tree.",
+        "ltr578 ALS/PS driver is missing.",
+        "ov8856jslmipiraw camera implementation is missing.",
+        "AW3643 flash implementation is missing.",
+        "imx278mipiraw is only weakly evidenced by header reference; implementation must be verified or imported.",
+        "Wi-Fi and audio hardware are not present in the supplied hardware profile and must be identified separately."
+      ],
+      "selected_defconfig": "al00_ato_huawei6750_66_n_defconfig",
+      "selected_kernel_tree": "/srv/forge/android/kernel-meizu_M6-N-ex6/kernel-3.18"
+    },
+    "suspicious_components": [
+      {
+        "domain": "platform",
+        "impact": "Clock, pinctrl, PMIC, charger, camera GPIO, modem, and display power sequencing may compile but be board-inaccurate.",
+        "issue": "Device input says mt6750/mtk-mt6750, stock boot and profile report MT6755, while selected defconfig/DTS are Huawei6750_66_n.",
+        "name": "MT6750 versus MT6755/Huawei donor",
+        "required_resolution": "Use stock Meizu DTS/DTB/LK/kernel logs as authority for board-level pins and component routing.",
+        "role": "soc_tree"
+      },
+      {
+        "domain": "display",
+        "impact": "Using a donor ili9881c or hx8394f panel can cause black screen, wrong reset sequence, wrong bias voltage, or boot-loop during display init.",
+        "issue": "Local candidates are high-confidence source matches inside donor tree but none match stock ili9881p_hd_dsi_txd.",
+        "name": "kernel LCM candidates",
+        "required_resolution": "Import exact ili9881p_hd_dsi_txd or prove compatible init sequence from stock LK/DTS/logs before selecting any fallback.",
+        "role": "lcm"
+      },
+      {
+        "domain": "power",
+        "impact": "Charger may compile through generic MTK charging layer but use wrong charger IC operations, causing no charge or unsafe current/voltage behavior.",
+        "issue": "Scan listed mt_charging.h and drivers/power/mediatek/Makefile, not a clear bq24157 implementation.",
+        "name": "bq24157",
+        "required_resolution": "Confirm actual bq24157 symbols/functions in charging_hw implementation. If absent, import a MTK 3.18-compatible bq24157 charger driver.",
+        "role": "charger"
+      },
+      {
+        "domain": "power",
+        "impact": "Panel bias enable sequence may be missing even after importing the LCM driver.",
+        "issue": "Matches appear inside unrelated LCM drivers, not as confirmed support for the stock ili9881p_hd_dsi_txd panel.",
+        "name": "tps65132",
+        "required_resolution": "Integrate TPS65132 handling into the exact stock LCM path or provide a shared bias helper compatible with the imported panel driver.",
+        "role": "lcd_bias"
+      },
+      {
+        "domain": "camera",
+        "impact": "Camera sensor ID may exist but probe/readout/power sequence may be missing.",
+        "issue": "Header-only evidence is not enough to claim a working sensor driver.",
+        "name": "imx278mipiraw",
+        "required_resolution": "Find real imx278mipiraw source directory and kd_sensorlist registration, or import compatible source.",
+        "role": "sensor"
+      },
+      {
+        "domain": "connectivity",
+        "impact": "ROM may boot without WLAN, Bluetooth coexistence, or correct firmware path.",
+        "issue": "Wi-Fi chip/module is absent from supplied hardware profile and scan summary.",
+        "name": "unknown",
+        "required_resolution": "Extract Wi-Fi/BT combo chip identity from stock DTS, kernel config, modules, /proc, or stock dmesg before planning adaptation.",
+        "role": "wifi"
+      },
+      {
+        "domain": "audio",
+        "impact": "Kernel may compile but speaker, earpiece, headset, microphone, or amp enable GPIOs may fail.",
+        "issue": "Audio codec/amp/receiver/mic routing are absent from supplied hardware profile and scan summary.",
+        "name": "unknown",
+        "required_resolution": "Extract codec, external amp, headset detect, speaker amp, and AudioMachine data from stock DTS/kernel logs before enabling donor audio config.",
+        "role": "codec"
+      }
+    ],
+    "verified_components": [
+      {
+        "domain": "input",
+        "evidence_files": [
+          "drivers/input/touchscreen/mediatek/ft5x0x/ft5x0x_driver.c",
+          "drivers/input/touchscreen/mediatek/ft5x0x/ft5x0x_upgrade.c",
+          "drivers/input/touchscreen/mediatek/ft5x0x/Makefile",
+          "drivers/input/touchscreen/mediatek/ft5x26/ft5x26_driver.c"
+        ],
+        "name": "ft5x0x",
+        "required_checks": [
+          "Confirm I2C bus 0 address 0x5d in DTS or board custom data.",
+          "Confirm reset GPIO, interrupt GPIO/EINT, pinctrl states, and regulator supply names.",
+          "Confirm Makefile/Kconfig/defconfig selects the ft5x0x implementation, not only ft5x26.",
+          "Confirm firmware/config panel ID is compatible with the Meizu M6 touch module."
+        ],
+        "role": "touchscreen",
+        "status": "driver_source_present_needs_dts_config_validation"
+      },
+      {
+        "domain": "sensors",
+        "evidence_files": [
+          "drivers/misc/mediatek/accelerometer/bma253-new/bma2x2.c",
+          "drivers/misc/mediatek/accelerometer/bma253-new/Kconfig",
+          "drivers/misc/mediatek/accelerometer/Makefile",
+          "arch/arm64/boot/dts/huawei6750_66_n.dts"
+        ],
+        "name": "BMA253",
+        "required_checks": [
+          "Confirm I2C bus 1 address 0x18.",
+          "Confirm accel direction/layout/mount matrix against stock.",
+          "Confirm CONFIG and Makefile include bma253-new.",
+          "Confirm no donor DTS address conflict on I2C1."
+        ],
+        "role": "accelerometer",
+        "status": "compatible_driver_source_present_needs_layout_validation"
+      },
+      {
+        "domain": "sensors",
+        "evidence_files": [
+          "drivers/misc/mediatek/magnetometer/st480/st480.c",
+          "drivers/misc/mediatek/magnetometer/st480/st480.h",
+          "drivers/misc/mediatek/magnetometer/st480/Kconfig",
+          "drivers/misc/mediatek/magnetometer/st480/Makefile"
+        ],
+        "name": "st480",
+        "required_checks": [
+          "Confirm I2C bus 1 address 0x0c.",
+          "Confirm compass layout/orientation.",
+          "Confirm CONFIG and Makefile registration.",
+          "Confirm stock calibration path expected by userspace."
+        ],
+        "role": "magnetometer",
+        "status": "driver_source_present_needs_dts_config_validation"
+      },
+      {
+        "domain": "connectivity",
+        "evidence_files": [
+          "drivers/misc/mediatek/nfc/mt6755/mt6605.c",
+          "drivers/misc/mediatek/nfc/mt6755/Makefile",
+          "drivers/misc/mediatek/nfc/Kconfig"
+        ],
+        "name": "mt6605",
+        "required_checks": [
+          "Confirm I2C bus 4 address 0x28.",
+          "Confirm VEN/RST/IRQ GPIOs and EINT polarity from stock DTS or stock logs.",
+          "Confirm userspace device node and ioctl ABI match the Meizu NFC HAL.",
+          "Confirm defconfig enables the MT6605 NFC path."
+        ],
+        "role": "nfc",
+        "status": "driver_source_present_needs_gpio_dts_validation"
+      },
+      {
+        "domain": "input",
+        "evidence_files": [
+          "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.c",
+          "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.h",
+          "drivers/input/fingerprint/gn_w_sunwave/Makefile"
+        ],
+        "name": "sunwave-fp",
+        "required_checks": [
+          "Identify actual bus from stock DTS or kernel log; profile does not provide SPI/I2C/GPIO-only detail.",
+          "Confirm reset, IRQ, power, and optional SPI pins.",
+          "Confirm node name and device path expected by stock fingerprint HAL.",
+          "Confirm defconfig/Kconfig enables this driver."
+        ],
+        "role": "fingerprint",
+        "status": "driver_source_present_bus_unknown_needs_stock_evidence"
+      },
+      {
+        "domain": "power",
+        "evidence_files": [
+          "drivers/misc/mediatek/power/mt6755/pmic.c",
+          "drivers/misc/mediatek/power/mt6755/pmic.h",
+          "drivers/misc/mediatek/power/mt6755/mt6311.h",
+          "drivers/misc/mediatek/i2c/mt6755/i2c.c"
+        ],
+        "name": "mt6311",
+        "required_checks": [
+          "Confirm I2C bus 3 address 0x6b.",
+          "Confirm mt6311 access path is compiled, not only header-present.",
+          "Confirm regulator/voltage table matches the Meizu board.",
+          "Confirm no Huawei donor board-specific PMIC assumptions conflict with Meizu M6."
+        ],
+        "role": "pmic",
+        "status": "platform_support_evidenced_needs_registration_validation"
+      }
+    ]
+  },
+  "policy": "AI plan is checked against parsed hardware before any source edits. Boot cmdline/platform context is never a driver task.",
+  "provider": "omniroute",
+  "updated_at": "2026-05-09T14:33:37.757532+00:00",
+  "validation": {
+    "accepted_missing_components": [
+      {
+        "domain": "display",
+        "name": "ili9881p_hd_dsi_txd",
+        "source": "ai_missing_components",
+        "status": "missing_exact_driver"
+      },
+      {
+        "domain": "sensors",
+        "name": "ltr578",
+        "source": "ai_missing_components",
+        "status": "missing_driver"
+      },
+      {
+        "domain": "camera",
+        "name": "ov8856jslmipiraw",
+        "source": "ai_missing_components",
+        "status": "missing_driver"
+      },
+      {
+        "domain": "camera",
+        "name": "imx278mipiraw",
+        "source": "ai_missing_components",
+        "status": "implementation_not_verified"
+      },
+      {
+        "domain": "camera",
+        "name": "leds-AW3643",
+        "source": "ai_missing_components",
+        "status": "missing_driver"
+      }
+    ],
+    "rejected_items": [],
+    "rules": [
+      "SoC/platform/cmdline values are context only",
+      "Only parser-confirmed actionable hardware can become source edits",
+      "AI output is saved as evidence, not trusted source truth"
+    ],
+    "summary": "accepted missing: 5, warnings: 0, rejected noise: 0",
+    "verdict": "accepted",
+    "warnings": []
+  },
+  "version": 1,
+  "web_search_required": true
+}

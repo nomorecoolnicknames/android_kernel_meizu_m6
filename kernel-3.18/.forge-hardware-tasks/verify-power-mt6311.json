@@ -8,10 +8,23 @@
   "candidate_sources": [],
   "checks": [
     {
-      "detail": "no source file matched hardware aliases",
-      "files": [],
+      "detail": "driver-like source references found",
+      "files": [
+        "drivers/misc/mediatek/i2c/mt6755/i2c.c",
+        "drivers/misc/mediatek/power/mt6755/pmic.c",
+        "drivers/misc/mediatek/power/mt6755/charging_hw_sy6923d.c",
+        "drivers/misc/mediatek/power/mt6755/pmic.h",
+        "drivers/misc/mediatek/power/mt6755/mt6311.h",
+        "drivers/misc/mediatek/power/mt6755/Makefile",
+        "drivers/misc/mediatek/power/mt6755/charging_hw_bq25890.c",
+        "drivers/misc/mediatek/power/mt6755/pmic_irq.c",
+        "drivers/misc/mediatek/power/mt6755/mt6311.c",
+        "drivers/misc/mediatek/thermal/common/thermal_zones/mtk_ts_6311buck.c",
+        "drivers/misc/mediatek/base/power/spm_v2/mt_spm_sodi3p0.c",
+        "drivers/misc/mediatek/base/power/spm_v2/mt_spm_sleep.c"
+      ],
       "name": "source_files",
-      "status": "missing"
+      "status": "pass"
     },
     {
       "detail": "defconfig enablement not proven",
@@ -20,39 +33,51 @@
       "status": "missing"
     },
     {
-      "detail": "DTS bus/address binding not proven",
-      "files": [],
+      "detail": "DTS references hardware alias",
+      "files": [
+        "arch/arm/boot/dts/mt6755.dtsi",
+        "arch/arm64/boot/dts/mt6755.dtsi"
+      ],
       "name": "dts_refs",
-      "status": "missing"
+      "status": "pass"
     },
     {
-      "detail": "Kbuild registration needs verification",
-      "files": [],
+      "detail": "Kconfig/Makefile references matched files",
+      "files": [
+        "drivers/misc/mediatek/i2c/mt6755/Makefile",
+        "drivers/misc/mediatek/i2c/Makefile",
+        "drivers/misc/mediatek/i2c/Kconfig",
+        "drivers/misc/mediatek/power/mt6755/Makefile",
+        "drivers/misc/mediatek/power/Kconfig",
+        "drivers/misc/mediatek/thermal/common/thermal_zones/Makefile",
+        "drivers/misc/mediatek/thermal/common/Makefile"
+      ],
       "name": "kbuild_refs",
-      "status": "missing"
+      "status": "pass"
     }
   ],
   "component": {
     "aliases": [
-      "ov8856jslmipi",
-      "ov8856jsl",
-      "ov8856jslmipiraw",
-      "ov8856"
+      "mt6311"
     ],
-    "bus": null,
-    "domain": "camera",
-    "name": "ov8856jslmipiraw",
-    "raw": "ov8856jslmipiraw",
-    "role": "sensor",
+    "bus": {
+      "address": "0x006b",
+      "bus": 3,
+      "type": "i2c"
+    },
+    "domain": "power",
+    "name": "mt6311",
+    "raw": "mt6311, i2c 3-006b",
+    "role": "pmic",
     "target_paths": [
-      "drivers/misc/mediatek/imgsensor",
-      "drivers/media",
+      "drivers/power",
+      "drivers/misc/mediatek/power",
       "arch/*/boot/dts"
     ]
   },
-  "key": "import:camera:ov8856jslmipiraw",
+  "key": "verify:power:mt6311",
   "kind": "kernel_hardware_work_item_task",
-  "mode": "import_driver_source",
+  "mode": "verify_driver_registration",
   "policy": "This is an executable adaptation task for the local kernel tree. Donor repos are sources only; source changes must happen in this worktree and be committed separately.",
   "profile_context": {
     "boot": {
@@ -99,30 +124,23 @@
     },
     "platform": "MT6755"
   },
-  "reason": "no alias matched in kernel source",
-  "search_queries": [
-    "ov8856jslmipi mt6755 android kernel driver",
-    "ov8856jslmipi drivers/misc/mediatek mt6755",
-    "ov8856jsl mt6755 android kernel driver",
-    "ov8856jsl drivers/misc/mediatek mt6755",
-    "ov8856jslmipiraw mt6755 android kernel driver",
-    "ov8856jslmipiraw drivers/misc/mediatek mt6755"
-  ],
+  "reason": null,
+  "search_queries": [],
   "source_steps": [
-    "Use search_queries to find a same-kernel-generation camera driver for ov8856jslmipiraw.",
+    "Use search_queries to find a same-kernel-generation power driver for mt6311.",
     "Copy source into one of target_paths inside this local kernel tree; do not build from donor path directly.",
     "Register source in nearby Makefile/Kconfig or MTK driver list.",
     "Enable required config in selected defconfig.",
-    "Register DTS/board data only after stock bus/address/irq/regulator evidence exists."
+    "Register DTS/board data with stock bus evidence: {\"address\": \"0x006b\", \"bus\": 3, \"type\": \"i2c\"}."
   ],
-  "summary": "import task prepared for missing kernel driver ov8856jslmipiraw",
+  "summary": "registration verification task prepared for mt6311",
   "target_paths": [
-    "drivers/misc/mediatek/imgsensor",
-    "drivers/media",
+    "drivers/power",
+    "drivers/misc/mediatek/power",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T14:37:48.823501+00:00",
+  "updated_at": "2026-05-09T14:37:49.446521+00:00",
   "version": 1,
-  "work_item_kind": "driver_import_candidate",
-  "work_item_status": "blocked"
+  "work_item_kind": "config_dts_check",
+  "work_item_status": "verify"
 }

@@ -17,7 +17,7 @@
     "registered": true
   },
   "kind": "kernel_hardware_adaptation_worklist",
-  "policy": "Work items are generated evidence. Import/register actions must be committed separately after scripts change source files.",
+  "policy": "Generated evidence. Batch pass prepares tasks and imports only parser-confirmed actionable hardware.",
   "profile": {
     "boot": {
       "androidboot.bootreason": "wdt_by_pass_pwk",
@@ -354,7 +354,7 @@
       "snapshot": true
     }
   },
-  "updated_at": "2026-05-09T14:32:31.419892+00:00",
+  "updated_at": "2026-05-09T14:33:37.756050+00:00",
   "version": 1,
   "work_items": [
     {
