@@ -1,0 +1,36 @@
+{
+  "component": {
+    "aliases": [
+      "ili9881p-hd-dsi-txd",
+      "ili9881p_hd_dsi_txd"
+    ],
+    "bus": null,
+    "domain": "display",
+    "name": "ili9881p_hd_dsi_txd",
+    "raw": "ili9881p_hd_dsi_txd",
+    "role": "lcm",
+    "target_paths": [
+      "drivers/misc/mediatek/lcm",
+      "drivers/gpu/drm",
+      "arch/*/boot/dts",
+      "arch/*/configs"
+    ]
+  },
+  "copied_files": [
+    "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs/ili9881c_hd_dsi_vdo_ilitek_nt50358/Makefile",
+    "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs/ili9881c_hd_dsi_vdo_ilitek_nt50358/ili9881c_hd_dsi_vdo_ilitek_nt50358.c"
+  ],
+  "key": "import:display:ili9881p_hd_dsi_txd",
+  "kind": "kernel_hardware_candidate_import",
+  "next_steps": [
+    "review imported source for branch API drift before Kbuild registration",
+    "add Kconfig/Makefile or MTK driver-list registration in a separate commit",
+    "wire DTS/board data from stock bus/address evidence",
+    "run kernel defconfig/module build before enabling full ROM build"
+  ],
+  "source_path": "/tmp/MTK_LCM_Collection/ili/ili9881c_hd_dsi_vdo_ilitek_nt50358",
+  "source_root": "/tmp/MTK_LCM_Collection/ili/ili9881c_hd_dsi_vdo_ilitek_nt50358",
+  "target_base": "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs",
+  "updated_at": "2026-05-09T18:23:43.861268+00:00",
+  "version": 1
+}
