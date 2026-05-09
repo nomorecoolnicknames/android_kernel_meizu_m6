@@ -1,0 +1,43 @@
+{
+  "component": {
+    "aliases": [
+      "ltr578"
+    ],
+    "bus": {
+      "address": "0x0053",
+      "bus": 1,
+      "type": "i2c"
+    },
+    "domain": "sensors",
+    "name": "ltr578",
+    "raw": "ltr578, i2c 1-0053",
+    "role": "alsps",
+    "target_paths": [
+      "drivers/misc/mediatek/sensors",
+      "drivers/iio",
+      "drivers/input",
+      "arch/*/boot/dts"
+    ]
+  },
+  "copied_files": [
+    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Kconfig",
+    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Makefile",
+    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.h",
+    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.c",
+    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/cust_alsps_ltr559.h",
+    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/sensor_dts.h"
+  ],
+  "key": "import:sensors:ltr578",
+  "kind": "kernel_hardware_candidate_import",
+  "next_steps": [
+    "review imported source for branch API drift before Kbuild registration",
+    "add Kconfig/Makefile or MTK driver-list registration in a separate commit",
+    "wire DTS/board data from stock bus/address evidence",
+    "run kernel defconfig/module build before enabling full ROM build"
+  ],
+  "source_path": "/tmp/mtk-search-vgdn/drivers/misc/mediatek/sensors-1.0/alsps/ltr559",
+  "source_root": "/tmp/mtk-search-vgdn/drivers/misc/mediatek/sensors-1.0/alsps/ltr559",
+  "target_base": "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10",
+  "updated_at": "2026-05-09T18:24:30.143939+00:00",
+  "version": 1
+}
