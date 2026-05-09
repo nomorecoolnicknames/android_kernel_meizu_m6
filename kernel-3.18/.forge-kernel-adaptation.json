@@ -1,0 +1,11 @@
+{
+  "codename": "meizu_M6",
+  "defconfig": "al00_ato_huawei6750_66_n_defconfig",
+  "kind": "local_kernel_adaptation",
+  "policy": "Build Station edits this local kernel tree; donor remotes are evidence only.",
+  "remote_evidence": "forge/kernel-adapt-meizu_M6\norigin\thttps://github.com/Dawn-Blossoms/android_kernel_collection_mt6750 (fetch)\norigin\thttps://github.com/Dawn-Blossoms/android_kernel_collection_mt6750 (push)",
+  "selected_lcm": null,
+  "soc": "mt6750",
+  "updated_at": "2026-05-09T22:09:18.858110+00:00",
+  "version": 1
+}
