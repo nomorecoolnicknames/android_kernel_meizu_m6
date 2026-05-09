@@ -1,0 +1,40 @@
+{
+  "component": {
+    "aliases": [
+      "leds_aw3643",
+      "leds-aw3643",
+      "aw3643"
+    ],
+    "bus": {
+      "address": "0x0063",
+      "bus": 1,
+      "type": "i2c"
+    },
+    "domain": "camera",
+    "name": "leds-AW3643",
+    "raw": "leds-AW3643, i2c 1-0063",
+    "role": "flash",
+    "target_paths": [
+      "drivers/misc/mediatek/imgsensor",
+      "drivers/media",
+      "arch/*/boot/dts"
+    ]
+  },
+  "copied_files": [
+    "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383/constant_flashlight/Makefile",
+    "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383/constant_flashlight/leds_strobe.c"
+  ],
+  "key": "import:camera:leds-AW3643",
+  "kind": "kernel_hardware_candidate_import",
+  "next_steps": [
+    "review imported source for branch API drift before Kbuild registration",
+    "add Kconfig/Makefile or MTK driver-list registration in a separate commit",
+    "wire DTS/board data from stock bus/address evidence",
+    "run kernel defconfig/module build before enabling full ROM build"
+  ],
+  "source_path": "/tmp/DOOGEE-kernel-3.18/drivers/misc/mediatek/flashlight/src/mt6755/p383/constant_flashlight",
+  "source_root": "/tmp/DOOGEE-kernel-3.18/drivers/misc/mediatek/flashlight/src/mt6755/p383/constant_flashlight",
+  "target_base": "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383",
+  "updated_at": "2026-05-09T18:26:24.505308+00:00",
+  "version": 1
+}
