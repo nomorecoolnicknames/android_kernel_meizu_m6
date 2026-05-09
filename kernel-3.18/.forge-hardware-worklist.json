@@ -49,8 +49,8 @@
     "components": [
       {
         "aliases": [
-          "ili9881p_hd_dsi_txd",
-          "ili9881p-hd-dsi-txd"
+          "ili9881p-hd-dsi-txd",
+          "ili9881p_hd_dsi_txd"
         ],
         "bus": null,
         "domain": "display",
@@ -145,9 +145,9 @@
       },
       {
         "aliases": [
-          "imx278mipiraw",
+          "imx278",
           "imx278mipi",
-          "imx278"
+          "imx278mipiraw"
         ],
         "bus": null,
         "domain": "camera",
@@ -162,10 +162,10 @@
       },
       {
         "aliases": [
+          "ov8856jsl",
           "ov8856",
-          "ov8856jslmipiraw",
           "ov8856jslmipi",
-          "ov8856jsl"
+          "ov8856jslmipiraw"
         ],
         "bus": null,
         "domain": "camera",
@@ -257,8 +257,8 @@
       },
       {
         "aliases": [
-          "sunwave-fp",
-          "sunwave_fp"
+          "sunwave_fp",
+          "sunwave-fp"
         ],
         "bus": null,
         "domain": "input",
@@ -273,8 +273,8 @@
       },
       {
         "aliases": [
-          "leds_aw3643",
           "aw3643",
+          "leds_aw3643",
           "leds-aw3643"
         ],
         "bus": {
@@ -354,14 +354,14 @@
       "snapshot": true
     }
   },
-  "updated_at": "2026-05-09T15:26:55.404487+00:00",
+  "updated_at": "2026-05-09T16:20:37.602674+00:00",
   "version": 1,
   "work_items": [
     {
       "component": {
         "aliases": [
-          "ili9881p_hd_dsi_txd",
-          "ili9881p-hd-dsi-txd"
+          "ili9881p-hd-dsi-txd",
+          "ili9881p_hd_dsi_txd"
         ],
         "bus": null,
         "domain": "display",
@@ -380,11 +380,11 @@
       "next_action": "Search compatible driver source, stage into local kernel tree, then register DTS/config.",
       "reason": "no alias matched in kernel source",
       "search_queries": [
-        "ili9881p_hd_dsi_txd mt6755 android kernel driver",
-        "ili9881p_hd_dsi_txd drivers/misc/mediatek mt6755",
         "ili9881p-hd-dsi-txd mt6755 android kernel driver",
         "ili9881p-hd-dsi-txd drivers/misc/mediatek mt6755",
-        "ili9881p_hd_dsi_txd MTK_LCM_Collection"
+        "ili9881p_hd_dsi_txd mt6755 android kernel driver",
+        "ili9881p_hd_dsi_txd drivers/misc/mediatek mt6755",
+        "ili9881p-hd-dsi-txd MTK_LCM_Collection"
       ],
       "status": "blocked",
       "target_paths": [
@@ -398,8 +398,8 @@
     {
       "component": {
         "aliases": [
-          "leds_aw3643",
           "aw3643",
+          "leds_aw3643",
           "leds-aw3643"
         ],
         "bus": {
@@ -422,10 +422,10 @@
       "next_action": "Search compatible driver source, stage into local kernel tree, then register DTS/config.",
       "reason": "no alias matched in kernel source",
       "search_queries": [
-        "leds_aw3643 mt6755 android kernel driver",
-        "leds_aw3643 drivers/misc/mediatek mt6755",
         "aw3643 mt6755 android kernel driver",
         "aw3643 drivers/misc/mediatek mt6755",
+        "leds_aw3643 mt6755 android kernel driver",
+        "leds_aw3643 drivers/misc/mediatek mt6755",
         "leds-aw3643 mt6755 android kernel driver",
         "leds-aw3643 drivers/misc/mediatek mt6755"
       ],
@@ -478,10 +478,10 @@
     {
       "component": {
         "aliases": [
+          "ov8856jsl",
           "ov8856",
-          "ov8856jslmipiraw",
           "ov8856jslmipi",
-          "ov8856jsl"
+          "ov8856jslmipiraw"
         ],
         "bus": null,
         "domain": "camera",
@@ -499,10 +499,10 @@
       "next_action": "Search compatible driver source, stage into local kernel tree, then register DTS/config.",
       "reason": "no alias matched in kernel source",
       "search_queries": [
+        "ov8856jsl mt6755 android kernel driver",
+        "ov8856jsl drivers/misc/mediatek mt6755",
         "ov8856 mt6755 android kernel driver",
         "ov8856 drivers/misc/mediatek mt6755",
-        "ov8856jslmipiraw mt6755 android kernel driver",
-        "ov8856jslmipiraw drivers/misc/mediatek mt6755",
         "ov8856jslmipi mt6755 android kernel driver",
         "ov8856jslmipi drivers/misc/mediatek mt6755"
       ],
@@ -640,9 +640,9 @@
     {
       "component": {
         "aliases": [
-          "imx278mipiraw",
+          "imx278",
           "imx278mipi",
-          "imx278"
+          "imx278mipiraw"
         ],
         "bus": null,
         "domain": "camera",
@@ -764,8 +764,8 @@
     {
       "component": {
         "aliases": [
-          "sunwave-fp",
-          "sunwave_fp"
+          "sunwave_fp",
+          "sunwave-fp"
         ],
         "bus": null,
         "domain": "input",
@@ -779,8 +779,8 @@
         ]
       },
       "files": [
-        "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.c",
         "drivers/input/fingerprint/gn_w_sunwave/Makefile",
+        "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.c",
         "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.h"
       ],
       "key": "verify:input:sunwave-fp",

@@ -36,9 +36,9 @@
   ],
   "component": {
     "aliases": [
-      "imx278mipiraw",
+      "imx278",
       "imx278mipi",
-      "imx278"
+      "imx278mipiraw"
     ],
     "bus": null,
     "domain": "camera",
@@ -115,7 +115,7 @@
     "drivers/media",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T15:31:07.036575+00:00",
+  "updated_at": "2026-05-09T16:24:49.229309+00:00",
   "version": 1,
   "work_item_kind": "config_dts_check",
   "work_item_status": "verify"

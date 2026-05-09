@@ -34,8 +34,8 @@
   ],
   "component": {
     "aliases": [
-      "leds_aw3643",
       "aw3643",
+      "leds_aw3643",
       "leds-aw3643"
     ],
     "bus": {
@@ -104,10 +104,10 @@
   },
   "reason": "no alias matched in kernel source",
   "search_queries": [
-    "leds_aw3643 mt6755 android kernel driver",
-    "leds_aw3643 drivers/misc/mediatek mt6755",
     "aw3643 mt6755 android kernel driver",
     "aw3643 drivers/misc/mediatek mt6755",
+    "leds_aw3643 mt6755 android kernel driver",
+    "leds_aw3643 drivers/misc/mediatek mt6755",
     "leds-aw3643 mt6755 android kernel driver",
     "leds-aw3643 drivers/misc/mediatek mt6755"
   ],
@@ -124,7 +124,7 @@
     "drivers/media",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T15:29:00.978145+00:00",
+  "updated_at": "2026-05-09T16:22:43.187432+00:00",
   "version": 1,
   "work_item_kind": "driver_import_candidate",
   "work_item_status": "blocked"
