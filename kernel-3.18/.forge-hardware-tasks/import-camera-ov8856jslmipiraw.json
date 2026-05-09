@@ -1,0 +1,128 @@
+{
+  "acceptance_criteria": [
+    "grep in local kernel tree finds the selected hardware alias in source files",
+    "Kconfig/Makefile or MTK table references the selected source",
+    "defconfig enables the required option or board list entry",
+    "DTS/board data matches stock bus/address/regulator evidence"
+  ],
+  "candidate_sources": [],
+  "checks": [
+    {
+      "detail": "no source file matched hardware aliases",
+      "files": [],
+      "name": "source_files",
+      "status": "missing"
+    },
+    {
+      "detail": "defconfig enablement not proven",
+      "files": [],
+      "name": "defconfig_refs",
+      "status": "missing"
+    },
+    {
+      "detail": "DTS bus/address binding not proven",
+      "files": [],
+      "name": "dts_refs",
+      "status": "missing"
+    },
+    {
+      "detail": "Kbuild registration needs verification",
+      "files": [],
+      "name": "kbuild_refs",
+      "status": "missing"
+    }
+  ],
+  "component": {
+    "aliases": [
+      "ov8856jslmipiraw",
+      "ov8856",
+      "ov8856jsl",
+      "ov8856jslmipi"
+    ],
+    "bus": null,
+    "domain": "camera",
+    "name": "ov8856jslmipiraw",
+    "raw": "ov8856jslmipiraw",
+    "role": "sensor",
+    "target_paths": [
+      "drivers/misc/mediatek/imgsensor",
+      "drivers/media",
+      "arch/*/boot/dts"
+    ]
+  },
+  "key": "import:camera:ov8856jslmipiraw",
+  "kind": "kernel_hardware_work_item_task",
+  "mode": "import_driver_source",
+  "policy": "This is an executable adaptation task for the local kernel tree. Donor repos are sources only; source changes must happen in this worktree and be committed separately.",
+  "profile_context": {
+    "boot": {
+      "androidboot.bootreason": "wdt_by_pass_pwk",
+      "androidboot.hardware": "mt6755",
+      "androidboot.selinux": "permissive",
+      "androidboot.serialno": "711HEBSR277K5",
+      "androidboot.verifiedbootstate": "orange",
+      "boot_reason": "4",
+      "bootopt": "64S3,32N2,64N2",
+      "bootprof.lk_t": "2980",
+      "bootprof.pl_t": "4803",
+      "color_type": "711L",
+      "console": "ttyMT0,921600n1",
+      "gpt": "1",
+      "hw_version": "0x10000000",
+      "mrdump.lk": "MRDUMP04",
+      "mrdump_ddr_reserve_ready": "yes",
+      "mrdump_rsvmem": "0x46000000,0x400000,0x44800000,0xdc240,0x44000000,0x200000",
+      "printk.disable_uart": "0",
+      "psn": "711HZZ116E30FEB0",
+      "root": "/dev/ram",
+      "slub_debug": "O",
+      "slub_max_order": "0",
+      "sw_version": "71151003",
+      "usb2jtag_mode": "0",
+      "vmalloc": "496M"
+    },
+    "coverage_summary": {
+      "actionable_missing": 4,
+      "blocked": 0,
+      "found": 9,
+      "info": 0,
+      "missing": 4,
+      "needs_evidence": 0,
+      "partial": 0,
+      "total": 13
+    },
+    "kernel_tree": {
+      "defconfig": "al00_ato_huawei6750_66_n_defconfig",
+      "path": "/srv/forge/android/kernel-meizu_M6-N-ex6/kernel-3.18",
+      "ready": true,
+      "registered": true
+    },
+    "platform": "MT6755"
+  },
+  "reason": "no alias matched in kernel source",
+  "search_queries": [
+    "ov8856jslmipiraw mt6755 android kernel driver",
+    "ov8856jslmipiraw drivers/misc/mediatek mt6755",
+    "ov8856 mt6755 android kernel driver",
+    "ov8856 drivers/misc/mediatek mt6755",
+    "ov8856jsl mt6755 android kernel driver",
+    "ov8856jsl drivers/misc/mediatek mt6755"
+  ],
+  "source_steps": [
+    "Use search_queries to find a same-kernel-generation camera driver for ov8856jslmipiraw.",
+    "Copy source into one of target_paths inside this local kernel tree; do not build from donor path directly.",
+    "Register source in nearby Makefile/Kconfig or MTK driver list.",
+    "Enable required config in selected defconfig.",
+    "Register DTS/board data only after stock bus/address/irq/regulator evidence exists."
+  ],
+  "summary": "import task prepared for missing kernel driver ov8856jslmipiraw",
+  "target_paths": [
+    "drivers/misc/mediatek/imgsensor",
+    "drivers/media",
+    "arch/*/boot/dts"
+  ],
+  "updated_at": "2026-05-09T14:01:16.366996+00:00",
+  "version": 1,
+  "work_item_kind": "driver_import_candidate",
+  "work_item_status": "blocked"
+}
