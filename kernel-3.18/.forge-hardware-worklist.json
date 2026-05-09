@@ -49,8 +49,8 @@
     "components": [
       {
         "aliases": [
-          "ili9881p_hd_dsi_txd",
-          "ili9881p-hd-dsi-txd"
+          "ili9881p-hd-dsi-txd",
+          "ili9881p_hd_dsi_txd"
         ],
         "bus": null,
         "domain": "display",
@@ -162,10 +162,10 @@
       },
       {
         "aliases": [
-          "ov8856jslmipiraw",
+          "ov8856jslmipi",
           "ov8856jsl",
           "ov8856",
-          "ov8856jslmipi"
+          "ov8856jslmipiraw"
         ],
         "bus": null,
         "domain": "camera",
@@ -257,8 +257,8 @@
       },
       {
         "aliases": [
-          "sunwave-fp",
-          "sunwave_fp"
+          "sunwave_fp",
+          "sunwave-fp"
         ],
         "bus": null,
         "domain": "input",
@@ -273,9 +273,9 @@
       },
       {
         "aliases": [
-          "aw3643",
+          "leds-aw3643",
           "leds_aw3643",
-          "leds-aw3643"
+          "aw3643"
         ],
         "bus": {
           "address": "0x0063",
@@ -354,14 +354,14 @@
       "snapshot": true
     }
   },
-  "updated_at": "2026-05-09T19:21:38.570956+00:00",
+  "updated_at": "2026-05-09T22:05:24.222219+00:00",
   "version": 1,
   "work_items": [
     {
       "component": {
         "aliases": [
-          "ili9881p_hd_dsi_txd",
-          "ili9881p-hd-dsi-txd"
+          "ili9881p-hd-dsi-txd",
+          "ili9881p_hd_dsi_txd"
         ],
         "bus": null,
         "domain": "display",
@@ -394,9 +394,9 @@
     {
       "component": {
         "aliases": [
-          "aw3643",
+          "leds-aw3643",
           "leds_aw3643",
-          "leds-aw3643"
+          "aw3643"
         ],
         "bus": {
           "address": "0x0063",
@@ -472,10 +472,10 @@
     {
       "component": {
         "aliases": [
-          "ov8856jslmipiraw",
+          "ov8856jslmipi",
           "ov8856jsl",
           "ov8856",
-          "ov8856jslmipi"
+          "ov8856jslmipiraw"
         ],
         "bus": null,
         "domain": "camera",
@@ -763,8 +763,8 @@
     {
       "component": {
         "aliases": [
-          "sunwave-fp",
-          "sunwave_fp"
+          "sunwave_fp",
+          "sunwave-fp"
         ],
         "bus": null,
         "domain": "input",
@@ -778,8 +778,8 @@
         ]
       },
       "files": [
-        "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.c",
         "drivers/input/fingerprint/gn_w_sunwave/Makefile",
+        "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.c",
         "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.h"
       ],
       "key": "verify:input:sunwave-fp",

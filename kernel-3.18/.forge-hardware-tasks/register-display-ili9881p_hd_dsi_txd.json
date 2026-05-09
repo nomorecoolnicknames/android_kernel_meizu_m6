@@ -46,8 +46,8 @@
   ],
   "component": {
     "aliases": [
-      "ili9881p_hd_dsi_txd",
-      "ili9881p-hd-dsi-txd"
+      "ili9881p-hd-dsi-txd",
+      "ili9881p_hd_dsi_txd"
     ],
     "bus": null,
     "domain": "display",
@@ -126,7 +126,7 @@
     "arch/*/boot/dts",
     "arch/*/configs"
   ],
-  "updated_at": "2026-05-09T19:21:38.765647+00:00",
+  "updated_at": "2026-05-09T22:05:24.410481+00:00",
   "version": 1,
   "work_item_kind": "driver_registration_check",
   "work_item_status": "action"

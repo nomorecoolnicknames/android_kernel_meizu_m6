@@ -10,8 +10,8 @@
     {
       "detail": "driver-like source references found",
       "files": [
-        "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.c",
         "drivers/input/fingerprint/gn_w_sunwave/Makefile",
+        "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.c",
         "drivers/input/fingerprint/gn_w_sunwave/sf_ctl.h"
       ],
       "name": "source_files",
@@ -41,8 +41,8 @@
   ],
   "component": {
     "aliases": [
-      "sunwave-fp",
-      "sunwave_fp"
+      "sunwave_fp",
+      "sunwave-fp"
     ],
     "bus": null,
     "domain": "input",
@@ -119,7 +119,7 @@
     "drivers/misc/mediatek",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T19:21:40.276109+00:00",
+  "updated_at": "2026-05-09T22:05:25.920105+00:00",
   "version": 1,
   "work_item_kind": "config_dts_check",
   "work_item_status": "verify"
