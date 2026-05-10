@@ -27,7 +27,9 @@ else
 obj-$(CONFIG_MTK_SMART_BATTERY) += battery_meter.o battery_common.o
 endif
 
-ifeq ($(CONFIG_MTK_FAN5402_SUPPORT),y)
+ifeq ($(CONFIG_MTK_CHARGER_INTERFACE),y)
+	obj-$(CONFIG_MTK_SMART_BATTERY) += switch_charging.o
+else ifeq ($(CONFIG_MTK_FAN5402_SUPPORT),y)
 	obj-$(CONFIG_MTK_SMART_BATTERY) += switch_charging.o
 else ifeq ($(CONFIG_MTK_FAN5405_SUPPORT),y)
 	obj-$(CONFIG_MTK_SMART_BATTERY) += switch_charging.o
