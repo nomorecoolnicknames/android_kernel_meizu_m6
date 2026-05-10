@@ -935,7 +935,6 @@ config DEBUG_SPINLOCK
 config DEBUG_SPINLOCK
 	bool "Spinlock and rw-lock debugging: basic checks"
 	depends on ATO_TEST
-	select ATO_TEST
 	help
 	  Say Y here and build SMP to catch missing spinlock initialization
 	  and certain other kinds of spinlock errors commonly made.  This is
@@ -952,7 +951,6 @@ config DEBUG_MUTEXES
 config DEBUG_MUTEXES
 	bool "Mutex debugging: basic checks"
 	depends on ATO_TEST
-	select ATO_TEST
 
 
 config DEBUG_WW_MUTEX_SLOWPATH
