@@ -22,7 +22,7 @@
 		atag,videolfb-islcm_inited = <0>;
 		atag,videolfb-fps= <6000>;
 		atag,videolfb-vramSize= <0x01800000>;
-		atag,videolfb-lcmname= "nt35695_fhd_dsi_cmd_truly_nt50358_drv";
+		atag,videolfb-lcmname= "ili9881p_hd_dsi_txd";
 	};
 	led0:led@0 {
 		compatible = "mediatek,red";

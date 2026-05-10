@@ -77,6 +77,8 @@ static LCM_UTIL_FUNCS lcm_util;
 
 #define set_gpio_lcd_enp(cmd) \
 		lcm_util.set_gpio_lcd_enp_bias(cmd)
+#define set_gpio_lcd_enn(cmd) \
+		lcm_util.set_gpio_lcd_enn_bias(cmd)
 #ifndef BUILD_LK
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -105,6 +107,7 @@ static struct i2c_board_info tps65132_board_info __initdata = { I2C_BOARD_INFO(I
 #endif
 #if !defined(CONFIG_MTK_LEGACY)
 static const struct of_device_id lcm_of_match[] = {
+		{.compatible = "mediatek,i2c_lcd_bias"},
 		{.compatible = "mediatek,I2C_LCD_BIAS"},
 		{},
 };
@@ -173,6 +176,11 @@ int tps65132_write_bytes(unsigned char addr, unsigned char value)
 	struct i2c_client *client = tps65132_i2c_client;
 	char write_data[2] = { 0 };
 
+	if (!client) {
+		LCM_LOGI("tps65132 i2c client is not ready !!\n");
+		return -1;
+	}
+
 	write_data[0] = addr;
 	write_data[1] = value;
 	ret = i2c_master_send(client, write_data, 2);
@@ -214,10 +222,10 @@ MODULE_LICENSE("GPL");
 static const unsigned char LCD_MODULE_ID = 0x01;
 #define LCM_DSI_CMD_MODE									0
 #define FRAME_WIDTH										(720)
-#define FRAME_HEIGHT									(1440)
+#define FRAME_HEIGHT									(1280)
 
 #define LCM_PHYSICAL_WIDTH									(64800)
-#define LCM_PHYSICAL_HEIGHT									(129600)
+#define LCM_PHYSICAL_HEIGHT									(115200)
 
 
 #ifndef CONFIG_FPGA_EARLY_PORTING
@@ -695,6 +703,8 @@ static void lcm_init(void)
 	mt_set_gpio_out(GPIO_65132_EN, GPIO_OUT_ONE);
 #else
 	set_gpio_lcd_enp(1);
+	MDELAY(5);
+	set_gpio_lcd_enn(1);
 #endif
 	MDELAY(5);
 #ifdef BUILD_LK
@@ -752,6 +762,7 @@ static void lcm_suspend(void)
 	mt_set_gpio_dir(GPIO_65132_EN, GPIO_DIR_OUT);
 	mt_set_gpio_out(GPIO_65132_EN, GPIO_OUT_ZERO);
 #else
+	set_gpio_lcd_enn(0);
 	set_gpio_lcd_enp(0);
 #endif
 #endif
@@ -943,7 +954,7 @@ static void *lcm_switch_mode(int mode)
 
 
 LCM_DRIVER ili9881p_hd_dsi_txd_lcm_drv = {
-	.name = "ili9881p_hd_dsi_txd_drv",
+	.name = "ili9881p_hd_dsi_txd",
 	.set_util_funcs = lcm_set_util_funcs,
 	.get_params = lcm_get_params,
 	.init = lcm_init,
