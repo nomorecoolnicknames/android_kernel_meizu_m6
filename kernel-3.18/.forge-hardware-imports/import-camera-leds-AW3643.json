@@ -1,4 +1,18 @@
 {
+  "adapted_from_reference": {
+    "previous_copied_files": [
+      "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383/constant_flashlight/Makefile",
+      "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383/constant_flashlight/leds_strobe.c"
+    ],
+    "previous_target_base": "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383",
+    "source_dir": "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383/constant_flashlight",
+    "source_tokens": [
+      "aw3644",
+      "AW3644",
+      "3644"
+    ],
+    "target_token": "leds_AW3643"
+  },
   "component": {
     "aliases": [
       "leds_aw3643",
@@ -21,8 +35,8 @@
     ]
   },
   "copied_files": [
-    "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383/constant_flashlight/Makefile",
-    "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383/constant_flashlight/leds_strobe.c"
+    "drivers/misc/mediatek/flashlight/src/mt6755/leds-AW3643/Makefile",
+    "drivers/misc/mediatek/flashlight/src/mt6755/leds-AW3643/leds_strobe.c"
   ],
   "key": "import:camera:leds-AW3643",
   "kind": "kernel_hardware_candidate_import",
@@ -32,9 +46,10 @@
     "wire DTS/board data from stock bus/address evidence",
     "run kernel defconfig/module build before enabling full ROM build"
   ],
+  "source_change_level": "adapted_reference",
   "source_path": "/tmp/DOOGEE-kernel-3.18/drivers/misc/mediatek/flashlight/src/mt6755/p383/constant_flashlight",
   "source_root": "/tmp/DOOGEE-kernel-3.18/drivers/misc/mediatek/flashlight/src/mt6755/p383/constant_flashlight",
-  "target_base": "drivers/misc/mediatek/flashlight/src/mt6755/aw3643_adaptation_refs/doogee_aw3644_p383",
-  "updated_at": "2026-05-09T18:26:24.505308+00:00",
+  "target_base": "drivers/misc/mediatek/flashlight/src/mt6755/leds-AW3643",
+  "updated_at": "2026-05-10T08:52:10.221730+00:00",
   "version": 1
 }

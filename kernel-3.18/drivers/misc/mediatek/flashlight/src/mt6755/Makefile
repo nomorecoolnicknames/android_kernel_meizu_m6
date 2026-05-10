@@ -36,3 +36,4 @@ obj-y += $(custom_kernel_flashlight)
 endif
 
 
+obj-y	+=  leds-AW3643/

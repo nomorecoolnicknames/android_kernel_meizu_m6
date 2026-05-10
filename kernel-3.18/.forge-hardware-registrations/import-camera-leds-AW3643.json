@@ -1,0 +1,43 @@
+{
+  "component": {
+    "aliases": [
+      "leds_aw3643",
+      "leds-aw3643",
+      "aw3643"
+    ],
+    "bus": {
+      "address": "0x0063",
+      "bus": 1,
+      "type": "i2c"
+    },
+    "domain": "camera",
+    "name": "leds-AW3643",
+    "raw": "leds-AW3643, i2c 1-0063",
+    "role": "flash",
+    "target_paths": [
+      "drivers/misc/mediatek/imgsensor",
+      "drivers/media",
+      "arch/*/boot/dts"
+    ]
+  },
+  "config": null,
+  "defconfigs_changed": [],
+  "driver_dirs": [
+    "drivers/misc/mediatek/flashlight/src/mt6755/leds-AW3643"
+  ],
+  "key": "import:camera:leds-AW3643",
+  "kind": "kernel_hardware_registration",
+  "makefile_changes": [
+    "drivers/misc/mediatek/flashlight/src/mt6755/Makefile"
+  ],
+  "mode": "flashlight",
+  "next_steps": [
+    "verify DTS/custom board bus/address/irq/regulator data",
+    "run kernel build gate"
+  ],
+  "source_files": [
+    "drivers/misc/mediatek/flashlight/src/mt6755/leds-AW3643/leds_strobe.c"
+  ],
+  "updated_at": "2026-05-10T08:52:10.227958+00:00",
+  "version": 1
+}
