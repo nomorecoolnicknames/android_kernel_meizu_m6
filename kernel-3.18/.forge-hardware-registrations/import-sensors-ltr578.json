@@ -1,0 +1,47 @@
+{
+  "component": {
+    "aliases": [
+      "ltr578"
+    ],
+    "bus": {
+      "address": "0x0053",
+      "bus": 1,
+      "type": "i2c"
+    },
+    "domain": "sensors",
+    "name": "ltr578",
+    "raw": "ltr578, i2c 1-0053",
+    "role": "alsps",
+    "target_paths": [
+      "drivers/misc/mediatek/sensors",
+      "drivers/iio",
+      "drivers/input",
+      "arch/*/boot/dts"
+    ]
+  },
+  "config": "CONFIG_MTK_LTR578",
+  "defconfigs_changed": [
+    "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
+  ],
+  "driver_dirs": [
+    "drivers/misc/mediatek/alsps/ltr578"
+  ],
+  "key": "import:sensors:ltr578",
+  "kind": "kernel_hardware_registration",
+  "makefile_changes": [
+    "drivers/misc/mediatek/alsps/Makefile"
+  ],
+  "mode": "alsps",
+  "next_steps": [
+    "verify DTS/custom board bus/address/irq/regulator data",
+    "run kernel build gate"
+  ],
+  "source_files": [
+    "drivers/misc/mediatek/alsps/ltr578/ltr578.c",
+    "drivers/misc/mediatek/alsps/ltr578/ltr578.h",
+    "drivers/misc/mediatek/alsps/ltr578/ltr578.h",
+    "drivers/misc/mediatek/alsps/ltr578/sensor_dts.h"
+  ],
+  "updated_at": "2026-05-10T08:51:49.852338+00:00",
+  "version": 1
+}

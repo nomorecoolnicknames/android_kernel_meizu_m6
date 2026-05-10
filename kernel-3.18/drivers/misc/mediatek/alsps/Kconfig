@@ -33,3 +33,4 @@ source "drivers/misc/mediatek/alsps/alspshub/Kconfig"
 source "drivers/misc/mediatek/alsps/cm32180/Kconfig"
 #cly add alsps ltr559
 source "drivers/misc/mediatek/alsps/ltr559-new/Kconfig"
+source "drivers/misc/mediatek/alsps/ltr578/Kconfig"

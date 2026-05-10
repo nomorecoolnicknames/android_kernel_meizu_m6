@@ -1,4 +1,21 @@
 {
+  "adapted_from_reference": {
+    "previous_copied_files": [
+      "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Kconfig",
+      "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Makefile",
+      "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.h",
+      "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.c",
+      "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/cust_alsps_ltr559.h",
+      "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/sensor_dts.h"
+    ],
+    "previous_target_base": "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10",
+    "source_dir": "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559",
+    "source_tokens": [
+      "cust_alsps_ltr559",
+      "ltr559"
+    ],
+    "target_token": "ltr578"
+  },
   "component": {
     "aliases": [
       "ltr578"
@@ -20,12 +37,12 @@
     ]
   },
   "copied_files": [
-    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Kconfig",
-    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/Makefile",
-    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.h",
-    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/ltr559.c",
-    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/cust_alsps_ltr559.h",
-    "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10/ltr559/sensor_dts.h"
+    "drivers/misc/mediatek/alsps/ltr578/ltr578.c",
+    "drivers/misc/mediatek/alsps/ltr578/ltr578.h",
+    "drivers/misc/mediatek/alsps/ltr578/Makefile",
+    "drivers/misc/mediatek/alsps/ltr578/ltr578.h",
+    "drivers/misc/mediatek/alsps/ltr578/sensor_dts.h",
+    "drivers/misc/mediatek/alsps/ltr578/Kconfig"
   ],
   "key": "import:sensors:ltr578",
   "kind": "kernel_hardware_candidate_import",
@@ -35,9 +52,10 @@
     "wire DTS/board data from stock bus/address evidence",
     "run kernel defconfig/module build before enabling full ROM build"
   ],
+  "source_change_level": "adapted_reference",
   "source_path": "/tmp/mtk-search-vgdn/drivers/misc/mediatek/sensors-1.0/alsps/ltr559",
   "source_root": "/tmp/mtk-search-vgdn/drivers/misc/mediatek/sensors-1.0/alsps/ltr559",
-  "target_base": "drivers/misc/mediatek/alsps/ltr578_adaptation_refs/vgdn_sensors10",
-  "updated_at": "2026-05-09T18:24:30.143939+00:00",
+  "target_base": "drivers/misc/mediatek/alsps/ltr578",
+  "updated_at": "2026-05-10T08:51:49.835770+00:00",
   "version": 1
 }

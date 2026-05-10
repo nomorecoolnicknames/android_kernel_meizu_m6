@@ -33,3 +33,4 @@ obj-$(CONFIG_MTK_CM32180)	+=  cm32180/
 #cly add alsps ltr559
 obj-$(CONFIG_MTK_LTR559)	+=  ltr559-new/
 endif
+obj-$(CONFIG_MTK_LTR578)	+=  ltr578/
