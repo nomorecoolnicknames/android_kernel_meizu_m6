@@ -67,32 +67,7 @@
   "mode": "verify_driver_registration",
   "policy": "This is an executable adaptation task for the local kernel tree. Donor repos are sources only; source changes must happen in this worktree and be committed separately.",
   "profile_context": {
-    "boot": {
-      "androidboot.bootreason": "wdt_by_pass_pwk",
-      "androidboot.hardware": "mt6755",
-      "androidboot.selinux": "permissive",
-      "androidboot.serialno": "711HEBSR277K5",
-      "androidboot.verifiedbootstate": "orange",
-      "boot_reason": "4",
-      "bootopt": "64S3,32N2,64N2",
-      "bootprof.lk_t": "2980",
-      "bootprof.pl_t": "4803",
-      "color_type": "711L",
-      "console": "ttyMT0,921600n1",
-      "gpt": "1",
-      "hw_version": "0x10000000",
-      "mrdump.lk": "MRDUMP04",
-      "mrdump_ddr_reserve_ready": "yes",
-      "mrdump_rsvmem": "0x46000000,0x400000,0x44800000,0xdc240,0x44000000,0x200000",
-      "printk.disable_uart": "0",
-      "psn": "711HZZ116E30FEB0",
-      "root": "/dev/ram",
-      "slub_debug": "O",
-      "slub_max_order": "0",
-      "sw_version": "71151003",
-      "usb2jtag_mode": "0",
-      "vmalloc": "496M"
-    },
+    "boot": {},
     "coverage_summary": {
       "actionable_missing": 4,
       "blocked": 0,
@@ -126,7 +101,7 @@
     "drivers/media",
     "arch/*/boot/dts"
   ],
-  "updated_at": "2026-05-09T22:05:25.049501+00:00",
+  "updated_at": "2026-05-10T00:35:18.723235+00:00",
   "version": 1,
   "work_item_kind": "driver_registration_check",
   "work_item_status": "action"

@@ -19,32 +19,7 @@
   "kind": "kernel_hardware_adaptation_worklist",
   "policy": "Generated evidence. Batch pass prepares tasks and imports only parser-confirmed actionable hardware.",
   "profile": {
-    "boot": {
-      "androidboot.bootreason": "wdt_by_pass_pwk",
-      "androidboot.hardware": "mt6755",
-      "androidboot.selinux": "permissive",
-      "androidboot.serialno": "711HEBSR277K5",
-      "androidboot.verifiedbootstate": "orange",
-      "boot_reason": "4",
-      "bootopt": "64S3,32N2,64N2",
-      "bootprof.lk_t": "2980",
-      "bootprof.pl_t": "4803",
-      "color_type": "711L",
-      "console": "ttyMT0,921600n1",
-      "gpt": "1",
-      "hw_version": "0x10000000",
-      "mrdump.lk": "MRDUMP04",
-      "mrdump_ddr_reserve_ready": "yes",
-      "mrdump_rsvmem": "0x46000000,0x400000,0x44800000,0xdc240,0x44000000,0x200000",
-      "printk.disable_uart": "0",
-      "psn": "711HZZ116E30FEB0",
-      "root": "/dev/ram",
-      "slub_debug": "O",
-      "slub_max_order": "0",
-      "sw_version": "71151003",
-      "usb2jtag_mode": "0",
-      "vmalloc": "496M"
-    },
+    "boot": {},
     "component_count": 13,
     "components": [
       {
@@ -347,14 +322,15 @@
       }
     ],
     "platform": "MT6755",
-    "raw_text": "Устройство: Meizu MEIZU M6\nПлатформа / чипсет: MT6755\nДисплей: ili9881p_hd_dsi_txd\nСенсорный экран / тачскрин: ft5x0x, i2c 0-005d\nАкселерометр: BMA253, i2c 1-0018\nДатчик освещенности: ltr578, i2c 1-0053\nМагнитометр / компас: st480, i2c 1-000c\nГироскоп: GYROSCOPE\nКамеры:\nimx278mipiraw\nov8856jslmipiraw\nАвтофокус: MAINAF, i2c 2-000c\nЗарядное устройство / контроллер зарядки: bq24157, i2c 1-006a\nPMIC / контроллер питания:\nmt6311, i2c 3-006b\ntps65132, i2c 0-003e\nNFC: mt6605, i2c 4-0028\nДатчик отпечатка пальца: sunwave-fp, spi0.0\nWi-Fi: CONSYS_MT6755\nЗвук: mtsndcard\nОЗУ: 2 GB LPDDR3_1800\nЧип памяти: Samsung QE63MB\nВстроенная память: 16 GB\nLED / вспышка: leds-AW3643, i2c 1-0063\nКалибровочные/прочие модули камеры:\nCAM_CAL_DRV, i2c 2-0050\nCAM_CAL_DRV1, i2c 1-0050\nkd_camera_hw, i2c 2-0010\nkd_camera_hw_bus2, i2c 1-0010\n\nconsole=tty0 console=ttyMT0,921600n1 root=/dev/ram vmalloc=496M\nslub_max_order=0 slub_debug=O androidboot.hardware=mt6755\nandroidboot.verifiedbootstate=orange\nbootopt=64S3,32N2,64N2\nandroidboot.selinux=permissive\nprintk.disable_uart=0\nbootprof.pl_t=4803\nbootprof.lk_t=2980\nboot_reason=4\nandroidboot.serialno=711HEBSR277K5\nandroidboot.bootreason=wdt_by_pass_pwk\npsn=711HZZ116E30FEB0\ncolor_type=711L\nhw_version=0x10000000\nsw_version=71151003\ngpt=1\nusb2jtag_mode=0\nmrdump.lk=MRDUMP04\nmrdump_rsvmem=0x46000000,0x400000,0x44800000,0xdc240,0x44000000,0x200000\nmrdump_ddr_reserve_ready=yes",
+    "raw_text": "ili9881p_hd_dsi_txd\nft5x0x, i2c 0-005d\nBMA253, i2c 1-0018\nltr578, i2c 1-0053\nst480, i2c 1-000c\nimx278mipiraw\nov8856jslmipiraw\nbq24157, i2c 1-006a\nmt6311, i2c 3-006b\ntps65132, i2c 0-003e\nmt6605, i2c 4-0028\nsunwave-fp\nleds-AW3643, i2c 1-0063",
     "source_flags": {
       "deviceinfohw_meta": false,
       "pasted_text": true,
+      "saved_profile": true,
       "snapshot": true
     }
   },
-  "updated_at": "2026-05-09T22:05:24.222219+00:00",
+  "updated_at": "2026-05-10T00:35:17.884631+00:00",
   "version": 1,
   "work_items": [
     {
