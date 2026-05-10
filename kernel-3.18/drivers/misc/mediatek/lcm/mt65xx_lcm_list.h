@@ -271,6 +271,7 @@ extern LCM_DRIVER dummy_lcd_lcm_drv;
 extern LCM_DRIVER hx8394f_hd720_dsi_vdo_truly_lcm_drv;//add by yufangfang
 extern LCM_DRIVER ili9881c_hd720_dsi_vdo_dijing_lcm_drv;//add by yufangfang 
 extern LCM_DRIVER ili9881c_hd720_dsi_vdo_helitec_lcm_drv;
+extern LCM_DRIVER ili9881p_hd_dsi_txd_lcm_drv;
 #ifdef BUILD_LK
 extern void mdelay(unsigned long msec);
 #endif

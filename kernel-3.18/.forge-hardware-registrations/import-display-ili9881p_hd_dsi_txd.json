@@ -1,0 +1,42 @@
+{
+  "component": {
+    "aliases": [
+      "ili9881p-hd-dsi-txd",
+      "ili9881p_hd_dsi_txd"
+    ],
+    "bus": null,
+    "domain": "display",
+    "name": "ili9881p_hd_dsi_txd",
+    "raw": "ili9881p_hd_dsi_txd",
+    "role": "lcm",
+    "target_paths": [
+      "drivers/misc/mediatek/lcm",
+      "drivers/gpu/drm",
+      "arch/*/boot/dts",
+      "arch/*/configs"
+    ]
+  },
+  "defconfigs_changed": [
+    "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
+  ],
+  "key": "import:display:ili9881p_hd_dsi_txd",
+  "kind": "kernel_hardware_registration",
+  "lcm_name": "ili9881p_hd_dsi_txd",
+  "lcm_symbol": "ili9881p_hd_dsi_txd_lcm_drv",
+  "list_files": [
+    "drivers/misc/mediatek/lcm/mt65xx_lcm_list.c",
+    "drivers/misc/mediatek/lcm/mt65xx_lcm_list.h"
+  ],
+  "list_status": "registered",
+  "mode": "lcm_driver",
+  "source_files": [
+    "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c"
+  ],
+  "updated_at": "2026-05-10T08:51:29.475679+00:00",
+  "validation": [
+    "grep -R \"ili9881p_hd_dsi_txd\" drivers/misc/mediatek/lcm arch/*/configs",
+    "make <defconfig>",
+    "verify boot log contains selected LCM probe before SurfaceFlinger debugging"
+  ],
+  "version": 1
+}

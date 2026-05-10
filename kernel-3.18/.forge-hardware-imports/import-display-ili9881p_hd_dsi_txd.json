@@ -1,4 +1,17 @@
 {
+  "adapted_from_reference": {
+    "previous_copied_files": [
+      "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs/ili9881c_hd_dsi_vdo_ilitek_nt50358/Makefile",
+      "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs/ili9881c_hd_dsi_vdo_ilitek_nt50358/ili9881c_hd_dsi_vdo_ilitek_nt50358.c"
+    ],
+    "previous_target_base": "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs",
+    "source_dir": "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs/ili9881c_hd_dsi_vdo_ilitek_nt50358",
+    "source_tokens": [
+      "ili9881c_hd_dsi_vdo_ilitek_nt50358",
+      "ili9881c"
+    ],
+    "target_token": "ili9881p_hd_dsi_txd"
+  },
   "component": {
     "aliases": [
       "ili9881p-hd-dsi-txd",
@@ -17,8 +30,8 @@
     ]
   },
   "copied_files": [
-    "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs/ili9881c_hd_dsi_vdo_ilitek_nt50358/Makefile",
-    "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs/ili9881c_hd_dsi_vdo_ilitek_nt50358/ili9881c_hd_dsi_vdo_ilitek_nt50358.c"
+    "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/Makefile",
+    "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c"
   ],
   "key": "import:display:ili9881p_hd_dsi_txd",
   "kind": "kernel_hardware_candidate_import",
@@ -28,9 +41,10 @@
     "wire DTS/board data from stock bus/address evidence",
     "run kernel defconfig/module build before enabling full ROM build"
   ],
+  "source_change_level": "adapted_reference",
   "source_path": "/tmp/MTK_LCM_Collection/ili/ili9881c_hd_dsi_vdo_ilitek_nt50358",
   "source_root": "/tmp/MTK_LCM_Collection/ili/ili9881c_hd_dsi_vdo_ilitek_nt50358",
-  "target_base": "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd_adaptation_refs",
-  "updated_at": "2026-05-09T18:23:43.861268+00:00",
+  "target_base": "drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd",
+  "updated_at": "2026-05-10T08:51:28.944353+00:00",
   "version": 1
 }
