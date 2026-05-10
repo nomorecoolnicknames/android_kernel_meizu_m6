@@ -58,7 +58,65 @@ struct bq2415x_config {
 };
 
 
+struct charger_device {
+	struct device dev;
+};
+
+struct charger_properties {
+	const char *alias_name;
+};
+
+struct charger_ops {
+	int (*plug_in)(struct charger_device *chg_dev);
+	int (*plug_out)(struct charger_device *chg_dev);
+	int (*dump_registers)(struct charger_device *chg_dev);
+	int (*enable)(struct charger_device *chg_dev, bool enable);
+	int (*is_enabled)(struct charger_device *chg_dev, bool *en);
+	int (*get_charging_current)(struct charger_device *chg_dev, u32 *curr);
+	int (*set_charging_current)(struct charger_device *chg_dev, u32 curr);
+	int (*get_input_current)(struct charger_device *chg_dev, u32 *curr);
+	int (*set_input_current)(struct charger_device *chg_dev, u32 curr);
+	int (*get_constant_voltage)(struct charger_device *chg_dev, u32 *cv);
+	int (*set_constant_voltage)(struct charger_device *chg_dev, u32 volt);
+	int (*kick_wdt)(struct charger_device *chg_dev);
+	int (*set_mivr)(struct charger_device *chg_dev, u32 volt);
+	int (*is_charging_done)(struct charger_device *chg_dev, bool *done);
+	int (*get_min_charging_current)(struct charger_device *chg_dev, u32 *curr);
+	int (*enable_safety_timer)(struct charger_device *chg_dev, bool en);
+	int (*is_safety_timer_enabled)(struct charger_device *chg_dev, bool *en);
+	int (*enable_powerpath)(struct charger_device *chg_dev, bool en);
+	int (*is_powerpath_enabled)(struct charger_device *chg_dev, bool *en);
+	int (*enable_otg)(struct charger_device *chg_dev, bool en);
+	int (*set_boost_current_limit)(struct charger_device *chg_dev, u32 curr);
+	int (*enable_discharge)(struct charger_device *chg_dev, bool en);
+	int (*send_ta_current_pattern)(struct charger_device *chg_dev, bool increase);
+	int (*set_pe20_efficiency_table)(struct charger_device *chg_dev, void *data);
+	int (*send_ta20_current_pattern)(struct charger_device *chg_dev, u32 volt);
+	int (*set_ta20_reset)(struct charger_device *chg_dev);
+	int (*enable_cable_drop_comp)(struct charger_device *chg_dev, bool en);
+	int (*get_tchg_adc)(struct charger_device *chg_dev, int *min, int *max);
+};
+
+static struct charger_device *charger_device_register(const char *name,
+		struct device *parent, void *drvdata, struct charger_ops *ops,
+		struct charger_properties *props)
+{
+	struct charger_device *chg_dev;
+
+	chg_dev = devm_kzalloc(parent, sizeof(*chg_dev), GFP_KERNEL);
+	if (!chg_dev)
+		return ERR_PTR(-ENOMEM);
+
+	device_initialize(&chg_dev->dev);
+	chg_dev->dev.parent = parent;
+	dev_set_name(&chg_dev->dev, "%s", name);
+	dev_set_drvdata(&chg_dev->dev, drvdata);
+
+	return chg_dev;
+}
+
 struct bq2415x {
+	struct mtk_charger_info mchr_info;
 	struct device	*dev;
 	struct i2c_client *client;
 	struct charger_device *chg_dev;
@@ -102,6 +160,7 @@ static int bq2415x_set_chargevoltage(struct charger_device *chg_dev, u32 volt);
 static int bq2415x_set_chargecurrent(struct charger_device *chg_dev, u32 curr);
 static int bq2415x_set_input_volt_limit(struct charger_device *chg_dev, u32 volt);
 static int bq2415x_set_input_current_limit(struct charger_device *chg_dev, u32 curr);
+static int bq2415x_charging(struct charger_device *chg_dev, bool enable);
 
 
 static int __bq2415x_read_reg(struct bq2415x *bq, u8 reg, u8 *data)
@@ -784,9 +843,13 @@ static int bq2415x_set_input_current_limit(struct charger_device *chg_dev, u32 c
 		val = BQ2415X_IINLIM_500MA;
 	else if (curr == 800)
 		val = BQ2415X_IINLIM_800MA;
-	else if (curr == 0)
+	else if (curr == 0 || curr > 800)
 		val = BQ2415X_IINLIM_NOLIM;
-	
+	else if (curr < 500)
+		val = BQ2415X_IINLIM_100MA;
+	else
+		val = BQ2415X_IINLIM_500MA;
+
 	val <<= BQ2415X_IINLIM_SHIFT;
 
 	pr_debug("val:0x%02X\n", val);
@@ -866,7 +929,7 @@ static struct charger_ops bq2415x_chg_ops = {
 	.set_input_current = bq2415x_set_input_current_limit,
 	.get_constant_voltage = bq2415x_get_chargevoltage,
 	.set_constant_voltage = bq2415x_set_chargevoltage,
-	.kick_wdt = NULL,
+	.kick_wdt = bq2415x_reset_watchdog_timer,
 	.set_mivr = NULL,
 	.is_charging_done = bq2415x_is_charging_done,
 	.get_min_charging_current = bq2415x_get_min_ichg,
@@ -893,6 +956,145 @@ static struct charger_ops bq2415x_chg_ops = {
 
 	/* ADC */
 	.get_tchg_adc = NULL,
+};
+
+
+static struct bq2415x *bq2415x_from_mchr(struct mtk_charger_info *mchr_info)
+{
+	return container_of(mchr_info, struct bq2415x, mchr_info);
+}
+
+static int bq2415x_mchr_hw_init(struct mtk_charger_info *mchr_info, void *data)
+{
+	return 0;
+}
+
+static int bq2415x_mchr_dump_register(struct mtk_charger_info *mchr_info,
+		void *data)
+{
+	bq2415x_dump_regs(bq2415x_from_mchr(mchr_info));
+	return 0;
+}
+
+static int bq2415x_mchr_enable(struct mtk_charger_info *mchr_info, void *data)
+{
+	struct bq2415x *bq = bq2415x_from_mchr(mchr_info);
+	bool enable = !!(*(u32 *)data);
+
+	return bq2415x_charging(bq->chg_dev, enable);
+}
+
+static int bq2415x_mchr_set_cv(struct mtk_charger_info *mchr_info, void *data)
+{
+	struct bq2415x *bq = bq2415x_from_mchr(mchr_info);
+	u32 cv = *(u32 *)data;
+
+	return bq2415x_set_chargevoltage(bq->chg_dev, cv);
+}
+
+static int bq2415x_mchr_get_current(struct mtk_charger_info *mchr_info,
+		void *data)
+{
+	struct bq2415x *bq = bq2415x_from_mchr(mchr_info);
+	u32 curr = 0;
+	int ret;
+
+	ret = bq2415x_get_chargecurrent(bq->chg_dev, &curr);
+	*(u32 *)data = curr / 10;
+	return ret;
+}
+
+static int bq2415x_mchr_set_current(struct mtk_charger_info *mchr_info,
+		void *data)
+{
+	struct bq2415x *bq = bq2415x_from_mchr(mchr_info);
+	u32 curr = *(u32 *)data;
+
+	return bq2415x_set_chargecurrent(bq->chg_dev, curr * 10);
+}
+
+static int bq2415x_mchr_get_input_current(struct mtk_charger_info *mchr_info,
+		void *data)
+{
+	struct bq2415x *bq = bq2415x_from_mchr(mchr_info);
+	u32 curr = 0;
+	int ret;
+
+	ret = bq2415x_get_input_current_limit(bq->chg_dev, &curr);
+	*(u32 *)data = curr / 10;
+	return ret;
+}
+
+static int bq2415x_mchr_set_input_current(struct mtk_charger_info *mchr_info,
+		void *data)
+{
+	struct bq2415x *bq = bq2415x_from_mchr(mchr_info);
+	u32 curr = *(u32 *)data;
+
+	return bq2415x_set_input_current_limit(bq->chg_dev, curr * 10);
+}
+
+static int bq2415x_mchr_get_charging_status(struct mtk_charger_info *mchr_info,
+		void *data)
+{
+	struct bq2415x *bq = bq2415x_from_mchr(mchr_info);
+	bool done = false;
+	int ret;
+
+	ret = bq2415x_is_charging_done(bq->chg_dev, &done);
+	*(u32 *)data = done ? KAL_TRUE : KAL_FALSE;
+	return ret;
+}
+
+static int bq2415x_mchr_kick_wdt(struct mtk_charger_info *mchr_info,
+		void *data)
+{
+	struct bq2415x *bq = bq2415x_from_mchr(mchr_info);
+
+	return bq2415x_reset_watchdog_timer(bq->chg_dev);
+}
+
+static int bq2415x_mchr_enable_otg(struct mtk_charger_info *mchr_info,
+		void *data)
+{
+	struct bq2415x *bq = bq2415x_from_mchr(mchr_info);
+	bool enable = !!(*(u32 *)data);
+
+	return bq2415x_enable_otg(bq->chg_dev, enable);
+}
+
+static const mtk_charger_intf bq2415x_mchr_intf[CHARGING_CMD_NUMBER] = {
+	[CHARGING_CMD_INIT] = bq2415x_mchr_hw_init,
+	[CHARGING_CMD_DUMP_REGISTER] = bq2415x_mchr_dump_register,
+	[CHARGING_CMD_ENABLE] = bq2415x_mchr_enable,
+	[CHARGING_CMD_SET_CV_VOLTAGE] = bq2415x_mchr_set_cv,
+	[CHARGING_CMD_GET_CURRENT] = bq2415x_mchr_get_current,
+	[CHARGING_CMD_SET_CURRENT] = bq2415x_mchr_set_current,
+	[CHARGING_CMD_SET_INPUT_CURRENT] = bq2415x_mchr_set_input_current,
+	[CHARGING_CMD_GET_CHARGING_STATUS] = bq2415x_mchr_get_charging_status,
+	[CHARGING_CMD_RESET_WATCH_DOG_TIMER] = bq2415x_mchr_kick_wdt,
+	[CHARGING_CMD_ENABLE_OTG] = bq2415x_mchr_enable_otg,
+	[CHARGING_CMD_GET_INPUT_CURRENT] = bq2415x_mchr_get_input_current,
+
+	[CHARGING_CMD_SW_INIT] = mtk_charger_sw_init,
+	[CHARGING_CMD_SET_HV_THRESHOLD] = mtk_charger_set_hv_threshold,
+	[CHARGING_CMD_GET_HV_STATUS] = mtk_charger_get_hv_status,
+	[CHARGING_CMD_GET_BATTERY_STATUS] = mtk_charger_get_battery_status,
+	[CHARGING_CMD_GET_CHARGER_DET_STATUS] = mtk_charger_get_charger_det_status,
+	[CHARGING_CMD_GET_CHARGER_TYPE] = mtk_charger_get_charger_type,
+	[CHARGING_CMD_GET_IS_PCM_TIMER_TRIGGER] = mtk_charger_get_is_pcm_timer_trigger,
+	[CHARGING_CMD_SET_PLATFORM_RESET] = mtk_charger_set_platform_reset,
+	[CHARGING_CMD_GET_PLATFORM_BOOT_MODE] = mtk_charger_get_platform_boot_mode,
+	[CHARGING_CMD_SET_POWER_OFF] = mtk_charger_set_power_off,
+	[CHARGING_CMD_GET_POWER_SOURCE] = mtk_charger_get_power_source,
+	[CHARGING_CMD_GET_CSDAC_FALL_FLAG] = mtk_charger_get_csdac_full_flag,
+	[CHARGING_CMD_DISO_INIT] = mtk_charger_diso_init,
+	[CHARGING_CMD_GET_DISO_STATE] = mtk_charger_get_diso_state,
+	[CHARGING_CMD_SET_VBUS_OVP_EN] = mtk_charger_set_vbus_ovp_en,
+	[CHARGING_CMD_GET_BIF_VBAT] = mtk_charger_get_bif_vbat,
+	[CHARGING_CMD_SET_CHRIND_CK_PDN] = mtk_charger_set_chrind_ck_pdn,
+	[CHARGING_CMD_GET_BIF_TBAT] = mtk_charger_get_bif_tbat,
+	[CHARGING_CMD_SET_DP] = mtk_charger_set_dp,
 };
 
 static int bq2415x_charger_probe(struct i2c_client *client,
@@ -925,8 +1127,8 @@ static int bq2415x_charger_probe(struct i2c_client *client,
 
 	if (client->dev.of_node) {
 		ret = bq2415x_parse_dt(&client->dev, bq);
-		if (!ret) {
-			pr_err("device tree parse error!\n");
+		if (ret) {
+			pr_err("device tree parse error:%d\n", ret);
 			return ret;
 		}
 	} else {
@@ -949,6 +1151,11 @@ static int bq2415x_charger_probe(struct i2c_client *client,
 		pr_err("device init failure: %d\n", ret);
 		goto err_0;
 	}
+
+	bq->mchr_info.mchr_intf = bq2415x_mchr_intf;
+	bq->mchr_info.name = "bq2415x";
+	bq->mchr_info.device_id = bq->part_no;
+	mtk_charger_set_info(&bq->mchr_info);
 
 	INIT_DELAYED_WORK(&bq->monitor_work, bq2415x_monitor_workfunc);
 
