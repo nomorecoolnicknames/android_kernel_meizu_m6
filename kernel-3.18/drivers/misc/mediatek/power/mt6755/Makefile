@@ -35,6 +35,7 @@ obj-$(CONFIG_MTK_SMART_BATTERY) += battery_meter_hal.o
 obj-$(CONFIG_MTK_SMART_BATTERY) += mtk_bif_intf.o
 obj-$(CONFIG_MTK_CHARGER_INTERFACE) += mtk_charger_intf.o
 
+ifneq ($(CONFIG_MTK_CHARGER_INTERFACE),y)
 ifeq ($(CONFIG_MTK_BQ24261_SUPPORT),y)
      obj-$(CONFIG_MTK_SMART_BATTERY) += bq24261.o charging_hw_bq24261.o
 else
@@ -63,6 +64,7 @@ else
                endif
           endif
      endif
+endif
 endif
 obj-$(CONFIG_TCPC_CLASS) += rt_pd_manager.o
 obj-y	+=  bq24157/
