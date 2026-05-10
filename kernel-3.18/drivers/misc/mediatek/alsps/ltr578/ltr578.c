@@ -104,9 +104,6 @@ static int ltr578_init_device(void);
 
 static int ltr578_ps_enable(int gainrange);
 
-static int als_flush(void);
-static int ps_flush(void);
-
 static int dynamic_calibrate;
 
 static int ps_trigger_high = 800;
@@ -1941,56 +1938,6 @@ err_out:
 	return -1;
 }
 
-static int als_batch(int flag, int64_t samplingPeriodNs, int64_t maxBatchReportLatencyNs)
-{
-	int value = 0;
-
-	value = (int)samplingPeriodNs / 1000 / 1000;
-	/*FIX  ME */
-
-	APS_LOG("ltr578 als set delay = (%d) ok.\n", value);
-	return 0;
-}
-
-static int als_flush(void)
-{
-	int err = 0;
-	/*Only flush after sensor was enabled*/
-	if (!test_bit(CMC_BIT_ALS, &ltr578_obj->enable)) {
-		ltr578_obj->als_flush = true;
-		return 0;
-	}
-	err = als_flush_report();
-	if (err >= 0)
-		ltr578_obj->als_flush = false;
-	return err;
-}
-
-static int ps_batch(int flag, int64_t samplingPeriodNs, int64_t maxBatchReportLatencyNs)
-{
-	int value = 0;
-
-	value = (int)samplingPeriodNs / 1000 / 1000;
-	/*FIX  ME */
-
-	APS_LOG("ltr578 ps set delay = (%d) ok.\n", value);
-	return 0;
-}
-
-static int ps_flush(void)
-{
-	int err = 0;
-	/*Only flash after sensor was enabled*/
-	if (!test_bit(CMC_BIT_PS, &ltr578_obj->enable)) {
-		ltr578_obj->ps_flush = true;
-		return 0;
-	}
-	err = ps_flush_report();
-	if (err >= 0)
-		ltr578_obj->ps_flush = false;
-	return err;
-}
-
 /*----------------------------------------------------------------------------*/
 static int ltr578_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
@@ -2095,8 +2042,6 @@ static int ltr578_i2c_probe(struct i2c_client *client, const struct i2c_device_i
 	als_ctl.open_report_data = als_open_report_data;
 	als_ctl.enable_nodata = als_enable_nodata;
 	als_ctl.set_delay = als_set_delay;
-	als_ctl.batch = als_batch;
-	als_ctl.flush = als_flush;
 	als_ctl.is_report_input_direct = false;
 #ifdef CUSTOM_KERNEL_SENSORHUB
 	als_ctl.is_support_batch = obj->hw.is_batch_supported_als;
@@ -2122,8 +2067,6 @@ static int ltr578_i2c_probe(struct i2c_client *client, const struct i2c_device_i
 	ps_ctl.open_report_data = ps_open_report_data;
 	ps_ctl.enable_nodata = ps_enable_nodata;
 	ps_ctl.set_delay = ps_set_delay;
-	ps_ctl.batch = ps_batch;
-	ps_ctl.flush = ps_flush;
 	ps_ctl.is_report_input_direct = false;
 #ifdef CUSTOM_KERNEL_SENSORHUB
 	ps_ctl.is_support_batch = obj->hw.is_batch_supported_ps;

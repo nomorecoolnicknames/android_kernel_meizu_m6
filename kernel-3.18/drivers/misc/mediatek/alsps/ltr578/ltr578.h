@@ -22,6 +22,70 @@
 #define MAX_THRESHOLD_HIGH 0xffff
 #define MIN_THRESHOLD_LOW 0x0
 
+/* LTR559-compatible register map used by the promoted LTR578 reference. */
+#define LTR578_ALS_CONTR        0x80
+#define LTR578_PS_CONTR         0x81
+#define LTR578_PS_LED           0x82
+#define LTR578_PS_N_PULSES      0x83
+#define LTR578_PS_MEAS_RATE     0x84
+#define LTR578_ALS_MEAS_RATE    0x85
+#define LTR578_MANUFACTURER_ID  0x87
+
+#define LTR578_INTERRUPT        0x8F
+#define LTR578_PS_THRES_UP_0    0x90
+#define LTR578_PS_THRES_UP_1    0x91
+#define LTR578_PS_THRES_LOW_0   0x92
+#define LTR578_PS_THRES_LOW_1   0x93
+
+#define LTR578_ALS_THRES_UP_0   0x97
+#define LTR578_ALS_THRES_UP_1   0x98
+#define LTR578_ALS_THRES_LOW_0  0x99
+#define LTR578_ALS_THRES_LOW_1  0x9A
+
+#define LTR578_INTERRUPT_PERSIST 0x9E
+
+#define LTR578_ALS_DATA_CH1_0   0x88
+#define LTR578_ALS_DATA_CH1_1   0x89
+#define LTR578_ALS_DATA_CH0_0   0x8A
+#define LTR578_ALS_DATA_CH0_1   0x8B
+#define LTR578_ALS_PS_STATUS    0x8C
+#define LTR578_PS_DATA_0        0x8D
+#define LTR578_PS_DATA_1        0x8E
+
+#define MODE_ALS_ON_Range1      0x01
+#define MODE_ALS_ON_Range2      0x05
+#define MODE_ALS_ON_Range3      0x09
+#define MODE_ALS_ON_Range4      0x0D
+#define MODE_ALS_ON_Range5      0x19
+#define MODE_ALS_ON_Range6      0x1D
+#define MODE_ALS_StdBy          0x00
+
+#define ALS_RANGE_64K           1
+#define ALS_RANGE_32K           2
+#define ALS_RANGE_16K           4
+#define ALS_RANGE_8K            8
+#define ALS_RANGE_1300          48
+#define ALS_RANGE_600           96
+
+#define MODE_PS_ON_Gain16       0x03
+#define MODE_PS_ON_Gain32       0x0B
+#define MODE_PS_ON_Gain64       0x0F
+#define MODE_PS_StdBy           0x00
+
+#define PS_RANGE16              1
+#define PS_RANGE32              4
+#define PS_RANGE64              8
+
+#define PON_DELAY               600
+#define WAKEUP_DELAY            10
+
+#define ltr578_SUCCESS          0
+#define ltr578_ERR_I2C          -1
+#define ltr578_ERR_STATUS       -3
+#define ltr578_ERR_SETUP_FAILURE -4
+#define ltr578_ERR_GETGSENSORDATA -5
+#define ltr578_ERR_IDENTIFICATION -6
+
 /* +add by wangdongming */
 enum {
 	CWF_TEMP = 0,
