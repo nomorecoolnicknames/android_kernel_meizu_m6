@@ -37,6 +37,8 @@ enum bq2415x_part_no {
 	BQ24157 = 0x02,
 };
 
+kal_bool g_read_write = KAL_TRUE;
+char host_status;
 
 struct bq2415x_config {
 	int chg_mv;
