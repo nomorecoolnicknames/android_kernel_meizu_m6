@@ -1703,13 +1703,6 @@ static int als_enable_nodata(int en)
 
 	mutex_lock(&Ltr559_lock);
 	APS_LOG("ltr578_obj als enable value = %d\n", en);
-	if (ltr578_obj->als_flush) {
-		if (en) {
-			APS_LOG("is not flush, will call als_flush in als_enable_nodata\n");
-			als_flush();
-		} else
-			ltr578_obj->als_flush = false;
-	}
 #ifdef CUSTOM_KERNEL_SENSORHUB
 	if (atomic_read(&ltr578_obj->init_done)) {
 		req.activate_req.sensorType = ID_LIGHT;
@@ -1832,13 +1825,6 @@ static int ps_enable_nodata(int en)
 
 	mutex_lock(&Ltr559_lock);
 	APS_LOG("ltr578_obj ps enable value = %d\n", en);
-	if (ltr578_obj->ps_flush) {
-		if (en) {
-			APS_LOG("is not flush, will call ps_flush in als_enable_nodata\n");
-			ps_flush();
-		} else
-			ltr578_obj->ps_flush = false;
-	}
 #ifdef CUSTOM_KERNEL_SENSORHUB
 	if (atomic_read(&ltr578_obj->init_done)) {
 		req.activate_req.sensorType = ID_PROXIMITY;
