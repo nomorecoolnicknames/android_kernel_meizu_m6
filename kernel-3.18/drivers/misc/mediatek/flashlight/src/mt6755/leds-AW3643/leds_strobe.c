@@ -593,36 +593,36 @@ int init_leds_AW3643(void)
 	return ret;
 }
 
-int FL_Enable(void)
+int leds_AW3643_FL_Enable(void)
 {
-	PK_DBG(" FL_Enable line=%d\n", __LINE__);
+	PK_DBG(" leds_AW3643_FL_Enable line=%d\n", __LINE__);
 	return flashEnable_leds_AW3643_1();
 }
 
 
 
-int FL_Disable(void)
+int leds_AW3643_FL_Disable(void)
 {
-	PK_DBG(" FL_Disable line=%d\n", __LINE__);
+	PK_DBG(" leds_AW3643_FL_Disable line=%d\n", __LINE__);
 	return flashDisable_leds_AW3643_1();
 }
 
-int FL_dim_duty(kal_uint32 duty)
+int leds_AW3643_FL_dim_duty(kal_uint32 duty)
 {
-	PK_DBG(" FL_dim_duty line=%d\n", __LINE__);
+	PK_DBG(" leds_AW3643_FL_dim_duty line=%d\n", __LINE__);
 	return setDuty_leds_AW3643_1(duty);
 }
 
-int FL_Init(void)
+int leds_AW3643_FL_Init(void)
 {
-	PK_DBG(" FL_Init line=%d\n", __LINE__);
+	PK_DBG(" leds_AW3643_FL_Init line=%d\n", __LINE__);
 	init_leds_AW3643();
     return 0;
 }
 
-int FL_Uninit(void)
+int leds_AW3643_FL_Uninit(void)
 {
-	FL_Disable();
+	leds_AW3643_FL_Disable();
     leds_AW3643_hwen_off();
 	return 0;
 }
@@ -633,19 +633,19 @@ User interface
 
 static void work_timeOutFunc(struct work_struct *data)
 {
-	FL_Disable();
+	leds_AW3643_FL_Disable();
 	PK_DBG("ledTimeOut_callback\n");
 }
 
 
 
-enum hrtimer_restart ledTimeOutCallback(struct hrtimer *timer)
+enum hrtimer_restart leds_AW3643_ledTimeOutCallback(struct hrtimer *timer)
 {
 	schedule_work(&workTimeOut);
 	return HRTIMER_NORESTART;
 }
 static struct hrtimer g_timeOutTimer;
-void timerInit(void)
+void leds_AW3643_timerInit(void)
 {
 	static int init_flag;
 
@@ -654,7 +654,7 @@ void timerInit(void)
 		INIT_WORK(&workTimeOut, work_timeOutFunc);
 		g_timeOutTimeMs = 1000;
 		hrtimer_init(&g_timeOutTimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-		g_timeOutTimer.function = ledTimeOutCallback;
+		g_timeOutTimer.function = leds_AW3643_ledTimeOutCallback;
 	}
 }
 
@@ -684,7 +684,7 @@ static int constant_flashlight_ioctl(unsigned int cmd, unsigned long arg)
 
 	case FLASH_IOC_SET_DUTY:
 		PK_DBG("FLASHLIGHT_DUTY: %d\n", (int)arg);
-		FL_dim_duty(arg);
+		leds_AW3643_FL_dim_duty(arg);
 		break;
 
 
@@ -714,9 +714,9 @@ static int constant_flashlight_ioctl(unsigned int cmd, unsigned long arg)
 				ktime = ktime_set(s, ms * 1000000);
 				hrtimer_start(&g_timeOutTimer, ktime, HRTIMER_MODE_REL);
 			}
-			FL_Enable();
+			leds_AW3643_FL_Enable();
 		} else {
-			FL_Disable();
+			leds_AW3643_FL_Disable();
 			hrtimer_cancel(&g_timeOutTimer);
 		}
 		break;
@@ -738,8 +738,8 @@ static int constant_flashlight_open(void *pArg)
 	PK_DBG("constant_flashlight_open line=%d\n", __LINE__);
 
 	if (0 == strobe_Res) {
-		FL_Init();
-		timerInit();
+		leds_AW3643_FL_Init();
+		leds_AW3643_timerInit();
 	}
 	PK_DBG("constant_flashlight_open line=%d\n", __LINE__);
 	spin_lock_irq(&g_strobeSMPLock);
@@ -776,7 +776,7 @@ static int constant_flashlight_release(void *pArg)
 
 		spin_unlock_irq(&g_strobeSMPLock);
 
-		FL_Uninit();
+		leds_AW3643_FL_Uninit();
 	}
 
 	PK_DBG(" Done\n");
@@ -786,26 +786,26 @@ static int constant_flashlight_release(void *pArg)
 }
 
 
-FLASHLIGHT_FUNCTION_STRUCT constantFlashlightFunc = {
+FLASHLIGHT_FUNCTION_STRUCT leds_AW3643_FlashlightFunc = {
 	constant_flashlight_open,
 	constant_flashlight_release,
 	constant_flashlight_ioctl
 };
 
 
-MUINT32 constantFlashlightInit(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc)
+MUINT32 leds_AW3643_FlashlightInit(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc)
 {
 	if (pfFunc != NULL)
-		*pfFunc = &constantFlashlightFunc;
+		*pfFunc = &leds_AW3643_FlashlightFunc;
 	return 0;
 }
 
 
 
 /* LED flash control for high current capture mode*/
-ssize_t strobe_VDIrq(void)
+ssize_t leds_AW3643_strobe_VDIrq(void)
 {
 
 	return 0;
 }
-EXPORT_SYMBOL(strobe_VDIrq);
+EXPORT_SYMBOL(leds_AW3643_strobe_VDIrq);

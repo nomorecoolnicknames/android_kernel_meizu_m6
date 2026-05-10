@@ -369,7 +369,7 @@ static int setFlashDrv(int sensorDev, int strobeId)
 #else
 		if (strobeId == 1) {
 			if (partId == 1)
-				constantFlashlightInit(ppF);
+				leds_AW3643_FlashlightInit(ppF);
 			else if (partId == 2)
 				strobeInit_main_sid1_part2(ppF);
 		} else if (strobeId == 2) {

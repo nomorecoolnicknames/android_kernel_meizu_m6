@@ -215,6 +215,7 @@ typedef struct {
 int strobe_getPartId(int sensorDev, int strobeId);
 MUINT32 strobeInit_dummy(FLASHLIGHT_FUNCTION_STRUCT **pfFunc);
 MUINT32 constantFlashlightInit(FLASHLIGHT_FUNCTION_STRUCT **pfFunc);
+MUINT32 leds_AW3643_FlashlightInit(FLASHLIGHT_FUNCTION_STRUCT **pfFunc);
 MUINT32 strobeInit_main_sid1_part2(FLASHLIGHT_FUNCTION_STRUCT **pfFunc);
 MUINT32 strobeInit_main_sid2_part1(FLASHLIGHT_FUNCTION_STRUCT **pfFunc);
 MUINT32 strobeInit_main_sid2_part2(FLASHLIGHT_FUNCTION_STRUCT **pfFunc);
@@ -229,6 +230,7 @@ MUINT32 defaultFlashlightInit(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc);
 MUINT32 peakFlashlightInit(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc);
 MUINT32 torchFlashlightInit(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc);
 MUINT32 constantFlashlightInit(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc);
+MUINT32 leds_AW3643_FlashlightInit(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc);
 MUINT32 subStrobeInit(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc);
 MUINT32 strobeInit_sub_sid1_part2(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc);
 MUINT32 strobeInit_main_sid1_part2(PFLASHLIGHT_FUNCTION_STRUCT *pfFunc);
