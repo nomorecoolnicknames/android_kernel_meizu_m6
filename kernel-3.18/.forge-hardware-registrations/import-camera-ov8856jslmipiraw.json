@@ -21,7 +21,7 @@
     "arch/arm64/configs/al00_ato_huawei6750_66_n_defconfig"
   ],
   "driver_names": [
-    "ov8856_mipi_raw"
+    "ov8856jsl_mipi_raw"
   ],
   "kd_sensorlist_status": "needs_symbol_review",
   "key": "import:camera:ov8856jslmipiraw",
@@ -33,10 +33,10 @@
     "run kernel build; missing SensorInit symbols mean kd_sensorlist registration must be patched"
   ],
   "source_files": [
-    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856_otp.c",
-    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856mipiraw_Sensor.h",
-    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856_mipi_raw/ov8856mipiraw_Sensor.c"
+    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856jsl_mipi_raw/ov8856jslmipirawjslmipirawjslmipirawjslmipirawjslmipiraw.c",
+    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856jsl_mipi_raw/ov8856jslmipirawjslmipirawjslmipirawjslmipirawjslmipiraw.h",
+    "drivers/misc/mediatek/imgsensor/src/mt6755/ov8856jsl_mipi_raw/ov8856jslmipirawjslmipirawjslmipirawjslmipirawjslmipiraw.c"
   ],
-  "updated_at": "2026-05-09T17:37:38.303084+00:00",
+  "updated_at": "2026-05-10T08:56:26.098048+00:00",
   "version": 1
 }
