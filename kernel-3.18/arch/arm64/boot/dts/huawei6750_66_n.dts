@@ -1180,6 +1180,26 @@ hw-dev-detect@0{
 		reg = <0x48>;
 		status = "okay";
 	};
+	/* Build Station: stock hardware profile reports BQ24157 at i2c1-006a.
+	 * Without this DT node the imported charger driver never registers
+	 * mtk_charger_info, and mtk_chg_ctrl_intf logs "no charger is ready".
+	 */
+	bq24157@6A {
+		compatible = "ti,bq2415x";
+		reg = <0x6A>;
+		status = "okay";
+
+		ti,bq2415x,enable-term;
+		ti,bq2415x,current-sensor-mohm = <55>;
+		ti,bq2415x,charge-voltage = <4400>;
+		ti,bq2415x,charge-current = <1500>;
+		ti,bq2415x,input-current-limit = <0>;
+		ti,bq2415x,input-voltage-limit = <4500>;
+		ti,bq2415x,vbatlow-volt = <3500>;
+		ti,bq2415x,term-current = <100>;
+		ti,bq2415x,safety-max-charge-current = <1550>;
+		ti,bq2415x,safety-max-charge-voltage = <4400>;
+	};
 	msensor@0C {
 		compatible = "mediatek,msensor2";
 		reg = <0x0C>;

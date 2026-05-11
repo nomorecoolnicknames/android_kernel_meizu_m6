@@ -1140,7 +1140,7 @@ static int bq2415x_charger_probe(struct i2c_client *client,
 
 		/* Register charger device */
 	bq->chg_dev = charger_device_register(
-		"bq2515x", &client->dev, bq, &bq2415x_chg_ops,
+		"bq2415x", &client->dev, bq, &bq2415x_chg_ops,
 		&bq->chg_props);
 	if (IS_ERR_OR_NULL(bq->chg_dev)) {
 		ret = PTR_ERR(bq->chg_dev);
@@ -1158,6 +1158,7 @@ static int bq2415x_charger_probe(struct i2c_client *client,
 	bq->mchr_info.name = "bq2415x";
 	bq->mchr_info.device_id = bq->part_no;
 	mtk_charger_set_info(&bq->mchr_info);
+	pr_info("registered MTK charger interface for i2c addr=0x%02x\n", client->addr);
 
 	INIT_DELAYED_WORK(&bq->monitor_work, bq2415x_monitor_workfunc);
 
