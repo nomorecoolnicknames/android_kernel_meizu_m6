@@ -1197,6 +1197,8 @@ static void bq2415x_charger_shutdown(struct i2c_client *client)
 
 static struct of_device_id bq2415x_charger_match_table[] = {
 	{.compatible = "ti,bq2415x"},
+	{.compatible = "ti,bq24157"},
+	{.compatible = "bq24157"},
 	{},
 };
 

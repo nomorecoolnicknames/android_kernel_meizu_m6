@@ -121,17 +121,11 @@ bool _can_do_read_reg(void)
 
 static unsigned int _need_do_esd_check(void)
 {
-	int ret = 0;
-#ifdef CONFIG_OF
-	if ((primary_get_lcm()->params->dsi.esd_check_enable == 1) && (islcmconnected == 1))
-		ret = 1;
-
-#else
-	if (primary_get_lcm()->params->dsi.esd_check_enable == 1)
-		ret = 1;
-
-#endif
-	return ret;
+	/* Build Station bring-up: ili9881p ESD reads time out on meizu_M6
+	 * and the generic recovery path blanks the panel every few seconds.
+	 * Keep the panel alive while LCM timing/scan/gamma are being adapted.
+	 */
+	return 0;
 }
 
 /* For Cmd Mode Read LCM Check */

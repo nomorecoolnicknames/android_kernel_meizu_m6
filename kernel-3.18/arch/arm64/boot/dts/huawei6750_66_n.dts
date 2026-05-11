@@ -1184,9 +1184,9 @@ hw-dev-detect@0{
 	 * Without this DT node the imported charger driver never registers
 	 * mtk_charger_info, and mtk_chg_ctrl_intf logs "no charger is ready".
 	 */
-	bq24157@6A {
-		compatible = "ti,bq2415x";
-		reg = <0x6A>;
+	bq24157@6a {
+		compatible = "ti,bq2415x", "ti,bq24157", "bq24157";
+		reg = <0x6a>;
 		status = "okay";
 
 		ti,bq2415x,enable-term;
