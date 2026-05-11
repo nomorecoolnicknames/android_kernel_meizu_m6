@@ -322,7 +322,9 @@ static int mtkfb_blank(int blank_mode, struct fb_info *info)
 
 int mtkfb_set_backlight_level(unsigned int level)
 {
+#ifdef CONFIG_LOG_JANK
 	static int bk_state=0;
+#endif
 	//MTKFB_FUNC();
 #ifdef CONFIG_LOG_JANK
     if(level ==0)

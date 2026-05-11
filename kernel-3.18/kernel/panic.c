@@ -80,7 +80,9 @@ void panic(const char *fmt, ...)
 	long i, i_next = 0;
 	int state = 0;
 
+#ifdef CONFIG_HUAWEI_BFM
 	qcom_set_boot_fail_flag(KERNEL_AP_PANIC);
+#endif
 	/*
 	 * Disable local interrupts. This will prevent panic_smp_self_stop
 	 * from deadlocking the first cpu that invokes the panic, since

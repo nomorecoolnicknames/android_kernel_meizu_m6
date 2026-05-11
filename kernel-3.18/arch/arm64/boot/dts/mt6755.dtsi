@@ -2174,12 +2174,13 @@
 			compatible = "mediatek,battery";
 		};
 		charger {
-			compatible = "huawei,charger";
+			compatible = "mediatek,mt6755-charger";
+			status = "disabled";
 		};
 		fuelguage {
-			compatible = "huawei,fuelguage";
+			compatible = "mediatek,mt6755-fuelgauge";
 			fuelguage_type = "usb";
-			status = "okay";
+			status = "disabled";
 		};
 		flashlight: flashlight {
 			compatible = "mediatek,mt6755-flashlight";

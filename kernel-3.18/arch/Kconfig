@@ -171,13 +171,9 @@ config HAVE_IOREMAP_PROT
 
 config HAVE_KPROBES
 	bool
-	depends on HUAWEI_KERNEL_DEBUG
-	default y if HUAWEI_KERNEL_DEBUG
 
 config HAVE_KRETPROBES
 	bool
-	depends on HUAWEI_KERNEL_DEBUG
-	default y if HUAWEI_KERNEL_DEBUG
 
 config HAVE_OPTPROBES
 	bool

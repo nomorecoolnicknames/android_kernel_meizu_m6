@@ -462,7 +462,9 @@ signed int gFG_max_temperature = -20;
 signed int gFG_min_temperature = 100;
 
 #endif				/* battery info */
-static  char battery_vendor_name[50]="No Standard Battery";
+#ifdef CONFIG_HUAWEI_CHARGER
+static char battery_vendor_name[50] = "No Standard Battery";
+#endif
 typedef enum {
     UNSTANDAND_BATTERY = 0,
     DESAY,

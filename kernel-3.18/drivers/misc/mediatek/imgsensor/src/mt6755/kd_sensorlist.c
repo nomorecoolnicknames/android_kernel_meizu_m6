@@ -1622,7 +1622,9 @@ int kdSensorSetExpGainWaitDone(int *ptime)
 inline static int adopt_CAMERA_HW_Open(void)
 {
     UINT32 err = 0;
+#ifdef CONFIG_HUAWEI_DSM
 	Check_I2C = 2;
+#endif
     KD_IMGSENSOR_PROFILE_INIT();
     /* power on sensor */
     /* if (atomic_read(&g_CamHWOpend) == 0  ) { */

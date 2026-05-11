@@ -186,11 +186,6 @@ struct android_dev {
 
 static struct class *android_class;
 
-#ifdef CONFIG_HUAWEI_USB
-static LIST_HEAD (android_dev_list );
-#else
-static struct list_head android_dev_list;
-#endif
 
 static struct android_dev *_android_dev;
 static int android_bind_config(struct usb_configuration *c);
