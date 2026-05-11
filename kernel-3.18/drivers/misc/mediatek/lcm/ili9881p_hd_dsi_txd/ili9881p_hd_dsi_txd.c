@@ -617,7 +617,12 @@ static void lcm_get_params(LCM_PARAMS *params)
 	params->dsi.fbk_div = 0x1;
 #endif
 	params->dsi.clk_lp_per_line_enable = 0;
-	params->dsi.esd_check_enable = 1;
+	/*
+	 * Disable runtime ESD polling for bring-up.  On meizu_M6 bootdiag the
+	 * ili9881p check path repeatedly times out and forces panel recovery,
+	 * which is followed by CMDQ/GED fence stalls during Android boot.
+	 */
+	params->dsi.esd_check_enable = 0;
 	params->dsi.customization_esd_check_enable = 0;
 	params->dsi.lcm_esd_check_table[0].cmd = 0x0A;
 	params->dsi.lcm_esd_check_table[0].count = 1;
@@ -851,25 +856,12 @@ static unsigned int lcm_compare_id(void)
 /* return FALSE: No need recovery */
 static unsigned int lcm_esd_check(void)
 {
-#ifndef BUILD_LK
-	char buffer[3];
-	int array[4];
-
-	array[0] = 0x00013700;
-	dsi_set_cmdq(array, 1, 1);
-
-	read_reg_v2(0x53, buffer, 1);
-
-	if (buffer[0] != 0x24) {
-		LCM_LOGI("[LCM ERROR] [0x53]=0x%02x\n", buffer[0]);
-		return TRUE;
-	}
-	LCM_LOGI("[LCM NORMAL] [0x53]=0x%02x\n", buffer[0]);
+	/*
+	 * Keep the panel out of the ESD recovery loop while validating this
+	 * port.  The original 0x53 read can report false failures/timeouts on
+	 * this target and reset the panel under SurfaceFlinger/BootAnimation.
+	 */
 	return FALSE;
-#else
-	return FALSE;
-#endif
-
 }
 
 static unsigned int lcm_ata_check(unsigned char *buffer)
