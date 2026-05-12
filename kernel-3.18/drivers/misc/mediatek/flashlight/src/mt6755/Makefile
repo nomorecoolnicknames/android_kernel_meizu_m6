@@ -29,11 +29,10 @@ obj-$(CONFIG_HUAWEI_DSM)	+= flash_dsm.o
 ifeq ($(wildcard $(srctree)/drivers/misc/mediatek/mach/$(MTK_PLATFORM)/$(ARCH_MTK_PROJECT)/flashlight),)
 #ifeq ($(wildcard $(srctree)/arch/arm/mach-$(MTK_PLATFORM)/$(ARCH_MTK_PROJECT)/flashlight),)
 
-custom_kernel_flashlight := $(addsuffix /, $(shell echo $(CONFIG_CUSTOM_KERNEL_FLASHLIGHT)))
+custom_kernel_flashlight := $(addsuffix /, $(shell echo $(CONFIG_CUSTOM_KERNEL_FLASHLIGHT) | sed s/leds_AW3643/leds-AW3643/g))
 
 obj-y += $(custom_kernel_flashlight)
 
 endif
 
 
-obj-y	+=  leds-AW3643/

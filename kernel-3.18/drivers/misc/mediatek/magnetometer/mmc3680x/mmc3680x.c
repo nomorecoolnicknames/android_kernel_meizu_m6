@@ -1917,13 +1917,13 @@ static int __init mmc3680x_init(void)
 	const char *name = "mediatek,mmc3680x";
 
 	hw = get_mag_dts_func(name, hw);
-
-	MEMSIC_INFO("mmc3680x_init addr0 = 0x%x,addr1 = 0x%x,i2c_num = %d \n",hw->i2c_addr[0],hw->i2c_addr[1],hw->i2c_num);
-
-	if (!hw)
-	{
+	if (!hw) {
 		MEMSIC_ERR("get dts info fail\n");
+		return -ENODEV;
 	}
+
+	MEMSIC_INFO("mmc3680x_init addr0 = 0x%x,addr1 = 0x%x,i2c_num = %d \n",
+		hw->i2c_addr[0], hw->i2c_addr[1], hw->i2c_num);
 
 	mag_driver_add(&mmc3680x_init_info);
 

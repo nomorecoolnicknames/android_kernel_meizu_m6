@@ -103,65 +103,63 @@ unsigned char i2c_write_reg(unsigned char addr, unsigned char reg_data)
 {
 	char ret;
 	u8 wdbuf[512] = {0};
-
+	struct i2c_client *client = leds_AW3643_flashlight_client;
 	struct i2c_msg msgs[] = {
 		{
-			.addr	= leds_AW3643_flashlight_client->addr,
 			.flags	= 0,
 			.len	= 2,
 			.buf	= wdbuf,
 		},
 	};
 
+	if (NULL == client) {
+		pr_err("msg %s leds_AW3643_flashlight_client is NULL\n", __func__);
+		return -1;
+	}
+
+	msgs[0].addr = client->addr;
 	wdbuf[0] = addr;
 	wdbuf[1] = reg_data;
 
-	if(NULL == leds_AW3643_flashlight_client)
-	{
-		pr_err("msg %s leds_AW3643_flashlight_client is NULL\n", __func__);
-		return -1;	
-	}
-
-	ret = i2c_transfer(leds_AW3643_flashlight_client->adapter, msgs, 1);
+	ret = i2c_transfer(client->adapter, msgs, 1);
 	if (ret < 0)
-		pr_err("msg %s i2c read error: %d\n", __func__, ret);
+		pr_err("msg %s i2c write error: %d\n", __func__, ret);
 
-    return ret;
+	return ret;
 }
 
 unsigned char I2C_read_reg(unsigned char addr)
 {
 	unsigned char ret;
 	u8 rdbuf[512] = {0};
-
+	struct i2c_client *client = leds_AW3643_flashlight_client;
 	struct i2c_msg msgs[] = {
 		{
-			.addr	= leds_AW3643_flashlight_client->addr,
 			.flags	= 0,
 			.len	= 1,
 			.buf	= rdbuf,
 		},
 		{
-			.addr	= leds_AW3643_flashlight_client->addr,
 			.flags	= I2C_M_RD,
 			.len	= 1,
 			.buf	= rdbuf,
 		},
 	};
 
-	rdbuf[0] = addr;
-	
-	if(NULL == leds_AW3643_flashlight_client)
-	{
+	if (NULL == client) {
 		pr_err("msg %s leds_AW3643_flashlight_client is NULL\n", __func__);
-		return -1;	
+		return -1;
 	}
 
-	ret = i2c_transfer(leds_AW3643_flashlight_client->adapter, msgs, 2);
+	msgs[0].addr = client->addr;
+	msgs[1].addr = client->addr;
+	rdbuf[0] = addr;
+
+	ret = i2c_transfer(client->adapter, msgs, 2);
 	if (ret < 0)
 		pr_err("msg %s i2c read error: %d\n", __func__, ret);
 
-    return rdbuf[0];
+	return rdbuf[0];
 }
 
 
@@ -625,6 +623,33 @@ int leds_AW3643_FL_Uninit(void)
 	leds_AW3643_FL_Disable();
     leds_AW3643_hwen_off();
 	return 0;
+}
+
+int flashlight_set_onoff(unsigned int onoff)
+{
+	if (g_duty1 < 0)
+		setDuty_leds_AW3643_1(0);
+
+	if (onoff)
+		return leds_AW3643_FL_Enable();
+
+	return leds_AW3643_FL_Disable();
+}
+
+int rear_flashlight_operate(int duty, int open)
+{
+	if (duty < 0)
+		duty = 0;
+	else if (duty >= e_DutyNum)
+		duty = e_DutyNum - 1;
+
+	setDuty_leds_AW3643_1(duty);
+	PK_DBG("rear_flashlight_operate duty = %d, status = %d\n", g_duty1, open);
+
+	if (open == 1)
+		return leds_AW3643_FL_Enable();
+
+	return leds_AW3643_FL_Disable();
 }
 
 /*****************************************************************************
