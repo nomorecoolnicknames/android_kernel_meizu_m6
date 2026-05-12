@@ -2560,9 +2560,14 @@ int32_t cmdqDdpDumpInfo(uint64_t engineFlag, int level)
 
 	ddp_dump_analysis(DISP_MODULE_WDMA0);
 
-	/* try to set event by CPU to avoid blocking auto test such as Monkey/MTBF */
-	/* cmdqCoreSetEvent(CMDQ_SYNC_TOKEN_STREAM_EOF); */
-	/* cmdqCoreSetEvent(CMDQ_EVENT_DISP_RDMA0_EOF); */
+	/* Build Station bring-up: release wait tokens after a display CMDQ timeout.
+	 * The M6 panel currently reaches Android but can wedge on RDMA0/MUTEX0
+	 * EOF/SOF fences; releasing tokens keeps userspace/logging alive for the next pass.
+	 */
+	cmdqCoreSetEvent(CMDQ_SYNC_TOKEN_STREAM_EOF);
+	cmdqCoreSetEvent(CMDQ_EVENT_DISP_RDMA0_SOF);
+	cmdqCoreSetEvent(CMDQ_EVENT_DISP_RDMA0_EOF);
+	cmdqCoreSetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF);
 	if (disp_helper_get_option(DISP_OPT_DETECT_RECOVERY)) {
 		atomic_set(&primary_recovery_task_wakeup, 1);
 		wake_up_interruptible(&primary_recovery_task_wq);

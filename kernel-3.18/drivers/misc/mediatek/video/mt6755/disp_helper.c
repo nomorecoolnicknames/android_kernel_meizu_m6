@@ -376,20 +376,21 @@ void disp_helper_option_init(void)
 	disp_helper_set_option(DISP_OPT_OVL_WARM_RESET, 0);
 
 	/* ===================Begin: lowpower option setting==================== */
-	disp_helper_set_option(DISP_OPT_SODI_SUPPORT, 1);
-	disp_helper_set_option(DISP_OPT_IDLE_MGR, 1);
+	disp_helper_set_option(DISP_OPT_SODI_SUPPORT, 0);
+	DISPMSG("Build Station: disable SODI during M6 display bring-up\n");
+	disp_helper_set_option(DISP_OPT_IDLE_MGR, 0);
 
 	/* 1. vdo mode + screen idle(need idlemgr) */
-	disp_helper_set_option(DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 1);
-	disp_helper_set_option(DISP_OPT_SHARE_SRAM, 1);
-	disp_helper_set_option(DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 1);
+	disp_helper_set_option(DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 0);
+	disp_helper_set_option(DISP_OPT_SHARE_SRAM, 0);
+	disp_helper_set_option(DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 0);
 
 	/* 2. cmd mode + screen idle(need idlemgr) */
-	disp_helper_set_option(DISP_OPT_IDLEMGR_ENTER_ULPS, 1);
+	disp_helper_set_option(DISP_OPT_IDLEMGR_ENTER_ULPS, 0);
 
 	/* 3. cmd mode + vdo mode */
 	disp_helper_set_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK, 0);
-	disp_helper_set_option(DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 1);
+	disp_helper_set_option(DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 0);
 
 
 	disp_helper_set_option(DISP_OPT_MET_LOG, 1);
@@ -408,13 +409,13 @@ void disp_helper_option_init(void)
 	disp_helper_set_option(DISP_OPT_ESD_CHECK_RECOVERY, 0);
 	disp_helper_set_option(DISP_OPT_ESD_CHECK_SWITCH, 0);
 
-	disp_helper_set_option(DISP_OPT_BYPASS_OVL, 0);
+	disp_helper_set_option(DISP_OPT_BYPASS_OVL, 1);
 	disp_helper_set_option(DISP_OPT_FPS_CALC_WND, 10);
-	disp_helper_set_option(DISP_OPT_SMART_OVL, 1);
+	disp_helper_set_option(DISP_OPT_SMART_OVL, 0);
 	disp_helper_set_option(DISP_OPT_GMO_OPTIMIZE, 0);
 	disp_helper_set_option(DISP_OPT_CV_BYSUSPEND, 1);
 	disp_helper_set_option(DISP_OPT_DYNAMIC_DEBUG, 0);
-	disp_helper_set_option(DISP_OPT_DELAYED_TRIGGER, 1);
+	disp_helper_set_option(DISP_OPT_DELAYED_TRIGGER, 0);
 	/*Detect Hang thread Option*/
 	disp_helper_set_option(DISP_OPT_DETECT_RECOVERY, 0);
 }
