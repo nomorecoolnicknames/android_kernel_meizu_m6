@@ -635,6 +635,60 @@ void mtk_charger_set_info(struct mtk_charger_info *mchr_info)
 	mutex_unlock(&mtk_info_access_lock);
 }
 
+static int mtk_chg_ctrl_fallback(CHARGING_CTRL_CMD cmd, void *data)
+{
+	/*
+	 * Bring-up guard for boards where the charger IC driver has not
+	 * registered mtk_charger_info yet.  Several legacy battery paths ask
+	 * for PMIC/boot/read-only state before the charger object is ready; the
+	 * helpers below live in this file and do not require mchr_info.
+	 */
+	switch (cmd) {
+	case CHARGING_CMD_SW_INIT:
+		return mtk_charger_sw_init(NULL, data);
+	case CHARGING_CMD_SET_HV_THRESHOLD:
+		return mtk_charger_set_hv_threshold(NULL, data);
+	case CHARGING_CMD_GET_HV_STATUS:
+		return mtk_charger_get_hv_status(NULL, data);
+	case CHARGING_CMD_GET_BATTERY_STATUS:
+		return mtk_charger_get_battery_status(NULL, data);
+	case CHARGING_CMD_GET_CHARGER_DET_STATUS:
+		return mtk_charger_get_charger_det_status(NULL, data);
+	case CHARGING_CMD_GET_CHARGER_TYPE:
+		return mtk_charger_get_charger_type(NULL, data);
+	case CHARGING_CMD_GET_IS_PCM_TIMER_TRIGGER:
+		return mtk_charger_get_is_pcm_timer_trigger(NULL, data);
+	case CHARGING_CMD_GET_PLATFORM_BOOT_MODE:
+		return mtk_charger_get_platform_boot_mode(NULL, data);
+	case CHARGING_CMD_GET_POWER_SOURCE:
+		return mtk_charger_get_power_source(NULL, data);
+	case CHARGING_CMD_GET_CSDAC_FULL_FLAG:
+		return mtk_charger_get_csdac_full_flag(NULL, data);
+	case CHARGING_CMD_DISO_INIT:
+		return mtk_charger_diso_init(NULL, data);
+	case CHARGING_CMD_GET_DISO_STATE:
+		return mtk_charger_get_diso_state(NULL, data);
+	case CHARGING_CMD_SET_VBUS_OVP_EN:
+		return mtk_charger_set_vbus_ovp_en(NULL, data);
+	case CHARGING_CMD_GET_BIF_VBAT:
+		return mtk_charger_get_bif_vbat(NULL, data);
+	case CHARGING_CMD_SET_CHRIND_CK_PDN:
+		return mtk_charger_set_chrind_ck_pdn(NULL, data);
+	case CHARGING_CMD_GET_BIF_TBAT:
+		return mtk_charger_get_bif_tbat(NULL, data);
+	case CHARGING_CMD_SET_DP:
+		return mtk_charger_set_dp(NULL, data);
+	case CHARGING_CMD_GET_BIF_IS_EXIST:
+		return mtk_charger_get_bif_is_exist(NULL, data);
+	default:
+		break;
+	}
+
+	battery_log(BAT_LOG_CRTI,
+		"%s: no charger is ready for cmd %d\n", __func__, cmd);
+	return -ENODEV;
+}
+
 static int mtk_chg_ctrl_intf(const struct mtk_charger_info *mchr_info,
 	CHARGING_CTRL_CMD cmd, void *data)
 {
@@ -643,9 +697,7 @@ static int mtk_chg_ctrl_intf(const struct mtk_charger_info *mchr_info,
 
 
 	if (!mchr_info) {
-		battery_log(BAT_LOG_CRTI, "%s: no charger is ready\n",
-			__func__);
-		return -ENODEV;
+		return mtk_chg_ctrl_fallback(cmd, data);
 	}
 
 	if (!mchr_info->mchr_intf) {
