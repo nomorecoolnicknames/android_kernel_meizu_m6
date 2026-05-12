@@ -662,7 +662,7 @@ static int mtk_chg_ctrl_fallback(CHARGING_CTRL_CMD cmd, void *data)
 		return mtk_charger_get_platform_boot_mode(NULL, data);
 	case CHARGING_CMD_GET_POWER_SOURCE:
 		return mtk_charger_get_power_source(NULL, data);
-	case CHARGING_CMD_GET_CSDAC_FULL_FLAG:
+	case CHARGING_CMD_GET_CSDAC_FALL_FLAG:
 		return mtk_charger_get_csdac_full_flag(NULL, data);
 	case CHARGING_CMD_DISO_INIT:
 		return mtk_charger_diso_init(NULL, data);
