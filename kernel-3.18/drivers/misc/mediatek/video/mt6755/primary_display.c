@@ -3340,8 +3340,9 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 		wake_up_process(primary_delay_trigger_task);
 	}
 
+	init_waitqueue_head(&primary_display_present_fence_wq);
+
 	if (disp_helper_get_option(DISP_OPT_PRESENT_FENCE)) {
-		init_waitqueue_head(&primary_display_present_fence_wq);
 		present_fence_release_worker_task =
 		    kthread_create(_present_fence_release_worker_thread, NULL,
 				   "present_fence_worker");
@@ -4108,6 +4109,9 @@ done:
 
 void primary_display_update_present_fence(unsigned int fence_idx)
 {
+	if (!disp_helper_get_option(DISP_OPT_PRESENT_FENCE))
+		return;
+
 	gPresentFenceIndex = fence_idx;
 	atomic_set(&primary_display_present_fence_update_event, 1);
 	wake_up_interruptible(&primary_display_present_fence_wq);
@@ -4792,7 +4796,8 @@ int primary_display_frame_cfg(struct disp_frame_cfg_t *cfg)
 		dprec_start(trigger_event, proc_name, 0);
 	}
 
-	if (cfg->present_fence_idx != (unsigned int)-1)
+	if (cfg->present_fence_idx != (unsigned int)-1 &&
+		disp_helper_get_option(DISP_OPT_PRESENT_FENCE))
 		primary_display_update_present_fence(cfg->present_fence_idx);
 
 	primary_display_trigger_nolock(0, NULL, 0);
