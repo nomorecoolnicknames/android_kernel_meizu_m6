@@ -135,10 +135,10 @@ struct disp_help_info help_info[OPT_COUNT] = {
 	{ DISP_OPT_BYPASS_PQ, 0, "DISP_OPT_BYPASS_PQ" },
 	{ DISP_OPT_ESD_CHECK_RECOVERY, 0, "DISP_OPT_ESD_CHECK_RECOVERY" },
 	{ DISP_OPT_ESD_CHECK_SWITCH, 0, "DISP_OPT_ESD_CHECK_SWITCH" },
-	{ DISP_OPT_PRESENT_FENCE, 1, "DISP_OPT_PRESENT_FENCE" },
+	{ DISP_OPT_PRESENT_FENCE, 0, "DISP_OPT_PRESENT_FENCE" },
 	{ DISP_OPT_PERFORMANCE_DEBUG, 0, "DISP_OPT_PERFORMANCE_DEBUG" },
 	{ DISP_OPT_SWITCH_DST_MODE, 0, "DISP_OPT_SWITCH_DST_MODE" },
-	{ DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 1, "DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE" },
+	{ DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 0, "DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE" },
 	{ DISP_OPT_SCREEN_CAP_FROM_DITHER, 0, "DISP_OPT_SCREEN_CAP_FROM_DITHER" },
 	{ DISP_OPT_BYPASS_OVL, 1, "DISP_OPT_BYPASS_OVL" },
 	{ DISP_OPT_FPS_CALC_WND, 10, "DISP_OPT_FPS_CALC_WND" },
@@ -396,7 +396,8 @@ void disp_helper_option_init(void)
 	disp_helper_set_option(DISP_OPT_MET_LOG, 1);
 	/* ===================End: lowpower option setting==================== */
 
-	disp_helper_set_option(DISP_OPT_PRESENT_FENCE, 1);
+	/* M6 bring-up: keep BootAnimation/HWC moving while CMDQ/LCM EOF signalling is adapted. */
+	disp_helper_set_option(DISP_OPT_PRESENT_FENCE, 0);
 
 	/* use fake vsync timer for low power measurement */
 	disp_helper_set_option(DISP_OPT_NO_LCM_FOR_LOW_POWER_MEASUREMENT, 0);
@@ -405,7 +406,8 @@ void disp_helper_option_init(void)
 	disp_helper_set_option(DISP_OPT_DECOUPLE_MODE_USE_RGB565, 0);
 
 	disp_helper_set_option(DISP_OPT_BYPASS_PQ, 0);
-	disp_helper_set_option(DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 1);
+	/* Avoid waiting on command-mode mutex EOF that currently never signals on ili9881p. */
+	disp_helper_set_option(DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 0);
 	disp_helper_set_option(DISP_OPT_ESD_CHECK_RECOVERY, 0);
 	disp_helper_set_option(DISP_OPT_ESD_CHECK_SWITCH, 0);
 
