@@ -178,7 +178,9 @@ void free_tty_struct(struct tty_struct *tty)
 
 static inline struct tty_struct *file_tty(struct file *file)
 {
-	return ((struct tty_file_private *)file->private_data)->tty;
+	struct tty_file_private *priv = file->private_data;
+
+	return priv ? priv->tty : NULL;
 }
 
 int tty_alloc_file(struct file *file)
@@ -188,6 +190,9 @@ int tty_alloc_file(struct file *file)
 	priv = kmalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
+
+	memset(priv, 0, sizeof(*priv));
+	INIT_LIST_HEAD(&priv->list);
 
 	file->private_data = priv;
 
