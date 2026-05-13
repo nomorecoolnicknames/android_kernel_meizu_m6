@@ -40,7 +40,13 @@
 
 static atomic_t g_i32Count = ATOMIC_INIT(0);
 static unsigned int ged_monitor_3D_fence_debug = 0;
-static unsigned int ged_monitor_3D_fence_disable = 0;
+/*
+ * Meizu M6 bring-up: Android reaches BootAnimation, then GED repeatedly waits
+ * forever on the BootAnimation sw_sync fence.  Keep GED 3D fence monitoring
+ * opt-in so the display/GPU stack is not held on stale donor fence tracking
+ * during early boot.  The module parameter below can re-enable it at runtime.
+ */
+static unsigned int ged_monitor_3D_fence_disable = 1;
 static unsigned int ged_monitor_3D_fence_switch = 1;
 static unsigned int ged_monitor_3D_fence_systrace = 0;
 static unsigned long g_ul3DFenceDoneTime = 0;
@@ -258,4 +264,5 @@ int ged_monitor_3D_fence_get_count(void)
 
 module_param(ged_monitor_3D_fence_debug, uint, 0644);
 module_param(ged_monitor_3D_fence_disable, uint, 0644);
+MODULE_PARM_DESC(ged_monitor_3D_fence_disable, "Disable GED 3D fence monitor by default on bring-up builds");
 module_param(ged_monitor_3D_fence_systrace, uint, 0644);
