@@ -1,3 +1,4 @@
 header-y += if_pppolac.h
 header-y += if_pppopns.h
-header-y += autoconf.h
+# autoconf.h is generated under include/generated and must not be exported as UAPI.
+# header-y += autoconf.h
