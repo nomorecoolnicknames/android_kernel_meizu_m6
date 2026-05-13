@@ -322,12 +322,21 @@ static bool fglarbcallback;
 static unsigned int enable_ioctl;
 static unsigned int disable_freq_hopping = 1;
 static unsigned int disable_freq_mux = 1;
-static unsigned int force_max_mmsys_clk;
+
+/*
+ * Meizu M6 bring-up safety default.
+ *
+ * Bootdiag reaches SurfaceFlinger/BootAnimation, but GED keeps reporting
+ * BootAnimation sw_sync fences stuck while MALI dequeueBuffer stalls.  Keep the
+ * multimedia clock path stable during early display use instead of letting
+ * MMDVFS change MM/SMI rates under HWC/RDMA composition.
+ */
+static unsigned int force_max_mmsys_clk = 1;
 static unsigned int force_camera_hpm;
 static unsigned int bus_optimization;
 static unsigned int enable_bw_optimization;
 static unsigned int smi_profile = SMI_BWC_SCEN_NORMAL;
-static unsigned int disable_mmdvfs;
+static unsigned int disable_mmdvfs = 1;
 
 
 static unsigned int *pLarbRegBackUp[SMI_LARB_NR];
