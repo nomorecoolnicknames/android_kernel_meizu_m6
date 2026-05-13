@@ -1579,9 +1579,7 @@ compat_copy_entry_from_user(struct compat_ipt_entry *e, void **dstptr,
 	*size += sizeof(struct ipt_entry) - sizeof(struct compat_ipt_entry);
 
 	xt_ematch_foreach(ematch, e) {
-		ret = xt_compat_match_from_user(ematch, dstptr, size);
-		if (ret != 0)
-			return ret;
+		xt_compat_match_from_user(ematch, dstptr, size);
 	}
 	de->target_offset = e->target_offset - (origsize - *size);
 	t = compat_ipt_get_target(e);

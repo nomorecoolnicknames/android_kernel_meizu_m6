@@ -2624,7 +2624,7 @@ static int rt6_fill_node(struct net *net,
 	if (iif) {
 #ifdef CONFIG_IPV6_MROUTE
 		if (ipv6_addr_is_multicast(&rt->rt6i_dst.addr)) {
-			int err = ip6mr_get_route(net, skb, rtm, nowait);
+			int err = ip6mr_get_route(net, skb, rtm, nowait, portid);
 			if (err <= 0) {
 				if (!nowait) {
 					if (err == 0)
@@ -3145,6 +3145,22 @@ static struct notifier_block ip6_route_dev_notifier = {
 	.notifier_call = ip6_route_dev_notify,
 	.priority = 0,
 };
+
+void __init ip6_route_init_special_entries(void)
+{
+	/* Registering of the loopback is done before this portion of code,
+	 * the loopback reference in rt6_info will not be taken, do it
+	 * manually for init_net.
+	 */
+	init_net.ipv6.ip6_null_entry->dst.dev = init_net.loopback_dev;
+	init_net.ipv6.ip6_null_entry->rt6i_idev = in6_dev_get(init_net.loopback_dev);
+#ifdef CONFIG_IPV6_MULTIPLE_TABLES
+	init_net.ipv6.ip6_prohibit_entry->dst.dev = init_net.loopback_dev;
+	init_net.ipv6.ip6_prohibit_entry->rt6i_idev = in6_dev_get(init_net.loopback_dev);
+	init_net.ipv6.ip6_blk_hole_entry->dst.dev = init_net.loopback_dev;
+	init_net.ipv6.ip6_blk_hole_entry->rt6i_idev = in6_dev_get(init_net.loopback_dev);
+#endif
+}
 
 int __init ip6_route_init(void)
 {

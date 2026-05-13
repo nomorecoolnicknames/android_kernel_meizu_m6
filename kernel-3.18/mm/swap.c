@@ -909,6 +909,11 @@ void deactivate_page(struct page *page)
 	}
 }
 
+void deactivate_file_page(struct page *page)
+{
+	deactivate_page(page);
+}
+
 void lru_add_drain(void)
 {
 	lru_add_drain_cpu(get_cpu());
