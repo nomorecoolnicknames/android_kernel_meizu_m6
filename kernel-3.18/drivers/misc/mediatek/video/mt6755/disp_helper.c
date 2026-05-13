@@ -120,14 +120,14 @@ struct disp_help_info help_info[OPT_COUNT] = {
 	{ DISP_OPT_FAKE_LCM_HEIGHT, 0, "DISP_OPT_FAKE_LCM_HEIGHT" },
 	{ DISP_OPT_OVL_WARM_RESET, 0, "DISP_OPT_OVL_WARM_RESET" },
 	{ DISP_OPT_DYNAMIC_SWITCH_UNDERFLOW_EN, 0, "DISP_OPT_DYNAMIC_SWITCH_UNDERFLOW_EN" },
-	{ DISP_OPT_SODI_SUPPORT, 0, "DISP_OPT_SODI_SUPPORT" },
-	{ DISP_OPT_IDLE_MGR, 0, "DISP_OPT_IDLE_MGR" },
-	{ DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 0, "DISP_OPT_IDLEMGR_SWTCH_DECOUPLE" },
-	{ DISP_OPT_IDLEMGR_ENTER_ULPS, 0, "DISP_OPT_IDLEMGR_ENTER_ULPS" },
-	{ DISP_OPT_SHARE_SRAM, 0, "DISP_OPT_SHARE_SRAM" },
+	{ DISP_OPT_SODI_SUPPORT, 1, "DISP_OPT_SODI_SUPPORT" },
+	{ DISP_OPT_IDLE_MGR, 1, "DISP_OPT_IDLE_MGR" },
+	{ DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 1, "DISP_OPT_IDLEMGR_SWTCH_DECOUPLE" },
+	{ DISP_OPT_IDLEMGR_ENTER_ULPS, 1, "DISP_OPT_IDLEMGR_ENTER_ULPS" },
+	{ DISP_OPT_SHARE_SRAM, 1, "DISP_OPT_SHARE_SRAM" },
 	{ DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK, 0, "DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK" },
-	{ DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 0, "DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING" },
-	{ DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 0, "DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ" },
+	{ DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 1, "DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING" },
+	{ DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 1, "DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ" },
 	{ DISP_OPT_MET_LOG, 1, "DISP_OPT_MET_LOG" },
 	{ DISP_OPT_DECOUPLE_MODE_USE_RGB565, 0, "DISP_OPT_DECOUPLE_MODE_USE_RGB565" },
 	{ DISP_OPT_NO_LCM_FOR_LOW_POWER_MEASUREMENT, 0, "DISP_OPT_NO_LCM_FOR_LOW_POWER_MEASUREMENT" },
@@ -135,21 +135,21 @@ struct disp_help_info help_info[OPT_COUNT] = {
 	{ DISP_OPT_BYPASS_PQ, 0, "DISP_OPT_BYPASS_PQ" },
 	{ DISP_OPT_ESD_CHECK_RECOVERY, 0, "DISP_OPT_ESD_CHECK_RECOVERY" },
 	{ DISP_OPT_ESD_CHECK_SWITCH, 0, "DISP_OPT_ESD_CHECK_SWITCH" },
-	{ DISP_OPT_PRESENT_FENCE, 0, "DISP_OPT_PRESENT_FENCE" },
+	{ DISP_OPT_PRESENT_FENCE, 1, "DISP_OPT_PRESENT_FENCE" },
 	{ DISP_OPT_PERFORMANCE_DEBUG, 0, "DISP_OPT_PERFORMANCE_DEBUG" },
 	{ DISP_OPT_SWITCH_DST_MODE, 0, "DISP_OPT_SWITCH_DST_MODE" },
-	{ DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 0, "DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE" },
+	{ DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 1, "DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE" },
 	{ DISP_OPT_SCREEN_CAP_FROM_DITHER, 0, "DISP_OPT_SCREEN_CAP_FROM_DITHER" },
-	{ DISP_OPT_BYPASS_OVL, 1, "DISP_OPT_BYPASS_OVL" },
+	{ DISP_OPT_BYPASS_OVL, 0, "DISP_OPT_BYPASS_OVL" },
 	{ DISP_OPT_FPS_CALC_WND, 10, "DISP_OPT_FPS_CALC_WND" },
-	{ DISP_OPT_SMART_OVL, 0, "DISP_OPT_SMART_OVL" },
+	{ DISP_OPT_SMART_OVL, 1, "DISP_OPT_SMART_OVL" },
 	{ DISP_OPT_DYNAMIC_DEBUG, 0, "DISP_OPT_DYNAMIC_DEBUG" },
 	{ DISP_OPT_SHOW_VISUAL_DEBUG_INFO, 0, "DISP_OPT_SHOW_VISUAL_DEBUG_INFO" },
 	{ DISP_OPT_RDMA_UNDERFLOW_AEE, 0, "DISP_OPT_RDMA_UNDERFLOW_AEE" },
 	{ DISP_OPT_GMO_OPTIMIZE, 0, "DISP_OPT_GMO_OPTIMIZE" },
 	{ DISP_OPT_CV_BYSUSPEND, 1, "DISP_OPT_CV_BYSUSPEND" },
 	{ DISP_OPT_DETECT_RECOVERY, 0, "DISP_OPT_DETECT_RECOVERY" },
-	{ DISP_OPT_DELAYED_TRIGGER, 0, "DISP_OPT_DELAYED_TRIGGER" },
+	{ DISP_OPT_DELAYED_TRIGGER, 1, "DISP_OPT_DELAYED_TRIGGER" },
 };
 
 static int option_to_index(DISP_HELPER_OPT option)
@@ -376,28 +376,26 @@ void disp_helper_option_init(void)
 	disp_helper_set_option(DISP_OPT_OVL_WARM_RESET, 0);
 
 	/* ===================Begin: lowpower option setting==================== */
-	disp_helper_set_option(DISP_OPT_SODI_SUPPORT, 0);
-	DISPMSG("Build Station: M6 bring-up disables SODI/idle before display path settles\n");
-	disp_helper_set_option(DISP_OPT_IDLE_MGR, 0);
+	disp_helper_set_option(DISP_OPT_SODI_SUPPORT, 1);
+	disp_helper_set_option(DISP_OPT_IDLE_MGR, 1);
 
 	/* 1. vdo mode + screen idle(need idlemgr) */
-	disp_helper_set_option(DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 0);
-	disp_helper_set_option(DISP_OPT_SHARE_SRAM, 0);
-	disp_helper_set_option(DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 0);
+	disp_helper_set_option(DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 1);
+	disp_helper_set_option(DISP_OPT_SHARE_SRAM, 1);
+	disp_helper_set_option(DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 1);
 
 	/* 2. cmd mode + screen idle(need idlemgr) */
-	disp_helper_set_option(DISP_OPT_IDLEMGR_ENTER_ULPS, 0);
+	disp_helper_set_option(DISP_OPT_IDLEMGR_ENTER_ULPS, 1);
 
 	/* 3. cmd mode + vdo mode */
 	disp_helper_set_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK, 0);
-	disp_helper_set_option(DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 0);
+	disp_helper_set_option(DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 1);
 
 
 	disp_helper_set_option(DISP_OPT_MET_LOG, 1);
 	/* ===================End: lowpower option setting==================== */
 
-	/* M6 bring-up: keep BootAnimation/HWC moving while CMDQ/LCM EOF signalling is adapted. */
-	disp_helper_set_option(DISP_OPT_PRESENT_FENCE, 0);
+	disp_helper_set_option(DISP_OPT_PRESENT_FENCE, 1);
 
 	/* use fake vsync timer for low power measurement */
 	disp_helper_set_option(DISP_OPT_NO_LCM_FOR_LOW_POWER_MEASUREMENT, 0);
@@ -406,18 +404,17 @@ void disp_helper_option_init(void)
 	disp_helper_set_option(DISP_OPT_DECOUPLE_MODE_USE_RGB565, 0);
 
 	disp_helper_set_option(DISP_OPT_BYPASS_PQ, 0);
-	/* Avoid waiting on command-mode mutex EOF that currently never signals on ili9881p. */
-	disp_helper_set_option(DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 0);
+	disp_helper_set_option(DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 1);
 	disp_helper_set_option(DISP_OPT_ESD_CHECK_RECOVERY, 0);
 	disp_helper_set_option(DISP_OPT_ESD_CHECK_SWITCH, 0);
 
-	disp_helper_set_option(DISP_OPT_BYPASS_OVL, 1);
+	disp_helper_set_option(DISP_OPT_BYPASS_OVL, 0);
 	disp_helper_set_option(DISP_OPT_FPS_CALC_WND, 10);
-	disp_helper_set_option(DISP_OPT_SMART_OVL, 0);
+	disp_helper_set_option(DISP_OPT_SMART_OVL, 1);
 	disp_helper_set_option(DISP_OPT_GMO_OPTIMIZE, 0);
 	disp_helper_set_option(DISP_OPT_CV_BYSUSPEND, 1);
 	disp_helper_set_option(DISP_OPT_DYNAMIC_DEBUG, 0);
-	disp_helper_set_option(DISP_OPT_DELAYED_TRIGGER, 0);
+	disp_helper_set_option(DISP_OPT_DELAYED_TRIGGER, 1);
 	/*Detect Hang thread Option*/
 	disp_helper_set_option(DISP_OPT_DETECT_RECOVERY, 0);
 }
