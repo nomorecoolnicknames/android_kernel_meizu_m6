@@ -470,8 +470,8 @@ static struct LCM_setting_table init_setting[] = {
 	/* ============ Gamma END=========== */
 	/* CMD_Page 0 */
 	{ 0xFF, 0x03, {0x98, 0x81, 0x00} },
-	/* Build Station: keep MADCTL neutral; 0x48 caused BGR tint and horizontal mirror. */
-	{ 0x36, 0x01, {0x00} },
+	/* Build Station: keep the last known-visible TXD MADCTL during bring-up. */
+	{ 0x36, 0x01, {0x48} },
 	{ 0x3A, 0x01, {0x77} },
 	{ 0x35, 0x01, {0x00} },
 	{ 0x11, 0x01, {0x00} },
