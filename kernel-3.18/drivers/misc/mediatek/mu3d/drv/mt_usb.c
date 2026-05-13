@@ -29,9 +29,15 @@
 /*#include <mach/mt_typedefs.h>*/
 #endif
 
+/* Build Station M6 bring-up: force peripheral mode until USB ID/charger type
+ * detection is proven.  Recovery sees USB, Android does not; do not let
+ * a wrong charger/ID read keep adbd invisible.
+ */
+#define FORGE_M6_USB_PERIPHERAL_BRINGUP
+
 /* #define USB_FORCE_ON */
 /* USB FORCE ON for FPGA/U3_COMPLIANCE cases */
-#if defined(CONFIG_FPGA_EARLY_PORTING) || defined(U3_COMPLIANCE) || defined(FOR_BRING_UP)
+#if defined(CONFIG_FPGA_EARLY_PORTING) || defined(U3_COMPLIANCE) || defined(FOR_BRING_UP) || defined(FORGE_M6_USB_PERIPHERAL_BRINGUP)
 #define USB_FORCE_ON
 #endif
 
@@ -48,6 +54,9 @@ u32 sw_uart_path = 0;
 /* ================================ */
 bool mt_usb_is_device(void)
 {
+#ifdef FORGE_M6_USB_PERIPHERAL_BRINGUP
+	return true;
+#else
 #if !defined(CONFIG_FPGA_EARLY_PORTING) && defined(CONFIG_USB_XHCI_MTK)
 	bool tmp = mtk_is_host_mode();
 
@@ -55,6 +64,7 @@ bool mt_usb_is_device(void)
 	return !tmp;
 #else
 	return true;
+#endif
 #endif
 }
 
