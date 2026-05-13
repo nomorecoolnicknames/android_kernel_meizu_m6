@@ -78,7 +78,7 @@ static int disp_gamma_start(DISP_MODULE_ENUM module, void *cmdq)
 static void disp_gamma_init(disp_gamma_id_t id, unsigned int width, unsigned int height, void *cmdq)
 {
 	DISP_REG_SET(cmdq, DISP_REG_GAMMA_SIZE, (width << 16) | height);
-#if defined(CONFIG_ARCH_MT6797) || defined(CONFIG_ARCH_MT6757) /* disable stall cg for avoid display path hang */
+#if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_MT6797) || defined(CONFIG_ARCH_MT6757) /* disable stall cg for avoid display path hang */
 	DISP_REG_MASK(cmdq, DISP_REG_GAMMA_CFG, 0x0 << 8, 0x1 << 8);
 #endif
 
@@ -132,8 +132,17 @@ static int disp_gamma_write_lut_reg(cmdqRecHandle cmdq, disp_gamma_id_t id, int 
 	gamma_lut = g_disp_gamma_lut[id];
 	if (gamma_lut == NULL) {
 		GAMMA_ERR(
-		       "disp_gamma_write_lut_reg: gamma table [%d] not initialized\n", id);
-		ret = -EFAULT;
+		       "disp_gamma_write_lut_reg: gamma table [%d] not initialized, bypass\n", id);
+		if (id == DISP_GAMMA0) {
+			/*
+			 * Early boot may start the display path before userspace
+			 * provides a calibration LUT.  Relay gamma instead of
+			 * failing path start; userspace can still program LUT later.
+			 */
+			DISP_REG_MASK(cmdq, DISP_REG_GAMMA_CFG, 0x1, 0x1);
+			ret = 0;
+		} else
+			ret = -EFAULT;
 		goto gamma_write_lut_unlock;
 	}
 
@@ -351,7 +360,7 @@ static void ccorr_dump_reg(void);
 static void disp_ccorr_init(disp_ccorr_id_t id, unsigned int width, unsigned int height, void *cmdq)
 {
 	DISP_REG_SET(cmdq, DISP_REG_CCORR_SIZE, (width << 16) | height);
-#if defined(CONFIG_ARCH_MT6797) || defined(CONFIG_ARCH_MT6757) /* disable stall cg for avoid display path hang */
+#if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_MT6797) || defined(CONFIG_ARCH_MT6757) /* disable stall cg for avoid display path hang */
 	DISP_REG_MASK(cmdq, DISP_REG_CCORR_CFG, 0x0 << 8, 0x1 << 8);
 #endif
 }
@@ -380,8 +389,16 @@ static int disp_ccorr_write_coef_reg(cmdqRecHandle cmdq, disp_ccorr_id_t id, int
 
 	ccorr = g_disp_ccorr_coef[id];
 	if (ccorr == NULL) {
-		CCORR_DBG("disp_ccorr_write_coef_reg: [%d] not initialized\n", id);
-		ret = -EFAULT;
+		CCORR_DBG("disp_ccorr_write_coef_reg: [%d] not initialized, bypass\n", id);
+		if (id == DISP_CCORR0) {
+			/*
+			 * Match gamma fallback: do not fail display path start
+			 * before color-correction coefficients are supplied.
+			 */
+			DISP_REG_SET(cmdq, DISP_REG_CCORR_EN, 0x0);
+			ret = 0;
+		} else
+			ret = -EFAULT;
 		goto ccorr_write_coef_unlock;
 	}
 
