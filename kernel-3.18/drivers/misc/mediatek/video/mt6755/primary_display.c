@@ -1267,6 +1267,17 @@ void _cmdq_start_trigger_loop(void)
 {
 	int ret = 0;
 	/*cmdqRecDumpCommand(pgc->cmdq_handle_trigger);*/
+	if (primary_display_is_video_mode()) {
+		/* M6 bring-up: first video trigger loop waits RDMA0 EOF before
+		 * Android has produced a frame, leaving CMDQ thread 0 stuck at
+		 * CMDQ_EVENT_DISP_RDMA0_EOF and HWC/GED fences unsignalled.
+		 * Seed only the first loop iteration; the loop clears these tokens
+		 * immediately and subsequent iterations wait for hardware EOF.
+		 */
+		DISPMSG("M6 seed first video RDMA0/MUTEX EOF before CMDQ trigger loop\n");
+		cmdqCoreSetEvent(CMDQ_EVENT_DISP_RDMA0_EOF);
+		cmdqCoreSetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF);
+	}
 	/* this should be called only once because trigger loop will nevet stop */
 	ret = cmdqRecStartLoop(pgc->cmdq_handle_trigger);
 	if (!primary_display_is_video_mode()) {
