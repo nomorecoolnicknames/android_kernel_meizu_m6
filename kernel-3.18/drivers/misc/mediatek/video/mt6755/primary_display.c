@@ -3014,7 +3014,11 @@ static int _present_fence_release_worker_thread(void *data)
 				DISPMSG("LCM Not Connected && CMD Mode\n");
 			msleep(20);
 		} else {
-			dpmgr_wait_event(pgc->dpmgr_handle, DISP_PATH_EVENT_IF_VSYNC);
+			int ret = dpmgr_wait_event_timeout(pgc->dpmgr_handle,
+					DISP_PATH_EVENT_IF_VSYNC, HZ / 20);
+
+			if (ret <= 0 && (count++ % 60) == 0)
+				DISPMSG("Build Station: M6 present fence fallback after IF_VSYNC timeout (%d)\n", ret);
 			/* dpmgr_wait_event(pgc->dpmgr_handle, DISP_PATH_EVENT_FRAME_DONE); */
 		}
 
