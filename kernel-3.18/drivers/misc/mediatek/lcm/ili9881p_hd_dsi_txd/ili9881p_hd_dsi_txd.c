@@ -477,7 +477,11 @@ static struct LCM_setting_table init_setting[] = {
 	{ 0x11, 0x01, {0x00} },
 	{REGFLAG_DELAY, 120, {} },
 	{ 0x29, 0x01, {0x00} },
-	{REGFLAG_DELAY, 20, {} }
+	/*
+	 * Meizu M6 TXD panel needs extra time after Display ON before the
+	 * video engine starts scanning, otherwise RDMA0 EOF can be missed.
+	 */
+	{REGFLAG_DELAY, 120, {} }
 };
 
 #if 0
@@ -751,7 +755,12 @@ static void lcm_init(void)
 	MDELAY(10);
 
 	SET_RESET_PIN(1);
-	MDELAY(10);
+	/*
+	 * Keep reset high long enough for ILI9881P/TXD internal power state to
+	 * settle before the command burst. Short 10 ms settle can race first
+	 * video frame and leave CMDQ waiting forever on DISP_RDMA0_EOF.
+	 */
+	MDELAY(120);
 	if (lcm_dsi_mode == CMD_MODE) {
 		LCM_LOGI("ili9881p_hd_dsi_txd----not support ----lcm mode\n");
 	} else {
