@@ -103,6 +103,8 @@ static unsigned int primary_session_id = MAKE_DISP_SESSION(DISP_SESSION_PRIMARY,
 static disp_frm_seq_info frm_update_sequence[FRM_UPDATE_SEQ_CACHE_NUM];
 static unsigned int frm_update_cnt;
 static unsigned int gPresentFenceIndex;
+static bool primary_video_first_config_flushed;
+static bool primary_video_wait_skip_logged;
 static unsigned int g_keep;
 static unsigned int g_skip;
 static DISP_POWER_STATE power_stat_backup;
@@ -976,9 +978,25 @@ int _should_insert_wait_frame_done_token(void)
 /***trigger operation:  VDO+CMDQ  CMD+CMDQ VDO+CPU  CMD+CPU
 *** 7.flush cmdq:          Y         Y       N        N      */
 	if (primary_display_cmdq_enabled()) {
-		if (primary_display_is_video_mode())
+		if (primary_display_is_video_mode()) {
+			/*
+			 * M6 no-LK video boot can reach SurfaceFlinger before any
+			 * config CMDQ callback has released the first primary sw_sync
+			 * fence.  Inserting a frame-done wait into the next config
+			 * handle at that point creates a self-deadlock: userspace waits
+			 * on timeline-primary while CMDQ waits on an EOF that has not
+			 * been proven to occur yet.  Start waiting only after one config
+			 * flush has completed and released input fences.
+			 */
+			if (!primary_video_first_config_flushed) {
+				if (!primary_video_wait_skip_logged) {
+					DISPMSG("skip first video CMDQ frame-done wait until config fence release\n");
+					primary_video_wait_skip_logged = true;
+				}
+				return 0;
+			}
 			return 1;
-		else
+		} else
 			return 1;
 
 	} else {
@@ -1126,9 +1144,12 @@ static void _cmdq_build_trigger_loop(void)
 
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), pgc->cmdq_handle_trigger, 0);
 
-		cmdqRecWaitNoClear(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_EOF);
+		/*
+		 * On M6 no-LK video boot RDMA0 EOF never reaches CMDQ while the
+		 * display mutex remains the frame boundary for the whole path. Waiting
+		 * on RDMA0 first deadlocks the trigger loop before DSI can present.
+		 */
 		cmdqRecWaitNoClear(pgc->cmdq_handle_trigger, CMDQ_EVENT_MUTEX0_STREAM_EOF);
-		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_EOF);
 		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 
 		/* wait and clear rdma0_sof for vfp change */
@@ -1374,7 +1395,7 @@ void _cmdq_insert_wait_primary_path_frame_done(void *handle)
 void _cmdq_insert_wait_frame_done_token_mira(void *handle)
 {
 	if (primary_display_is_video_mode()) {
-		cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
+		/* See trigger loop: M6 video mode must use display mutex EOF. */
 		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), handle, 0);
 	} else {
@@ -2827,6 +2848,9 @@ static int _ovl_fence_release_callback(unsigned long userdata)
 			       i, fence_idx - subtractor);
 	}
 
+	if (primary_display_is_video_mode() && !primary_display_is_decouple_mode())
+		primary_video_first_config_flushed = true;
+
 	addr = ddp_ovl_get_cur_addr(!_should_config_ovl_input(), 0);
 	if ((primary_display_is_decouple_mode() == 0))
 		update_frm_seq_info(addr, 0, 2, FRM_START);
@@ -3129,6 +3153,8 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	bool start_trigger_loop_late = false;
 
 	DISPMSG("primary_display_init begin lcm=%s, inited=%d\n", lcm_name, is_lcm_inited);
+	primary_video_first_config_flushed = false;
+	primary_video_wait_skip_logged = false;
 
 	dprec_init();
 	dpmgr_init();
