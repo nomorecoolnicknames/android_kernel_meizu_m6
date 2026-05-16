@@ -1150,12 +1150,12 @@ static void _cmdq_build_trigger_loop(void)
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), pgc->cmdq_handle_trigger, 0);
 
 		/*
-		 * On M6 no-LK video boot RDMA0 EOF never reaches CMDQ while the
-		 * display mutex remains the frame boundary for the whole path. Waiting
-		 * on RDMA0 first deadlocks the trigger loop before DSI can present.
+		 * f1627244 shows MUTEX0_STREAM_EOF stays 0 while RDMA0_EOF is already
+		 * signaled.  Use the delivered RDMA EOF as the video frame boundary and
+		 * stop waiting on the missing mutex stream token.
 		 */
-		cmdqRecWaitNoClear(pgc->cmdq_handle_trigger, CMDQ_EVENT_MUTEX0_STREAM_EOF);
-		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_MUTEX0_STREAM_EOF);
+		cmdqRecWaitNoClear(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_EOF);
+		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_EOF);
 
 		/* wait and clear rdma0_sof for vfp change */
 		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_SOF);
@@ -1392,20 +1392,17 @@ static void _cmdq_flush_config_handle_mira(void *handle, int blocking)
 void _cmdq_insert_wait_primary_path_frame_done(void *handle)
 {
 	if (primary_display_is_video_mode())
-		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
+		cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
 	else
 		cmdqRecWaitNoClear(handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
 }
 
 void _cmdq_insert_wait_frame_done_token_mira(void *handle)
 {
-	if (primary_display_is_video_mode()) {
-		/* See trigger loop: M6 video mode must use display mutex EOF. */
-		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
-		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), handle, 0);
-	} else {
+	if (primary_display_is_video_mode())
+		cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
+	else
 		cmdqRecWaitNoClear(handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
-	}
 
 	/*dprec_event_op(DPREC_EVENT_CMDQ_WAIT_STREAM_EOF);*/
 }
