@@ -105,6 +105,7 @@ static unsigned int frm_update_cnt;
 static unsigned int gPresentFenceIndex;
 static bool primary_video_first_config_flushed;
 static bool primary_video_wait_skip_logged;
+static bool primary_video_wait_allow_logged;
 static unsigned int g_keep;
 static unsigned int g_skip;
 static DISP_POWER_STATE power_stat_backup;
@@ -995,7 +996,11 @@ int _should_insert_wait_frame_done_token(void)
 				}
 				return 0;
 			}
-			return 1;
+			if (!primary_video_wait_allow_logged) {
+				DISPMSG("M6 video CMDQ: skip mutex stream EOF frame-done wait; rely on video RDMA EOF/IRQ path\n");
+				primary_video_wait_allow_logged = true;
+			}
+			return 0;
 		} else
 			return 1;
 
@@ -2848,8 +2853,12 @@ static int _ovl_fence_release_callback(unsigned long userdata)
 			       i, fence_idx - subtractor);
 	}
 
-	if (primary_display_is_video_mode() && !primary_display_is_decouple_mode())
+	if (primary_display_is_video_mode() && !primary_display_is_decouple_mode()) {
+		if (!primary_video_first_config_flushed)
+			DISPMSG("first video config fence release; userdata=%lu layers=%d ret=%d\n",
+				userdata, real_overlap_layers, ret);
 		primary_video_first_config_flushed = true;
+	}
 
 	addr = ddp_ovl_get_cur_addr(!_should_config_ovl_input(), 0);
 	if ((primary_display_is_decouple_mode() == 0))
@@ -3155,6 +3164,7 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	DISPMSG("primary_display_init begin lcm=%s, inited=%d\n", lcm_name, is_lcm_inited);
 	primary_video_first_config_flushed = false;
 	primary_video_wait_skip_logged = false;
+	primary_video_wait_allow_logged = false;
 
 	dprec_init();
 	dpmgr_init();
