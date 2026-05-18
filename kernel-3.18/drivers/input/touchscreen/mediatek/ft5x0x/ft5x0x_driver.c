@@ -20,6 +20,7 @@
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/gpio.h>
+#include <linux/err.h>
 
 #include "tpd_ft5x0x_common.h"
 /* #include "ft5x06_ex_fun.h" */
@@ -622,6 +623,23 @@ static int tpd_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	i2c_client = client;
 
 	of_get_ft5x0x_platform_data(&client->dev);
+	if (!tpd->reg) {
+		tpd->reg = regulator_get(&client->dev, "vtouch");
+		if (IS_ERR(tpd->reg)) {
+			retval = PTR_ERR(tpd->reg);
+			TPD_DMESG("vtouch regulator unavailable in probe: %d; continue assuming boot rail\n", retval);
+			tpd->reg = NULL;
+		}
+	}
+
+	if (tpd->reg) {
+		retval = regulator_enable(tpd->reg);
+		if (retval != 0) {
+			TPD_DMESG("Failed to enable reg-vgp6: %d; continue assuming boot rail\n", retval);
+			tpd->reg = NULL;
+		}
+	}
+
 	/* configure the gpio pins */
 	retval = gpio_request_one(tpd_rst_gpio_number, GPIOF_OUT_INIT_LOW,
 				 "touchp_reset");
@@ -643,10 +661,6 @@ static int tpd_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 	TPD_DMESG("mtk_tpd: tpd_probe ft5x0x\n");
 
-
-	retval = regulator_enable(tpd->reg);
-	if (retval != 0)
-		TPD_DMESG("Failed to enable reg-vgp6: %d\n", retval);
 
 	/* set INT mode */
 
@@ -764,10 +778,14 @@ static int tpd_local_init(void)
 
 	TPD_DMESG("Focaltech FT5x0x I2C Touchscreen Driver...\n");
 	tpd->reg = regulator_get(tpd->tpd_dev, "vtouch");
-	retval = regulator_set_voltage(tpd->reg, 2800000, 2800000);
-	if (retval != 0) {
-		TPD_DMESG("Failed to set reg-vgp6 voltage: %d\n", retval);
-		return -1;
+	if (IS_ERR(tpd->reg)) {
+		retval = PTR_ERR(tpd->reg);
+		TPD_DMESG("vtouch regulator unavailable: %d; continue to i2c probe\n", retval);
+		tpd->reg = NULL;
+	} else {
+		retval = regulator_set_voltage(tpd->reg, 2800000, 2800000);
+		if (retval != 0)
+			TPD_DMESG("Failed to set reg-vgp6 voltage: %d; continue to i2c probe\n", retval);
 	}
 	if (i2c_add_driver(&tpd_i2c_driver) != 0) {
 		TPD_DMESG("unable to add i2c driver.\n");
@@ -891,9 +909,11 @@ static void tpd_resume(struct device *h)
 		}
 		if (retval < 0) {
 			pr_alert("[gesture]TPD exit doze mode abnormally, so normal resume mode");
-			retval = regulator_enable(tpd->reg);
-			if (retval != 0)
-				pr_alert("[gesture] Failed to enable reg-vgp6: %d\n", retval);
+			if (tpd->reg) {
+				retval = regulator_enable(tpd->reg);
+				if (retval != 0)
+					pr_alert("[gesture] Failed to enable reg-vgp6: %d\n", retval);
+			}
 
 			msleep(100);
 			gpio_direction_output(tpd_rst_gpio_number, 0);
@@ -906,9 +926,11 @@ static void tpd_resume(struct device *h)
 		pr_alert("[gesture] tpd_scp_doze_en false or doze_status disabled");
 #endif
 
-		retval = regulator_enable(tpd->reg);
-		if (retval != 0)
-			TPD_DMESG("Failed to enable reg-vgp6: %d\n", retval);
+		if (tpd->reg) {
+			retval = regulator_enable(tpd->reg);
+			if (retval != 0)
+				TPD_DMESG("Failed to enable reg-vgp6: %d\n", retval);
+		}
 
 		msleep(100);
 
@@ -1006,9 +1028,11 @@ static void tpd_suspend(struct device *h)
 			disable_irq(touch_irq);
 			i2c_smbus_write_i2c_block_data(i2c_client, 0xA5, 1, &data);  /* TP enter sleep mode */
 
-			retval = regulator_disable(tpd->reg);
-			if (retval != 0)
-				pr_alert("[gesture] Failed to disable reg-vgp6: %d\n", retval);
+			if (tpd->reg) {
+				retval = regulator_disable(tpd->reg);
+				if (retval != 0)
+					pr_alert("[gesture] Failed to disable reg-vgp6: %d\n", retval);
+			}
 		}
 
 		mutex_unlock(&i2c_access);
@@ -1020,9 +1044,11 @@ static void tpd_suspend(struct device *h)
 		disable_irq(touch_irq);
 		i2c_smbus_write_i2c_block_data(i2c_client, 0xA5, 1, &data);  /* TP enter sleep mode */
 
-		retval = regulator_disable(tpd->reg);
-		if (retval != 0)
-			TPD_DMESG("Failed to disable reg-vgp6: %d\n", retval);
+		if (tpd->reg) {
+			retval = regulator_disable(tpd->reg);
+			if (retval != 0)
+				TPD_DMESG("Failed to disable reg-vgp6: %d\n", retval);
+		}
 
 #ifdef CONFIG_MTK_SENSOR_HUB_SUPPORT
 	}

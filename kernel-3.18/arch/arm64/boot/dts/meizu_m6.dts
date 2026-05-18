@@ -298,6 +298,14 @@ hw-dev-detect@0{
 		};
 	};
 };
+
+&i2c0 {
+	cap_touch@48 {
+		rst-gpio = <&pio 79 0>;
+		int-gpio = <&pio 1 0>;
+		vtouch-supply = <&mt_pmic_vtouch_ldo_reg>;
+	};
+};
 /* TOUCH end */
 /* jijin.wang add FLASHLIGHT GPIO standardization */ 
 &pio{
