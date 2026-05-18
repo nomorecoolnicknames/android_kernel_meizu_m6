@@ -104,8 +104,11 @@ static disp_frm_seq_info frm_update_sequence[FRM_UPDATE_SEQ_CACHE_NUM];
 static unsigned int frm_update_cnt;
 static unsigned int gPresentFenceIndex;
 static bool primary_video_first_config_flushed;
-static bool primary_video_wait_skip_logged;
-static bool primary_video_wait_allow_logged;
+static bool primary_video_frame_wait_diag_logged;
+static bool primary_video_bl_wait_diag_logged;
+static bool primary_video_trigger_loop_diag_logged;
+static bool primary_video_first_cfg_diag_logged;
+static bool primary_present_fence_timeout_diag_logged;
 static unsigned int g_keep;
 static unsigned int g_skip;
 static DISP_POWER_STATE power_stat_backup;
@@ -980,27 +983,11 @@ int _should_insert_wait_frame_done_token(void)
 *** 7.flush cmdq:          Y         Y       N        N      */
 	if (primary_display_cmdq_enabled()) {
 		if (primary_display_is_video_mode()) {
-			/*
-			 * M6 no-LK video boot can reach SurfaceFlinger before any
-			 * config CMDQ callback has released the first primary sw_sync
-			 * fence.  Inserting a frame-done wait into the next config
-			 * handle at that point creates a self-deadlock: userspace waits
-			 * on timeline-primary while CMDQ waits on an EOF that has not
-			 * been proven to occur yet.  Start waiting only after one config
-			 * flush has completed and released input fences.
-			 */
-			if (!primary_video_first_config_flushed) {
-				if (!primary_video_wait_skip_logged) {
-					DISPMSG("skip first video CMDQ frame-done wait until config fence release\n");
-					primary_video_wait_skip_logged = true;
-				}
-				return 0;
+			if (!primary_video_frame_wait_diag_logged) {
+				DISPPR_ERROR("M6 clean MTK diag: keep video frame-done wait in config handle\n");
+				primary_video_frame_wait_diag_logged = true;
 			}
-			if (!primary_video_wait_allow_logged) {
-				DISPMSG("M6 video CMDQ: skip mutex stream EOF frame-done wait; rely on video RDMA EOF/IRQ path\n");
-				primary_video_wait_allow_logged = true;
-			}
-			return 0;
+			return 1;
 		} else
 			return 1;
 
@@ -1149,13 +1136,15 @@ static void _cmdq_build_trigger_loop(void)
 
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), pgc->cmdq_handle_trigger, 0);
 
-		/*
-		 * f1627244 shows MUTEX0_STREAM_EOF stays 0 while RDMA0_EOF is already
-		 * signaled.  Use the delivered RDMA EOF as the video frame boundary and
-		 * stop waiting on the missing mutex stream token.
-		 */
+		if (!primary_video_trigger_loop_diag_logged) {
+			DISPPR_ERROR("M6 clean MTK diag: trigger loop waits RDMA0_EOF then MUTEX0_STREAM_EOF; no synthetic event prime\n");
+			primary_video_trigger_loop_diag_logged = true;
+		}
+
 		cmdqRecWaitNoClear(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_EOF);
+		cmdqRecWaitNoClear(pgc->cmdq_handle_trigger, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_EOF);
+		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 
 		/* wait and clear rdma0_sof for vfp change */
 		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_SOF);
@@ -1357,6 +1346,15 @@ static void _cmdq_reset_config_handle(void)
 
 static void _cmdq_flush_config_handle(int blocking, CmdqAsyncFlushCB callback, unsigned int userdata)
 {
+	bool first_video_async = primary_display_is_video_mode() &&
+		!primary_video_first_config_flushed && !blocking && callback;
+
+	if (first_video_async && !primary_video_first_cfg_diag_logged) {
+		DISPPR_ERROR("M6 video CMDQ diag: first async config flush callback=%pf userdata=%u\n",
+			callback, userdata);
+		primary_video_first_cfg_diag_logged = true;
+	}
+
 	dprec_logger_start(DPREC_LOGGER_PRIMARY_CMDQ_FLUSH, blocking,
 			   (unsigned int)(unsigned long)callback);
 	if (blocking) {
@@ -1392,17 +1390,20 @@ static void _cmdq_flush_config_handle_mira(void *handle, int blocking)
 void _cmdq_insert_wait_primary_path_frame_done(void *handle)
 {
 	if (primary_display_is_video_mode())
-		cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
+		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 	else
 		cmdqRecWaitNoClear(handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
 }
 
 void _cmdq_insert_wait_frame_done_token_mira(void *handle)
 {
-	if (primary_display_is_video_mode())
+	if (primary_display_is_video_mode()) {
 		cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
-	else
+		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
+		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), handle, 0);
+	} else {
 		cmdqRecWaitNoClear(handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
+	}
 
 	/*dprec_event_op(DPREC_EVENT_CMDQ_WAIT_STREAM_EOF);*/
 }
@@ -2852,7 +2853,7 @@ static int _ovl_fence_release_callback(unsigned long userdata)
 
 	if (primary_display_is_video_mode() && !primary_display_is_decouple_mode()) {
 		if (!primary_video_first_config_flushed)
-			DISPMSG("first video config fence release; userdata=%lu layers=%d ret=%d\n",
+			DISPPR_ERROR("M6 video CMDQ diag: first config fence release userdata=%lu layers=%d ret=%d\n",
 				userdata, real_overlap_layers, ret);
 		primary_video_first_config_flushed = true;
 	}
@@ -3047,8 +3048,14 @@ static int _present_fence_release_worker_thread(void *data)
 			int ret = dpmgr_wait_event_timeout(pgc->dpmgr_handle,
 					DISP_PATH_EVENT_IF_VSYNC, HZ / 20);
 
-			if (ret <= 0 && (count++ % 60) == 0)
-				DISPMSG("Build Station: M6 present fence fallback after IF_VSYNC timeout (%d)\n", ret);
+			if (ret <= 0) {
+				if (!primary_present_fence_timeout_diag_logged || (count++ % 60) == 0) {
+					DISPPR_ERROR("M6 clean MTK diag: IF_VSYNC timeout; not releasing present fence idx=%u ret=%d\n",
+						gPresentFenceIndex, ret);
+					primary_present_fence_timeout_diag_logged = true;
+				}
+				continue;
+			}
 			/* dpmgr_wait_event(pgc->dpmgr_handle, DISP_PATH_EVENT_FRAME_DONE); */
 		}
 
@@ -3156,12 +3163,14 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	int use_cmdq = disp_helper_get_option(DISP_OPT_USE_CMDQ);
 	struct ddp_io_golden_setting_arg gset_arg;
 	disp_ddp_path_config *data_config = NULL;
-	bool start_trigger_loop_late = false;
 
 	DISPMSG("primary_display_init begin lcm=%s, inited=%d\n", lcm_name, is_lcm_inited);
 	primary_video_first_config_flushed = false;
-	primary_video_wait_skip_logged = false;
-	primary_video_wait_allow_logged = false;
+	primary_video_frame_wait_diag_logged = false;
+	primary_video_bl_wait_diag_logged = false;
+	primary_video_trigger_loop_diag_logged = false;
+	primary_video_first_cfg_diag_logged = false;
+	primary_present_fence_timeout_diag_logged = false;
 
 	dprec_init();
 	dpmgr_init();
@@ -3287,13 +3296,7 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 
 	if (use_cmdq) {
 		_cmdq_build_trigger_loop();
-
-		if (primary_display_is_video_mode() && !is_lcm_inited) {
-			start_trigger_loop_late = true;
-			DISPMSG("delay video CMDQ trigger loop until LCM/path first trigger is ready\n");
-		} else {
-			_cmdq_start_trigger_loop();
-		}
+		_cmdq_start_trigger_loop();
 	}
 
 	DISPMSG("primary_display_init->dpmgr_path_config\n");
@@ -3335,8 +3338,7 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	if (use_cmdq) {
 		_cmdq_flush_config_handle(0, NULL, 0);
 		_cmdq_reset_config_handle();
-		if (!start_trigger_loop_late)
-			_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
+		_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
 	}
 
 	if (is_lcm_inited) {
@@ -3346,11 +3348,6 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 
 		if (primary_display_is_video_mode())
 			dpmgr_path_trigger(pgc->dpmgr_handle, NULL, 0);
-	}
-
-	if (use_cmdq && start_trigger_loop_late) {
-		DISPMSG("start delayed video CMDQ trigger loop after first path trigger\n");
-		_cmdq_start_trigger_loop();
 	}
 
 	if (disp_helper_get_option(DISP_OPT_MET_LOG))
@@ -4847,8 +4844,12 @@ int primary_display_frame_cfg(struct disp_frame_cfg_t *cfg)
 	}
 
 	if (cfg->present_fence_idx != (unsigned int)-1 &&
-		disp_helper_get_option(DISP_OPT_PRESENT_FENCE))
+		disp_helper_get_option(DISP_OPT_PRESENT_FENCE)) {
+		if (primary_display_is_video_mode() && !primary_video_first_config_flushed)
+			DISPPR_ERROR("M6 video CMDQ diag: present fence idx %u before first config release\n",
+				cfg->present_fence_idx);
 		primary_display_update_present_fence(cfg->present_fence_idx);
+	}
 
 	primary_display_trigger_nolock(0, NULL, 0);
 
@@ -5536,6 +5537,10 @@ int _set_backlight_by_cmdq(unsigned int level)
 	if (primary_display_is_video_mode()) {
 		MMProfileLogEx(ddp_mmp_get_events()->primary_set_bl, MMProfileFlagPulse, 1, 2);
 		cmdqRecReset(cmdq_handle_backlight);
+		if (!primary_video_bl_wait_diag_logged) {
+			DISPPR_ERROR("M6 clean MTK diag: keep RDMA0_EOF wait before backlight command\n");
+			primary_video_bl_wait_diag_logged = true;
+		}
 		_cmdq_insert_wait_frame_done_token_mira(cmdq_handle_backlight);
 		disp_lcm_set_backlight(pgc->plcm, cmdq_handle_backlight, level);
 		_cmdq_flush_config_handle_mira(cmdq_handle_backlight, 0);
