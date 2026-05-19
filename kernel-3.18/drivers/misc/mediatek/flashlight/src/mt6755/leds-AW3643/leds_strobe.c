@@ -71,6 +71,7 @@ static u32 strobe_Res;
 static u32 strobe_Timeus;
 static BOOL g_strobe_On;
 static BOOL ktd2685_use = 0;
+static BOOL leds_AW3643_present = 0;
 static int g_timeOutTimeMs;
 
 static struct work_struct workTimeOut;
@@ -286,18 +287,22 @@ static int leds_AW3643_i2c_probe(struct i2c_client *client, const struct i2c_dev
 		}
 		else
 		{
-			printk("leds_AW3643 i2c read fail\n");
+			if (cnt == 3)
+				pr_warn("leds_AW3643 not detected at 0x%02x, disabling torch path\n",
+					client->addr);
 		}
 		cnt --;
 		msleep(10);
 	}
 	if(!cnt)
 	{
-            ktd2685_use = 1;
+		ktd2685_use = 1;
+		leds_AW3643_present = 0;
 		//err = -ENODEV;
 		//leds_AW3643_hwen_off();
 		//goto exit_create_singlethread;
-	}
+	} else
+		leds_AW3643_present = 1;
 
 	leds_AW3643_create_sysfs(client);	
 
@@ -454,6 +459,9 @@ int flashEnable_leds_AW3643_2(void)
 	int ret;
 	unsigned char buf[2];
 
+	if (!leds_AW3643_present)
+		return -ENODEV;
+
 	buf[0] = 0x01; /* Enable Register */
 	if (g_IsTorch[g_duty2] == 1) /* LED1 in torch mode */
 		g_EnableReg |= (0x09);
@@ -468,6 +476,9 @@ int flashEnable_leds_AW3643_1(void)
 {
 	int ret;
 	unsigned char buf[2];
+
+	if (!leds_AW3643_present)
+		return -ENODEV;
 
 	buf[0] = 0x01; /* Enable Register */
 	if (g_IsTorch[g_duty1] == 1) /* LED2 in torch mode */
@@ -484,6 +495,9 @@ int flashDisable_leds_AW3643_2(void)
 	int ret;
 	unsigned char buf[2];
 
+	if (!leds_AW3643_present)
+		return 0;
+
 	buf[0] = 0x01; /* Enable Register */
 	if ((g_EnableReg&0x02) == 0x02) /* LED2 enabled */
 		g_EnableReg &= (~0x01);
@@ -499,6 +513,9 @@ int flashDisable_leds_AW3643_1(void)
 	int ret;
 	unsigned char buf[2];
 
+	if (!leds_AW3643_present)
+		return 0;
+
 	buf[0] = 0x01; /* Enable Register */
 	if ((g_EnableReg&0x01) == 0x01) /* LED1 enabled */
 		g_EnableReg &= (~0x02);
@@ -513,6 +530,9 @@ int setDuty_leds_AW3643_2(int duty)
 {
 	int ret;
 	unsigned char buf[2];
+
+	if (!leds_AW3643_present)
+		return -ENODEV;
 
 	if (duty < 0)
 		duty = 0;
@@ -549,6 +569,9 @@ int setDuty_leds_AW3643_1(int duty)
 	int ret;
 	unsigned char buf[2];
 
+	if (!leds_AW3643_present)
+		return -ENODEV;
+
 	if (duty < 0)
 		duty = 0;
 	else if (duty >= e_DutyNum)
@@ -569,6 +592,9 @@ int init_leds_AW3643(void)
 {
 	int ret;
 	char buf[2];
+
+	if (!leds_AW3643_present)
+		return -ENODEV;
 
 	leds_AW3643_hwen_on();
 	
