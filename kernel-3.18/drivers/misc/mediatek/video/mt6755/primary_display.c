@@ -1282,6 +1282,11 @@ void _cmdq_start_trigger_loop(void)
 {
 	int ret = 0;
 	/*cmdqRecDumpCommand(pgc->cmdq_handle_trigger);*/
+	if (primary_display_is_video_mode()) {
+		DISPPR_ERROR("M6 video CMDQ: bootstrap first RDMA/MUTEX EOF for no-LK trigger loop\n");
+		cmdqCoreSetEvent(CMDQ_EVENT_DISP_RDMA0_EOF);
+		cmdqCoreSetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF);
+	}
 	/* this should be called only once because trigger loop will nevet stop */
 	ret = cmdqRecStartLoop(pgc->cmdq_handle_trigger);
 	if (!primary_display_is_video_mode()) {
