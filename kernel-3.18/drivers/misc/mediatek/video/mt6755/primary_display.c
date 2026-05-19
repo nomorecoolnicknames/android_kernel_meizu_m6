@@ -983,21 +983,9 @@ int _should_insert_wait_frame_done_token(void)
 *** 7.flush cmdq:          Y         Y       N        N      */
 	if (primary_display_cmdq_enabled()) {
 		if (primary_display_is_video_mode()) {
-			/*
-			 * Direct-link video mode must not wait for a frame-done token
-			 * before the first CMDQ configuration has armed the display path.
-			 * On this MT6750/MT6755 bring-up the first BootAnimation frame can
-			 * otherwise park behind timeline-primary forever because no RDMA/
-			 * MUTEX EOF has been generated yet.  After the initial configuration
-			 * the normal frame-done wait is preserved for steady-state fencing.
-			 */
-			if (!primary_video_first_config_flushed) {
-				if (!primary_video_first_cfg_diag_logged) {
-					DISPPR_ERROR("M6 display: skip first video CMDQ frame-done wait until path is armed\n");
-					primary_video_first_cfg_diag_logged = true;
-				}
-				primary_video_first_config_flushed = true;
-				return 0;
+			if (!primary_video_frame_wait_diag_logged) {
+				DISPPR_ERROR("M6 clean MTK diag: keep video frame-done wait in config handle\n");
+				primary_video_frame_wait_diag_logged = true;
 			}
 			return 1;
 		} else
