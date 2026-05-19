@@ -322,6 +322,12 @@ void audckbufEnable(bool enable)
 		}
 		audck_buf_Count++;
 	} else {
+		if (audck_buf_Count <= 0) {
+			pr_warn_once("audckbufEnable: unbalanced disable ignored\n");
+			audck_buf_Count = 0;
+			mutex_unlock(&Ana_buf_Ctrl_Mutex);
+			return;
+		}
 		audck_buf_Count--;
 		if (audck_buf_Count == 0) {
 			/*pr_warn("+clk_buf_ctrl(CLK_BUF_AUDIO,false)\n"); */
@@ -335,10 +341,6 @@ void audckbufEnable(bool enable)
 			}
 #endif
 			/*pr_warn("-clk_buf_ctrl(CLK_BUF_AUDIO,false)\n");*/
-		}
-		if (audck_buf_Count < 0) {
-			pr_warn("audck_buf_Count count <0\n");
-			audck_buf_Count = 0;
 		}
 	}
 	mutex_unlock(&Ana_buf_Ctrl_Mutex);
@@ -358,11 +360,13 @@ static void ClsqEnable(bool enable)
 		}
 		ClsqCount++;
 	} else {
-		ClsqCount--;
-		if (ClsqCount < 0) {
-			pr_warn("ClsqEnable count <0\n");
+		if (ClsqCount <= 0) {
+			pr_warn_once("ClsqEnable: unbalanced disable ignored\n");
 			ClsqCount = 0;
+			mutex_unlock(&AudAna_lock);
+			return;
 		}
+		ClsqCount--;
 		if (ClsqCount == 0) {
 			Ana_Set_Reg(MT6353_TOP_CLKSQ_CLR, 0x0001, 0x0001);
 			/* Turn off 26MHz source clock */
@@ -384,14 +388,15 @@ static void Topck_Enable(bool enable)
 		}
 		TopCkCount++;
 	} else {
+		if (TopCkCount <= 0) {
+			pr_warn_once("Topck_Enable: unbalanced disable ignored\n");
+			TopCkCount = 0;
+			mutex_unlock(&Ana_Clk_Mutex);
+			return;
+		}
 		TopCkCount--;
 		if (TopCkCount == 0) {
             Ana_Set_Reg(MT6353_CLK_CKPDN_CON0_SET, 0x0070, 0x0070);
-		}
-
-		if (TopCkCount <= 0) {
-			pr_warn("TopCkCount <0 =%d\n ", TopCkCount);
-			TopCkCount = 0;
 		}
 	}
 	mutex_unlock(&Ana_Clk_Mutex);
@@ -408,14 +413,15 @@ static void NvregEnable(bool enable)
 
 		NvRegCount++;
 	} else {
+		if (NvRegCount <= 0) {
+			pr_warn_once("NvregEnable: unbalanced disable ignored\n");
+			NvRegCount = 0;
+			mutex_unlock(&Ana_Clk_Mutex);
+			return;
+		}
 		NvRegCount--;
 		if (NvRegCount == 0)
 			Ana_Set_Reg(MT6353_AUDDEC_ANA_CON8, 0x0002, 0x0002);	/* disable AUDGLB */
-
-		if (NvRegCount < 0) {
-			pr_warn("NvRegCount <0 =%d\n ", NvRegCount);
-			NvRegCount = 0;
-		}
 	}
 	mutex_unlock(&Ana_Clk_Mutex);
 }
@@ -5271,9 +5277,9 @@ static const struct snd_soc_dapm_widget mt6331_dapm_widgets[] = {
 
 };
 
-static const struct snd_soc_dapm_route mtk_audio_map[] = {
-	{"VOICE_Mux_E", "Voice Mux", "SPEAKER PGA"},
-};
+/* M6 bring-up: VOICE_Mux_E routes reference missing widgets in this tree. */
+#define MTK_AUDIO_MAP NULL
+#define MTK_AUDIO_MAP_SIZE 0
 
 static void mt6331_codec_init_reg(struct snd_soc_codec *codec)
 {
@@ -5357,7 +5363,8 @@ static int mt6331_codec_probe(struct snd_soc_codec *codec)
 	    pin_mode_audmiso = pin_mode_rcvspkswitch = 0;
 #endif
 	snd_soc_dapm_new_controls(dapm, mt6331_dapm_widgets, ARRAY_SIZE(mt6331_dapm_widgets));
-	snd_soc_dapm_add_routes(dapm, mtk_audio_map, ARRAY_SIZE(mtk_audio_map));
+	if (MTK_AUDIO_MAP_SIZE)
+		snd_soc_dapm_add_routes(dapm, MTK_AUDIO_MAP, MTK_AUDIO_MAP_SIZE);
 
 	/* add codec controls */
 	snd_soc_add_codec_controls(codec, mt6331_snd_controls, ARRAY_SIZE(mt6331_snd_controls));
@@ -5435,8 +5442,8 @@ static struct snd_soc_codec_driver soc_mtk_codec = {
 
 	.dapm_widgets = mt6331_dapm_widgets,
 	.num_dapm_widgets = ARRAY_SIZE(mt6331_dapm_widgets),
-	.dapm_routes = mtk_audio_map,
-	.num_dapm_routes = ARRAY_SIZE(mtk_audio_map),
+	.dapm_routes = MTK_AUDIO_MAP,
+	.num_dapm_routes = MTK_AUDIO_MAP_SIZE,
 
 };
 
