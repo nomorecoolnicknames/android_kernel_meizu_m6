@@ -120,14 +120,14 @@ struct disp_help_info help_info[OPT_COUNT] = {
 	{ DISP_OPT_FAKE_LCM_HEIGHT, 0, "DISP_OPT_FAKE_LCM_HEIGHT" },
 	{ DISP_OPT_OVL_WARM_RESET, 0, "DISP_OPT_OVL_WARM_RESET" },
 	{ DISP_OPT_DYNAMIC_SWITCH_UNDERFLOW_EN, 0, "DISP_OPT_DYNAMIC_SWITCH_UNDERFLOW_EN" },
-	{ DISP_OPT_SODI_SUPPORT, 1, "DISP_OPT_SODI_SUPPORT" },
-	{ DISP_OPT_IDLE_MGR, 1, "DISP_OPT_IDLE_MGR" },
-	{ DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 1, "DISP_OPT_IDLEMGR_SWTCH_DECOUPLE" },
-	{ DISP_OPT_IDLEMGR_ENTER_ULPS, 1, "DISP_OPT_IDLEMGR_ENTER_ULPS" },
-	{ DISP_OPT_SHARE_SRAM, 1, "DISP_OPT_SHARE_SRAM" },
+	{ DISP_OPT_SODI_SUPPORT, 0, "DISP_OPT_SODI_SUPPORT" },
+	{ DISP_OPT_IDLE_MGR, 0, "DISP_OPT_IDLE_MGR" },
+	{ DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 0, "DISP_OPT_IDLEMGR_SWTCH_DECOUPLE" },
+	{ DISP_OPT_IDLEMGR_ENTER_ULPS, 0, "DISP_OPT_IDLEMGR_ENTER_ULPS" },
+	{ DISP_OPT_SHARE_SRAM, 0, "DISP_OPT_SHARE_SRAM" },
 	{ DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK, 0, "DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK" },
-	{ DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 1, "DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING" },
-	{ DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 1, "DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ" },
+	{ DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 0, "DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING" },
+	{ DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 0, "DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ" },
 	{ DISP_OPT_MET_LOG, 1, "DISP_OPT_MET_LOG" },
 	{ DISP_OPT_DECOUPLE_MODE_USE_RGB565, 0, "DISP_OPT_DECOUPLE_MODE_USE_RGB565" },
 	{ DISP_OPT_NO_LCM_FOR_LOW_POWER_MEASUREMENT, 0, "DISP_OPT_NO_LCM_FOR_LOW_POWER_MEASUREMENT" },
@@ -147,9 +147,9 @@ struct disp_help_info help_info[OPT_COUNT] = {
 	{ DISP_OPT_SHOW_VISUAL_DEBUG_INFO, 0, "DISP_OPT_SHOW_VISUAL_DEBUG_INFO" },
 	{ DISP_OPT_RDMA_UNDERFLOW_AEE, 0, "DISP_OPT_RDMA_UNDERFLOW_AEE" },
 	{ DISP_OPT_GMO_OPTIMIZE, 0, "DISP_OPT_GMO_OPTIMIZE" },
-	{ DISP_OPT_CV_BYSUSPEND, 1, "DISP_OPT_CV_BYSUSPEND" },
+	{ DISP_OPT_CV_BYSUSPEND, 0, "DISP_OPT_CV_BYSUSPEND" },
 	{ DISP_OPT_DETECT_RECOVERY, 0, "DISP_OPT_DETECT_RECOVERY" },
-	{ DISP_OPT_DELAYED_TRIGGER, 1, "DISP_OPT_DELAYED_TRIGGER" },
+	{ DISP_OPT_DELAYED_TRIGGER, 0, "DISP_OPT_DELAYED_TRIGGER" },
 };
 
 static int option_to_index(DISP_HELPER_OPT option)
@@ -376,20 +376,20 @@ void disp_helper_option_init(void)
 	disp_helper_set_option(DISP_OPT_OVL_WARM_RESET, 0);
 
 	/* M6 bring-up: restore stock-like visible overlay path; no fake events or fence releases. */
-	disp_helper_set_option(DISP_OPT_SODI_SUPPORT, 1);
-	disp_helper_set_option(DISP_OPT_IDLE_MGR, 1);
+	disp_helper_set_option(DISP_OPT_SODI_SUPPORT, 0);
+	disp_helper_set_option(DISP_OPT_IDLE_MGR, 0);
 
 	/* 1. vdo mode + screen idle(need idlemgr) */
-	disp_helper_set_option(DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 1);
-	disp_helper_set_option(DISP_OPT_SHARE_SRAM, 1);
-	disp_helper_set_option(DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 1);
+	disp_helper_set_option(DISP_OPT_IDLEMGR_SWTCH_DECOUPLE, 0);
+	disp_helper_set_option(DISP_OPT_SHARE_SRAM, 0);
+	disp_helper_set_option(DISP_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ, 0);
 
 	/* 2. cmd mode + screen idle(need idlemgr) */
-	disp_helper_set_option(DISP_OPT_IDLEMGR_ENTER_ULPS, 1);
+	disp_helper_set_option(DISP_OPT_IDLEMGR_ENTER_ULPS, 0);
 
 	/* 3. cmd mode + vdo mode */
 	disp_helper_set_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK, 0);
-	disp_helper_set_option(DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 1);
+	disp_helper_set_option(DISP_OPT_DYNAMIC_RDMA_GOLDEN_SETTING, 0);
 
 
 	disp_helper_set_option(DISP_OPT_MET_LOG, 1);
@@ -412,9 +412,9 @@ void disp_helper_option_init(void)
 	disp_helper_set_option(DISP_OPT_FPS_CALC_WND, 10);
 	disp_helper_set_option(DISP_OPT_SMART_OVL, 1);
 	disp_helper_set_option(DISP_OPT_GMO_OPTIMIZE, 0);
-	disp_helper_set_option(DISP_OPT_CV_BYSUSPEND, 1);
+	disp_helper_set_option(DISP_OPT_CV_BYSUSPEND, 0);
 	disp_helper_set_option(DISP_OPT_DYNAMIC_DEBUG, 0);
-	disp_helper_set_option(DISP_OPT_DELAYED_TRIGGER, 1);
+	disp_helper_set_option(DISP_OPT_DELAYED_TRIGGER, 0);
 	/*Detect Hang thread Option*/
 	disp_helper_set_option(DISP_OPT_DETECT_RECOVERY, 0);
 }
