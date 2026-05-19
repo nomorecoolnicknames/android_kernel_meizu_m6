@@ -62,11 +62,32 @@ static DEFINE_MUTEX(g_gamma_global_lock);
 #endif
 
 static DISP_GAMMA_LUT_T *g_disp_gamma_lut[DISP_GAMMA_TOTAL] = { NULL };
+static DISP_GAMMA_LUT_T g_disp_gamma_identity_lut;
+static int g_disp_gamma_identity_lut_ready;
 
 static ddp_module_notify g_gamma_ddp_notify;
 
 
 static int disp_gamma_write_lut_reg(cmdqRecHandle cmdq, disp_gamma_id_t id, int lock);
+
+static DISP_GAMMA_LUT_T *disp_gamma_get_identity_lut(disp_gamma_id_t id)
+{
+	int i;
+
+	if (!g_disp_gamma_identity_lut_ready) {
+		g_disp_gamma_identity_lut.hw_id = id;
+		for (i = 0; i < DISP_GAMMA_LUT_SIZE; i++) {
+			unsigned int v = i << 1;
+
+			if (v > 0x3ff)
+				v = 0x3ff;
+			g_disp_gamma_identity_lut.lut[i] = GAMMA_ENTRY(v, v, v);
+		}
+		g_disp_gamma_identity_lut_ready = 1;
+	}
+
+	return &g_disp_gamma_identity_lut;
+}
 
 static int disp_gamma_start(DISP_MODULE_ENUM module, void *cmdq)
 {
@@ -131,19 +152,12 @@ static int disp_gamma_write_lut_reg(cmdqRecHandle cmdq, disp_gamma_id_t id, int 
 
 	gamma_lut = g_disp_gamma_lut[id];
 	if (gamma_lut == NULL) {
-		GAMMA_ERR(
-		       "disp_gamma_write_lut_reg: gamma table [%d] not initialized, bypass\n", id);
-		if (id == DISP_GAMMA0) {
-			/*
-			 * Early boot may start the display path before userspace
-			 * provides a calibration LUT.  Relay gamma instead of
-			 * failing path start; userspace can still program LUT later.
-			 */
-			DISP_REG_MASK(cmdq, DISP_REG_GAMMA_CFG, 0x1, 0x1);
-			ret = 0;
-		} else
+		if (id == DISP_GAMMA0)
+			gamma_lut = disp_gamma_get_identity_lut(id);
+		else
 			ret = -EFAULT;
-		goto gamma_write_lut_unlock;
+		if (ret)
+			goto gamma_write_lut_unlock;
 	}
 
 	if (id == DISP_GAMMA0) {
@@ -797,4 +811,3 @@ void set_color_temp_interface(unsigned int ccorr_coef_ref[3][3], void *handle)
     disp_ccorr_trigger_refresh(DISP_CCORR0);
 }
 EXPORT_SYMBOL(set_color_temp_interface);
-
