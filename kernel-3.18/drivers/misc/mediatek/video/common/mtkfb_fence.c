@@ -329,15 +329,21 @@ static struct ion_handle *mtkfb_ion_import_handle(struct ion_client *client, int
 	}
 	mm_data.mm_cmd = ION_MM_CONFIG_BUFFER;
 	mm_data.config_buffer_param.kernel_handle = handle;
-	mm_data.config_buffer_param.eModuleID = 0;
+	/*
+	 * Primary display buffers are consumed by DISP OVL/RDMA through M4U.
+	 * Leaving the imported dma-buf with module id 0 loses the display port
+	 * mapping/protection metadata on this MT6755/MT6750 display stack and can
+	 * prevent the normal frame-done path from retiring the layer fence.  Keep
+	 * the hardware contract explicit instead of advancing sw_sync fences from
+	 * software: OVL must be able to read the buffer and signal completion via
+	 * the existing DDP/CMDQ path.
+	 */
+	mm_data.config_buffer_param.eModuleID = M4U_PORT_DISP_OVL0;
 	mm_data.config_buffer_param.security = 0;
 	mm_data.config_buffer_param.coherent = 0;
-/*
-	mm_data.config_buffer_param.handle = handle;
-    mm_data.config_buffer_param.m4u_port = M4U_PORT_DISP_OVL0;
+	mm_data.config_buffer_param.m4u_port = M4U_PORT_DISP_OVL0;
 	mm_data.config_buffer_param.prot = M4U_PROT_READ|M4U_PROT_WRITE;
 	mm_data.config_buffer_param.flags = M4U_FLAGS_SEQ_ACCESS;
-*/
 
 	if (ion_kernel_ioctl(ion_client, ION_CMD_MULTIMEDIA, (unsigned long)&mm_data))
 		MTKFB_FENCE_ERR("configure ion buffer failed!\n");
