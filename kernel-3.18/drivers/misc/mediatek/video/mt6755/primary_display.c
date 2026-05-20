@@ -984,13 +984,8 @@ int _should_insert_wait_frame_done_token(void)
 *** 7.flush cmdq:          Y         Y       N        N      */
 	if (primary_display_cmdq_enabled()) {
 		if (primary_display_is_video_mode()) {
-			if (!primary_video_first_config_flushed && !primary_video_first_wait_skipped) {
-				DISPPR_ERROR("M6 video CMDQ: skip first pre-arm frame-done wait\n");
-				primary_video_first_wait_skipped = true;
-				return 0;
-			}
 			if (!primary_video_frame_wait_diag_logged) {
-				DISPPR_ERROR("M6 clean MTK diag: keep video frame-done wait after first config\n");
+				DISPPR_ERROR("M6 DDP clk fix: keep video frame-done wait; engine clocks enabled in DDP init\n");
 				primary_video_frame_wait_diag_logged = true;
 			}
 			return 1;

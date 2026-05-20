@@ -121,20 +121,30 @@ static int ufoe_config(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, v
 
 static int ufoe_clock_on(DISP_MODULE_ENUM module, void *handle)
 {
+	int ret = 0;
+
 #ifdef CONFIG_MTK_CLKMGR
-	enable_clock(MT_CG_DISP0_DISP_UFOE, "ufoe");
+	ret = enable_clock(MT_CG_DISP0_DISP_UFOE, "ufoe");
+#else
+	ret = ddp_clk_enable(DISP0_DISP_UFOE_MOUT);
 #endif
-	DISPMSG("ufoe_clock on CG 0x%x\n", DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
-	return 0;
+	DISPMSG("M6 DDP clk: ufoe on ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
+	return ret;
 }
 
 static int ufoe_clock_off(DISP_MODULE_ENUM module, void *handle)
 {
+	int ret = 0;
+
 #ifdef CONFIG_MTK_CLKMGR
 	disable_clock(MT_CG_DISP0_DISP_UFOE, "ufoe");
+#else
+	ret = ddp_clk_disable(DISP0_DISP_UFOE_MOUT);
 #endif
-	DISPMSG("ufoe_clock off CG 0x%x\n", DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
-	return 0;
+	DISPMSG("M6 DDP clk: ufoe off ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
+	return ret;
 }
 
 static int ufoe_reset(DISP_MODULE_ENUM module, void *handle)

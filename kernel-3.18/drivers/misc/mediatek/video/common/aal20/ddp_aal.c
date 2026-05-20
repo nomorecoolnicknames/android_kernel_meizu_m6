@@ -698,38 +698,37 @@ static void ddp_aal_restore(void *cmq_handle)
 
 static int aal_clock_on(DISP_MODULE_ENUM module, void *cmq_handle)
 {
-#if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_ELBRUS) || defined(CONFIG_ARCH_MT6757)
-	/* aal is DCM , do nothing */
-#else
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 #ifdef CONFIG_MTK_CLKMGR
-	enable_clock(MT_CG_DISP0_DISP_AAL, "aal");
+	ret = enable_clock(MT_CG_DISP0_DISP_AAL, "aal");
 #else
-	ddp_clk_enable(DISP0_DISP_AAL);
+	ret = ddp_clk_enable(DISP0_DISP_AAL);
 #endif
-	AAL_DBG("aal_clock_on CG 0x%x", DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
-#endif
+	pr_notice("M6 DDP clk: aal on ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
 	ddp_aal_restore(cmq_handle);
-	return 0;
+	return ret;
 }
 
 static int aal_clock_off(DISP_MODULE_ENUM module, void *cmq_handle)
 {
+	int ret = 0;
+
 	ddp_aal_backup();
-#if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_ELBRUS) || defined(CONFIG_ARCH_MT6757)
-	/* aal is DCM , do nothing */
-#else
 #ifdef ENABLE_CLK_MGR
 	AAL_DBG("aal_clock_off");
 #ifdef CONFIG_MTK_CLKMGR
 	disable_clock(MT_CG_DISP0_DISP_AAL, "aal");
 #else
-	ddp_clk_disable(DISP0_DISP_AAL);
+	ret = ddp_clk_disable(DISP0_DISP_AAL);
 #endif
+	pr_notice("M6 DDP clk: aal off ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-#endif
-	return 0;
+	return ret;
 }
 
 static int aal_init(DISP_MODULE_ENUM module, void *cmq_handle)

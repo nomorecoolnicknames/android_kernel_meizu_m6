@@ -2898,41 +2898,36 @@ static void color_write_sw_reg(unsigned int reg_id, unsigned int value)
 
 static int _color_clock_on(DISP_MODULE_ENUM module, void *cmq_handle)
 {
-#if defined(CONFIG_ARCH_MT6755)
-	/* color is DCM , do nothing */
-	return 0;
-#endif
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 #ifdef CONFIG_MTK_CLKMGR
 #if defined(CONFIG_ARCH_MT6595) || defined(CONFIG_ARCH_MT6795)
 	if (module == DISP_MODULE_COLOR0) {
-		enable_clock(MT_CG_DISP0_DISP_COLOR0, "DDP");
+		ret = enable_clock(MT_CG_DISP0_DISP_COLOR0, "DDP");
 		COLOR_DBG("color[0]_clock_on CG 0x%x\n",
 			  DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 	} else {
-		enable_clock(MT_CG_DISP0_DISP_COLOR1, "DDP");
+		ret = enable_clock(MT_CG_DISP0_DISP_COLOR1, "DDP");
 		COLOR_DBG("color[1]_clock_on CG 0x%x\n",
 			  DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 	}
 #else
-	enable_clock(MT_CG_DISP0_DISP_COLOR, "DDP");
-	COLOR_DBG("color[0]_clock_on CG 0x%x\n", DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
+	ret = enable_clock(MT_CG_DISP0_DISP_COLOR, "DDP");
 #endif
 #else
-	ddp_clk_enable(DISP0_DISP_COLOR);
-	COLOR_DBG("color[0]_clock_on CG 0x%x\n", DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
+	ret = ddp_clk_enable(DISP0_DISP_COLOR);
 #endif
+	pr_notice("M6 DDP clk: color on ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-
-	return 0;
+	return ret;
 }
 
 static int _color_clock_off(DISP_MODULE_ENUM module, void *cmq_handle)
 {
-#if defined(CONFIG_ARCH_MT6755)
-	/* color is DCM , do nothing */
-	return 0;
-#endif
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 #ifdef CONFIG_MTK_CLKMGR
 #if defined(CONFIG_ARCH_MT6595) || defined(CONFIG_ARCH_MT6795)
@@ -2948,10 +2943,12 @@ static int _color_clock_off(DISP_MODULE_ENUM module, void *cmq_handle)
 	disable_clock(MT_CG_DISP0_DISP_COLOR, "DDP");
 #endif
 #else
-	ddp_clk_disable(DISP0_DISP_COLOR);
+	ret = ddp_clk_disable(DISP0_DISP_COLOR);
 #endif
+	pr_notice("M6 DDP clk: color off ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-	return 0;
+	return ret;
 }
 
 static int _color_init(DISP_MODULE_ENUM module, void *cmq_handle)

@@ -295,38 +295,38 @@ static int disp_gamma_bypass(DISP_MODULE_ENUM module, int bypass)
 
 static int disp_gamma_power_on(DISP_MODULE_ENUM module, void *handle)
 {
-#if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_ELBRUS) || defined(CONFIG_ARCH_MT6757)
-	/* gamma is DCM , do nothing */
-#else
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 	if (module == DISP_MODULE_GAMMA) {
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_GAMMA, "GAMMA");
+		ret = enable_clock(MT_CG_DISP0_DISP_GAMMA, "GAMMA");
 #else
-		ddp_clk_enable(DISP0_DISP_GAMMA);
+		ret = ddp_clk_enable(DISP0_DISP_GAMMA);
 #endif
 	}
+	pr_notice("M6 DDP clk: gamma on ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-#endif
-	return 0;
+	return ret;
 }
 
 static int disp_gamma_power_off(DISP_MODULE_ENUM module, void *handle)
 {
-#if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_ELBRUS) || defined(CONFIG_ARCH_MT6757)
-	/* gamma is DCM , do nothing */
-#else
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 	if (module == DISP_MODULE_GAMMA) {
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_GAMMA, "GAMMA");
 #else
-		ddp_clk_disable(DISP0_DISP_GAMMA);
+		ret = ddp_clk_disable(DISP0_DISP_GAMMA);
 #endif
 	}
+	pr_notice("M6 DDP clk: gamma off ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-#endif
-	return 0;
+	return ret;
 }
 
 

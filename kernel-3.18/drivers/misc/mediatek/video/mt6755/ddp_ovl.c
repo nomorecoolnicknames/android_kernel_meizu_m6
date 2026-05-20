@@ -486,97 +486,96 @@ static void ovl_restore_regs(DISP_MODULE_ENUM module, void *handle)
 int ovl_clock_on(DISP_MODULE_ENUM module, void *handle)
 {
 	unsigned long ovl_base = ovl_base_addr(module);
+	int ret = 0;
 
 	DISPDBG("%s clock_on\n", ddp_get_module_name(module));
-	/* do not set CG */
-/*
 #ifdef ENABLE_CLK_MGR
-
 	switch (module) {
 	case DISP_MODULE_OVL0:
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_OVL0, ddp_get_module_name(module));
+		ret = enable_clock(MT_CG_DISP0_DISP_OVL0, ddp_get_module_name(module));
 #else
-		ddp_clk_enable(DISP0_DISP_OVL0);
+		ret = ddp_clk_enable(DISP0_DISP_OVL0);
 #endif
 		break;
 	case DISP_MODULE_OVL1:
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_OVL1, ddp_get_module_name(module));
+		ret = enable_clock(MT_CG_DISP0_DISP_OVL1, ddp_get_module_name(module));
 #else
-		ddp_clk_enable(DISP0_DISP_OVL1);
+		ret = ddp_clk_enable(DISP0_DISP_OVL1);
 #endif
 		break;
 	case DISP_MODULE_OVL0_2L:
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_OVL0_2L, ddp_get_module_name(module));
+		ret = enable_clock(MT_CG_DISP0_DISP_OVL0_2L, ddp_get_module_name(module));
 #else
-		ddp_clk_enable(DISP0_DISP_2L_OVL0);
+		ret = ddp_clk_enable(DISP0_DISP_2L_OVL0);
 #endif
 		break;
 	case DISP_MODULE_OVL1_2L:
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_OVL1_2L, ddp_get_module_name(module));
+		ret = enable_clock(MT_CG_DISP0_DISP_OVL1_2L, ddp_get_module_name(module));
 #else
-		ddp_clk_enable(DISP0_DISP_2L_OVL1);
+		ret = ddp_clk_enable(DISP0_DISP_2L_OVL1);
 #endif
 		break;
 	default:
 		DISPERR("invalid ovl module=%d\n", module);
 		BUG();
 	}
-
+	DISPMSG("M6 DDP clk: %s on ret=%d CG=0x%x\n",
+		ddp_get_module_name(module), ret, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-*/
 	/* DCM Setting -- Enable DCM */
 	/* DISP_REG_SET(NULL, ovl_base + DISP_REG_OVL_FUNC_DCM0, 0x10); */
 	DISP_REG_SET(NULL, ovl_base + DISP_REG_OVL_FUNC_DCM1, 0x10);
 
-	return 0;
+	return ret;
 }
 
 int ovl_clock_off(DISP_MODULE_ENUM module, void *handle)
 {
+	int ret = 0;
+
 	DISPDBG("%s clock_off\n", ddp_get_module_name(module));
-	/* do not set CG */
-/*
 #ifdef ENABLE_CLK_MGR
 	switch (module) {
 	case DISP_MODULE_OVL0:
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_OVL0, ddp_get_module_name(module));
 #else
-		ddp_clk_disable(DISP0_DISP_OVL0);
+		ret = ddp_clk_disable(DISP0_DISP_OVL0);
 #endif
 		break;
 	case DISP_MODULE_OVL1:
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_OVL1, ddp_get_module_name(module));
 #else
-		ddp_clk_disable(DISP0_DISP_OVL1);
+		ret = ddp_clk_disable(DISP0_DISP_OVL1);
 #endif
 		break;
 	case DISP_MODULE_OVL0_2L:
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_OVL0_2L, ddp_get_module_name(module));
 #else
-		ddp_clk_disable(DISP0_DISP_2L_OVL0);
+		ret = ddp_clk_disable(DISP0_DISP_2L_OVL0);
 #endif
 		break;
 	case DISP_MODULE_OVL1_2L:
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_OVL1_2L, ddp_get_module_name(module));
 #else
-		ddp_clk_disable(DISP0_DISP_2L_OVL1);
+		ret = ddp_clk_disable(DISP0_DISP_2L_OVL1);
 #endif
 		break;
 	default:
 		DISPERR("invalid ovl module=%d\n", module);
 		BUG();
 	}
+	DISPMSG("M6 DDP clk: %s off ret=%d CG=0x%x\n",
+		ddp_get_module_name(module), ret, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-*/
-	return 0;
+	return ret;
 }
 
 int ovl_resume(DISP_MODULE_ENUM module, void *handle)
