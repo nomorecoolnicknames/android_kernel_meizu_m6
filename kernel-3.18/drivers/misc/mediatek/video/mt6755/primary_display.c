@@ -108,6 +108,7 @@ static bool primary_video_frame_wait_diag_logged;
 static bool primary_video_bl_wait_diag_logged;
 static bool primary_video_trigger_loop_diag_logged;
 static bool primary_video_first_cfg_diag_logged;
+static bool primary_video_first_wait_skipped;
 static bool primary_present_fence_timeout_diag_logged;
 static unsigned int g_keep;
 static unsigned int g_skip;
@@ -983,8 +984,13 @@ int _should_insert_wait_frame_done_token(void)
 *** 7.flush cmdq:          Y         Y       N        N      */
 	if (primary_display_cmdq_enabled()) {
 		if (primary_display_is_video_mode()) {
+			if (!primary_video_first_config_flushed && !primary_video_first_wait_skipped) {
+				DISPPR_ERROR("M6 video CMDQ: skip first pre-arm frame-done wait\n");
+				primary_video_first_wait_skipped = true;
+				return 0;
+			}
 			if (!primary_video_frame_wait_diag_logged) {
-				DISPPR_ERROR("M6 clean MTK diag: keep video frame-done wait in config handle\n");
+				DISPPR_ERROR("M6 clean MTK diag: keep video frame-done wait after first config\n");
 				primary_video_frame_wait_diag_logged = true;
 			}
 			return 1;
@@ -1282,11 +1288,8 @@ void _cmdq_start_trigger_loop(void)
 {
 	int ret = 0;
 	/*cmdqRecDumpCommand(pgc->cmdq_handle_trigger);*/
-	if (primary_display_is_video_mode()) {
-		DISPPR_ERROR("M6 video CMDQ: bootstrap first RDMA/MUTEX EOF for no-LK trigger loop\n");
-		cmdqCoreSetEvent(CMDQ_EVENT_DISP_RDMA0_EOF);
-		cmdqCoreSetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF);
-	}
+	if (primary_display_is_video_mode())
+		DISPPR_ERROR("M6 video CMDQ: start trigger loop without synthetic EOF prime\n");
 	/* this should be called only once because trigger loop will nevet stop */
 	ret = cmdqRecStartLoop(pgc->cmdq_handle_trigger);
 	if (!primary_display_is_video_mode()) {
@@ -3175,6 +3178,7 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	primary_video_bl_wait_diag_logged = false;
 	primary_video_trigger_loop_diag_logged = false;
 	primary_video_first_cfg_diag_logged = false;
+	primary_video_first_wait_skipped = false;
 	primary_present_fence_timeout_diag_logged = false;
 
 	dprec_init();
