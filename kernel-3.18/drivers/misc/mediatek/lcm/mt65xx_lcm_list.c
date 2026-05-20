@@ -17,7 +17,9 @@
 #include <platform/disp_drv_platform.h>
 #else
 #include <linux/delay.h>
+#if defined(ILI9881P_HD_DSI_TXD)
 extern LCM_DRIVER ili9881p_hd_dsi_txd_lcm_drv;
+#endif
 /* #include <mach/mt_gpio.h> */
 #endif
 LCM_DSI_MODE_CON lcm_dsi_mode;
@@ -35,7 +37,9 @@ LCM_DSI_MODE_CON lcm_dsi_mode;
 #endif
 
 LCM_DRIVER *lcm_driver_list[] = {
-    &ili9881p_hd_dsi_txd_lcm_drv,
+#if defined(ILI9881P_HD_DSI_TXD)
+	&ili9881p_hd_dsi_txd_lcm_drv,
+#endif
 #if defined(OTM1284A_HD720_DSI_VDO_TM)
 	&otm1284a_hd720_dsi_vdo_tm_lcm_drv,
 #endif
