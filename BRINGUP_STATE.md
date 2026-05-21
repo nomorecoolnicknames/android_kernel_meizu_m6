@@ -10,12 +10,13 @@ INFERENCE: Stock-screen factory evidence is now sufficient for the source-kernel
 
 HYPOTHESIS: The source-kernel display blocker remains DSI/LCM/CMDQ/DDP clock/event/route parity, not rotation, OMX, or Android userspace. The next source-kernel patch cycle must be display-only and judged against `1779358816135`: same `720x1280`/rotation, HWC active, high display IRQs, and no RDMA/WDMA EOF stall.
 
-Current next source-kernel artifact to test: `/srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/boot-source-rollback-ddp-ili.img`, sha256 `bc280498ec794c96dbe596e8d917fdf7ef654ce2d39a658fe9a210eb5b264a3f`; matching `System.map.rollback-ddp-ili` sha256 `973ab65d19dc453db57d6abca91d739739584b6f815782e5a59bf8887c6625cf`; matching `kernel-rollback-ddp-ili.config` sha256 `ffc2f683116d20eb9c0e7d9d98011da2810a223ac353b91fd21158215f2126cc`. This is a rollback/diagnostic source-kernel build with the optional ILI9881P list guard and previous DDP clock markers, not a final display fix.
+Current next source-kernel artifact to test: `/srv/forge/android/export/meizu_m6_artifacts/20260521-source-rollback-ddp-ili-on-78c034cde8/boot-source-rollback-ddp-ili-on-78c034cde8.img`, sha256 `0da568e18dd38d43651b7166aba2c8bd24410161925e2dfde2ccd71f01ef1166`. It repacks the rollback/DDP/ILI source kernel payload `Image-rollback-ddp-ili.gz-dtb` sha256 `e89a440542f5458183b5705a563b986b044b0589eceda97de7c009dd033bc025` with the proven `78c034cde8` stock-parity ramdisk sha256 `9f281a9df3e766bf8cd9a31bd38468fc21b78cb026e98d34f8783d11a655186f`, stock-parity board `1554686824`, and stock-parity boot geometry. Matching `System.map.rollback-ddp-ili` sha256 is `973ab65d19dc453db57d6abca91d739739584b6f815782e5a59bf8887c6625cf`; matching `kernel-rollback-ddp-ili.config` sha256 is `ffc2f683116d20eb9c0e7d9d98011da2810a223ac353b91fd21158215f2126cc`. Build notes: `/srv/forge/android/export/meizu_m6_artifacts/20260521-source-rollback-ddp-ili-on-78c034cde8/BUILD_NOTES.md`. This is a display diagnostic source-kernel boot image, not a final display fix.
 
 Verification commands for that source artifact:
 
 ```bash
-sha256sum /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/boot-source-rollback-ddp-ili.img /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/System.map.rollback-ddp-ili /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/kernel-rollback-ddp-ili.config
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260521-source-rollback-ddp-ili-on-78c034cde8/SHA256SUMS
+gzip -cd /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/Image-rollback-ddp-ili.gz-dtb 2>/dev/null | strings | grep -E 'M6 DDP clk|ili9881p_hd_dsi_txd'
 grep -n -E 'ro.forge.meizu.kernel|Linux version|ro.sf.hwrotation|sys.boot_completed' <next-source-capture>/mtp/adb/getprop.txt <next-source-capture>/mtp/adb/proc_version.txt
 grep -n -E 'Built-in Screen|powerMode=2|isDisplayOn=1|flips=|orient=|HWC|720x1280|VSYNC' <next-source-capture>/mtp/adb/surfaceflinger.txt
 cat <next-source-capture>/mtp/adb/interrupts_focus.txt | grep -E 'mtk_cmdq|ovl0|rdma0|dsi0|mali'
