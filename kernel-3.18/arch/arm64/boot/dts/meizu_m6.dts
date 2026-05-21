@@ -23,7 +23,7 @@
 		atag,videolfb-islcm_inited = <0>;
 		atag,videolfb-fps= <6000>;
 		atag,videolfb-vramSize= <0x01800000>;
-		atag,videolfb-lcmname= "nt35695_fhd_dsi_cmd_truly_nt50358_drv";
+		atag,videolfb-lcmname= "ili9881p_hd_dsi_txd";
 	};
 	led0:led@0 {
 		compatible = "mediatek,red";
@@ -557,7 +557,7 @@ hw-dev-detect@0{
 
 	mtkfb_pins_lcd_bias_enp0: lcd_bias_enp0_gpio {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO24__FUNC_GPIO24>;
+			pins = <PINMUX_GPIO12__FUNC_GPIO12>;
 			slew-rate = <1>;
 			output-low;
 		};
@@ -565,23 +565,7 @@ hw-dev-detect@0{
 
 	mtkfb_pins_lcd_bias_enp1: lcd_bias_enp1_gpio {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO24__FUNC_GPIO24>;
-			slew-rate = <1>;
-			output-high;
-		};
-	};
-
-	mtkfb_pins_lcd_bias_enn0: lcd_bias_enn0_gpio {
-		pins_cmd_dat {
-			pins = <PINMUX_GPIO27__FUNC_GPIO27>;
-			slew-rate = <1>;
-			output-low;
-		};
-	};
-
-	mtkfb_pins_lcd_bias_enn1: lcd_bias_enn1_gpio {
-		pins_cmd_dat {
-			pins = <PINMUX_GPIO27__FUNC_GPIO27>;
+			pins = <PINMUX_GPIO12__FUNC_GPIO12>;
 			slew-rate = <1>;
 			output-high;
 		};
@@ -593,8 +577,7 @@ hw-dev-detect@0{
 
 &mtkfb {
 	pinctrl-names = "default", "mode_te_gpio", "mode_te_te", "lcm_rst_out0_gpio",
-	"lcm_rst_out1_gpio", "lcd_bias_enp0_gpio", "lcd_bias_enp1_gpio",
-	"lcd_bias_enn0_gpio", "lcd_bias_enn1_gpio";
+	"lcm_rst_out1_gpio", "lcd_bias_enp0_gpio", "lcd_bias_enp1_gpio";
 	pinctrl-0 = <&mtkfb_pins_default>;
 	pinctrl-1 = <&mtkfb_pins_mode_te_gpio>;
 	pinctrl-2 = <&mtkfb_pins_mode_te_te>;
@@ -602,8 +585,6 @@ hw-dev-detect@0{
 	pinctrl-4 = <&mtkfb_pins_lcm_reset1>;
 	pinctrl-5 = <&mtkfb_pins_lcd_bias_enp0>;
 	pinctrl-6 = <&mtkfb_pins_lcd_bias_enp1>;
-	pinctrl-7 = <&mtkfb_pins_lcd_bias_enn0>;
-	pinctrl-8 = <&mtkfb_pins_lcd_bias_enn1>;
 	status = "okay";
 };/* DISPSYS GPIO standardization end */
 

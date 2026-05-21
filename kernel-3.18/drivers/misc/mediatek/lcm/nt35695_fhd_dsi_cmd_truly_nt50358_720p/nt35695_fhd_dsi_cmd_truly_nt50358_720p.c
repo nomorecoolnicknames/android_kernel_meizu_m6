@@ -1878,7 +1878,7 @@ static void *lcm_switch_mode(int mode)
 
 
 LCM_DRIVER nt35695_fhd_dsi_cmd_truly_nt50358_720p_lcm_drv = {
-	.name = "nt35695_fhd_dsi_cmd_truly_nt50358_drv",
+	.name = "nt35695_fhd_dsi_cmd_truly_nt50358_720p_drv",
 	.set_util_funcs = lcm_set_util_funcs,
 	.get_params = lcm_get_params,
 	.init = lcm_init,

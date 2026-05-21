@@ -37,8 +37,9 @@
 #include "mtkfb_debug.h"
 #ifdef CONFIG_MTK_LEGACY
 #include <mt-plat/mt_gpio.h>
-#endif
+#else
 #include "disp_dts_gpio.h"
+#endif
 #include <mt-plat/sync_write.h>
 #ifndef CONFIG_MTK_CLKMGR
 #include "ddp_clkmgr.h"
@@ -2830,22 +2831,55 @@ unsigned int DSI_dcs_read_lcm_reg_v2_wrapper_DSIDUAL(uint8_t cmd, uint8_t *buffe
 {
 	return DSI_dcs_read_lcm_reg_v2(DISP_MODULE_DSIDUAL, NULL, cmd, buffer, buffer_size);
 }
+/*
 long lcd_enp_bias_setting(unsigned int value)
 {
-	return disp_dts_gpio_select_state(value ? DTS_GPIO_STATE_LCD_BIAS_ENP1 :
-					  DTS_GPIO_STATE_LCD_BIAS_ENP0);
-}
+	long ret = 0;
 
+#if !defined(CONFIG_MTK_LEGACY)
+	if (value)
+		ret = disp_dts_gpio_select_state(DTS_GPIO_STATE_LCD_BIAS_ENP);
+	else
+		ret = disp_dts_gpio_select_state(DTS_GPIO_STATE_LCD_BIAS_ENN);
+#endif
+	return ret;
+}
+*/
+extern void lcm_pinctl_gpio_output(int pin, int level);
+long lcd_enp_bias_setting(unsigned int value)
+{
+	long ret = 0;
+
+	if (value)
+		lcm_pinctl_gpio_output (0, 1);
+	else
+		lcm_pinctl_gpio_output (0, 0);
+
+
+	return ret;
+}
 long lcd_enn_bias_setting(unsigned int value)
 {
-	return disp_dts_gpio_select_state(value ? DTS_GPIO_STATE_LCD_BIAS_ENN1 :
-					  DTS_GPIO_STATE_LCD_BIAS_ENN0);
+	long ret = 0;
+
+	if (value)
+		lcm_pinctl_gpio_output (1, 1);
+	else
+		lcm_pinctl_gpio_output (1, 0);
+
+
+	return ret;
 }
+
 
 static void lcm_reset_settting(unsigned int value)
 {
-	disp_dts_gpio_select_state(value ? DTS_GPIO_STATE_LCM_RST_OUT1 :
-				   DTS_GPIO_STATE_LCM_RST_OUT0);
+
+	if (value)
+		lcm_pinctl_gpio_output (2, 1);
+	else
+		lcm_pinctl_gpio_output (2, 0);
+
 }
 
 int ddp_dsi_set_lcm_utils(DISP_MODULE_ENUM module, LCM_DRIVER *lcm_drv)
