@@ -1,5 +1,27 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-05-21 source display resumes from stock-prebuilt proof
+
+FACT: New stock-good reference capture is `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/25e8d559-1fc0-4bca-a512-30f52f1e4687/browser-bootdiag-1779358816135.tar`, sha256 `b9e741dadb4cda6c9e83e482a1d962c1b0d21f70dca1b07372254e0cfcc0c9b9`, extracted at `/tmp/m6_1779358816135`. Runtime identity is `78c034cde8`, `ro.forge.meizu.kernel=stock-7.1.2.0G-prebuilt-3.18.35`, and `Linux 3.18.35+`. The local stock-prebuilt boot reference is `/srv/forge/android/export/meizu_m6_artifacts/20260521-stock-parity-78c034cde8/boot.img` sha256 `cd959b6db468d06578d82bbb853aa783852ede441eae918abc8ccba1308a9565`, but the capture lacks raw boot partition so exact flashed boot hash is not proven.
+
+FACT: The stock-good capture boots Android with `sys.boot_completed=1`, visible/usable non-inverted display, `ro.sf.hwrotation=0`, SurfaceFlinger `Built-in Screen` `720x1280`, `orient=0`, `flips=10375`, `powerMode=2`, `isDisplayOn=1`, active HWC layers, and high interrupt counts for `mtk_cmdq`, `ovl0`, `rdma0`, `dsi0`, `ovl0_2l`, and Mali. The compared grep set has no source-kernel-style repeated `Frame didn't finished`, `[OVL-IN-0] fence didn't signal`, `timeline-primary`, or RDMA/WDMA EOF stall.
+
+INFERENCE: Stock-screen factory evidence is now sufficient for the source-kernel display parity loop. Do not spend the next step on rizin for screen. Use rizin only if direct source comparison and runtime oracle checks cannot recover a stock-only LCM/CMDQ/DDP detail.
+
+HYPOTHESIS: The source-kernel display blocker remains DSI/LCM/CMDQ/DDP clock/event/route parity, not rotation, OMX, or Android userspace. The next source-kernel patch cycle must be display-only and judged against `1779358816135`: same `720x1280`/rotation, HWC active, high display IRQs, and no RDMA/WDMA EOF stall.
+
+Current next source-kernel artifact to test: `/srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/boot-source-rollback-ddp-ili.img`, sha256 `bc280498ec794c96dbe596e8d917fdf7ef654ce2d39a658fe9a210eb5b264a3f`; matching `System.map.rollback-ddp-ili` sha256 `973ab65d19dc453db57d6abca91d739739584b6f815782e5a59bf8887c6625cf`; matching `kernel-rollback-ddp-ili.config` sha256 `ffc2f683116d20eb9c0e7d9d98011da2810a223ac353b91fd21158215f2126cc`. This is a rollback/diagnostic source-kernel build with the optional ILI9881P list guard and previous DDP clock markers, not a final display fix.
+
+Verification commands for that source artifact:
+
+```bash
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/boot-source-rollback-ddp-ili.img /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/System.map.rollback-ddp-ili /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/kernel-rollback-ddp-ili.config
+grep -n -E 'ro.forge.meizu.kernel|Linux version|ro.sf.hwrotation|sys.boot_completed' <next-source-capture>/mtp/adb/getprop.txt <next-source-capture>/mtp/adb/proc_version.txt
+grep -n -E 'Built-in Screen|powerMode=2|isDisplayOn=1|flips=|orient=|HWC|720x1280|VSYNC' <next-source-capture>/mtp/adb/surfaceflinger.txt
+cat <next-source-capture>/mtp/adb/interrupts_focus.txt | grep -E 'mtk_cmdq|ovl0|rdma0|dsi0|mali'
+grep -R -n -E 'M6 DDP clk|MMSYS_CG_CON0|DISP_DL_VALID_0|DISP_DL_READY_0|CMDQ_EVENT_DISP_(RDMA0|WDMA0)_EOF|Frame didn.t finished|OVL-IN-0|timeline-primary|present_fence_w|Built-in Screen|SetPowerMode' <next-source-capture>/mtp/adb
+```
+
 ## 2026-05-20 source display DDP clock bundle
 
 FACT: Kernel tree `/srv/forge/android/kernel-meizu_M6-N-ex6-linux-3.18.140` is on branch `work/m6-source-display-manual-20260520`; base HEAD before this bundle was `62cf59f982e8874a52b09fae498d6493b53cd1ff`.
