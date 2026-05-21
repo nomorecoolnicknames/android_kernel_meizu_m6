@@ -87,3 +87,41 @@ Expected next marker: a fresh capture from `boot-source-rollback-ddp-ili.img` sh
 Rollback condition: revert this guard only if the ILI9881P driver is intentionally compiled into this config and the guard hides a required active panel path.
 
 Verification commands: `git diff --check`; `make -C /srv/forge/android/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out ARCH=arm64 CROSS_COMPILE=/srv/forge/android/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- -j8 Image.gz-dtb`; `sha256sum /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/boot-source-rollback-ddp-ili.img /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/Image-rollback-ddp-ili.gz-dtb /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/System.map.rollback-ddp-ili /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/kernel-rollback-ddp-ili.config`.
+
+## 2026-05-21 source boot failure 1779361010015: stale LCM config
+
+FACT: Recovery capture `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/551aed01-9901-43b0-8492-4e51cb05f958/browser-bootdiag-1779361010015.tar` sha256 `eaa682e19672196c80a51624a71b5cd4f90d93d80cac67bdae7a654ccbfcf6f2` is fresh enough for the failed source-kernel boot: recovery userspace reports `ro.boot.mode=recovery`, `ro.twrp.version=3.2.3-by uznaikaz`, and recovery `/proc/version` is stock `Linux 3.18.35+`, while pstore/last_kmsg records the previous failed kernel as `Linux 3.18.140 #5 Thu May 21 02:11:45 CDT 2026`.
+
+FACT: Earliest display/kernel failure in pstore is at 1.582298s: `[DISP]FATAL ERROR!!!LCM Driver defined in kernel(nt35695_fhd_dsi_cmd_truly_nt50358_720p_drv) is different with LK(ili9881p_hd_dsi_txd)`, then `plcm is null`, then `ASSERT FAILED .../ddp_manager.c, 1174`, then `PC is at dpmgr_path_get_last_config+0x84/0x88`. The call trace goes through `primary_frame_cfg_input`, `mtkfb_probe`, and `mtkfb_init`.
+
+FACT: The bad tested kernel artifact used stale generated config: `/srv/forge/work/m6-source-kernel-manual-20260520/out/.config` and exported `kernel-rollback-ddp-ili.config` had `CONFIG_CUSTOM_KERNEL_LCM="nt35695_fhd_dsi_cmd_truly_nt50358_720p"`, despite the source defconfig currently saying `CONFIG_CUSTOM_KERNEL_LCM="ili9881p_hd_dsi_txd"`.
+
+INFERENCE: User observation is correct: display is lost before the kernel panic because `disp_lcm_probe()` rejects the LK-selected panel name, leaves `plcm` null, and the framebuffer/DDP init path later crashes on that null display path. This capture does not yet test the DDP clock frontier.
+
+REJECTED: Rizin is not the next required step for this specific failure. The factory screen identity needed for this boot is already in the log: LK passes `ili9881p_hd_dsi_txd`, and the source tree already has that LCM driver and defconfig. Reverse only if the corrected ILI artifact passes this mismatch and then exposes a stock-only unknown panel/DDP detail.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-21: rebuild source boot after applying `meizu_m6_defconfig`.
+
+Hypothesis: the failed source boot was produced from a stale out-tree `.config` left behind by the reverted stock-LCM experiment. Regenerating `.config` from `meizu_m6_defconfig` before building should compile `ili9881p_hd_dsi_txd`, remove the fatal LK/kernel LCM mismatch, and expose the next real display frontier.
+
+Evidence: capture and pstore lines above; build log `/srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/source-kernel-ili-defconfig-rebuild.log` shows `meizu_m6_defconfig`, then `.config` lines `CONFIG_MTK_LCM=y`, `CONFIG_CUSTOM_KERNEL_LCM="ili9881p_hd_dsi_txd"`, `# CONFIG_MTK_LCM_DEVICE_TREE_SUPPORT is not set`, then a successful `Image.gz-dtb` build. The new kernel strings contain `ili9881p_hd_dsi_txd` and `M6 DDP clk`, and do not contain `nt35695_fhd_dsi_cmd_truly_nt50358_720p_drv`.
+
+Files changed: no kernel source change; artifact-only rebuild plus this state update. The active source files already had the correct M6 defconfig and guarded ILI LCM list entry.
+
+Why each file changed: state file records the proven regression and replaces the stale test artifact route with a defconfig-clean artifact; source was not changed because the proven defect was build output identity, not source content.
+
+Expected next marker: next capture from the corrected artifact must not contain `FATAL ERROR!!!LCM Driver defined in kernel(nt35695_fhd_dsi_cmd_truly_nt50358_720p_drv) is different with LK(ili9881p_hd_dsi_txd)`, `plcm is null`, or the same `ddp_manager.c, 1174` panic. It should either continue into ILI LCM init/resume and DDP clock logs, or reveal the next earlier source-kernel blocker.
+
+Rollback condition: reject this artifact only if verified flashed boot hash `3d6695685ad847b10cb915dcc200dab0ddbe8b63db8a1eb9e5ba1dd889fde51c` still produces the exact nt35695-vs-ili mismatch. If a later display failure appears without this mismatch, continue from the new earliest line rather than reverting to the stale config.
+
+Corrected source artifact: `/srv/forge/android/export/meizu_m6_artifacts/20260521-source-ili-defconfig-on-78c034cde8/boot-source-ili-defconfig-on-78c034cde8.img` sha256 `3d6695685ad847b10cb915dcc200dab0ddbe8b63db8a1eb9e5ba1dd889fde51c`. Kernel payload `Image-ili-defconfig.gz-dtb` sha256 `625bed885e37d7477729ea237bbca171e060871b53dfb423baa340ec95c0fead`; `System.map.ili-defconfig` sha256 `5c58cb6fdcb458666ea8108ac90257d04704792e6dbdddd4355ff63328b66729`; `kernel-ili-defconfig.config` sha256 `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`; `vmlinux-ili-defconfig` sha256 `14d5ed845baed7a8728bab19d1241bd24fcdcdae65a3f43e997a932d55f0ee8d`; stock-parity ramdisk sha256 `9f281a9df3e766bf8cd9a31bd38468fc21b78cb026e98d34f8783d11a655186f`; rebuild log sha256 `ab8cfaeb71f83335f7cb15745c29a1685bbeef665be171878b1334049a96f231`. Boot header: kernel addr `0x40080000`, ramdisk addr `0x45000000`, tags addr `0x44000000`, page size `2048`, board `1554686824`, cmdline `bootopt=64S3,32N2,64N2 androidboot.selinux=permissive buildvariant=userdebug`, OS version `7.1.2 / 2021-06-01`.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260521-source-ili-defconfig-on-78c034cde8/SHA256SUMS
+grep -n -E 'CONFIG_CUSTOM_KERNEL_LCM|CONFIG_MTK_LCM_DEVICE_TREE_SUPPORT|CONFIG_MTK_LCM=' /srv/forge/android/export/meizu_m6_artifacts/20260521-source-ili-defconfig-on-78c034cde8/kernel-ili-defconfig.config
+gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260521-source-ili-defconfig-on-78c034cde8/Image-ili-defconfig.gz-dtb 2>/dev/null | strings | grep -E 'ili9881p_hd_dsi_txd|M6 DDP clk'
+gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260521-source-ili-defconfig-on-78c034cde8/Image-ili-defconfig.gz-dtb 2>/dev/null | strings | grep -F 'nt35695_fhd_dsi_cmd_truly_nt50358_720p_drv' || true
+grep -R -n -E 'FATAL ERROR!!!LCM|plcm is null|ddp_manager.c, 1174|ili9881p_hd_dsi_txd|M6 DDP clk|Built-in Screen|SetPowerMode|Frame didn.t finished|CMDQ_EVENT_DISP_(RDMA0|WDMA0)_EOF' <next-capture>/mtp/adb <next-capture>/mtp/adb-files
+```
