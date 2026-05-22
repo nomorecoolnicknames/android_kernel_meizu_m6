@@ -125,3 +125,78 @@ gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260521-source-ili-defcon
 gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260521-source-ili-defconfig-on-78c034cde8/Image-ili-defconfig.gz-dtb 2>/dev/null | strings | grep -F 'nt35695_fhd_dsi_cmd_truly_nt50358_720p_drv' || true
 grep -R -n -E 'FATAL ERROR!!!LCM|plcm is null|ddp_manager.c, 1174|ili9881p_hd_dsi_txd|M6 DDP clk|Built-in Screen|SetPowerMode|Frame didn.t finished|CMDQ_EVENT_DISP_(RDMA0|WDMA0)_EOF' <next-capture>/mtp/adb <next-capture>/mtp/adb-files
 ```
+
+## 2026-05-22 source display diag for valid/ready zero
+
+FACT: Kernel display path is stalling on CMDQ RDMA0 EOF timeout, and the previous diagnostic capture states `MMSYS_CG_CON0` clock gating was resolved but `DISP_DL_VALID_0` remains 0.
+FACT: If `DISP_DL_VALID_0` is 0, the internal DDP data path is physically not outputting valid data from OVL0/COLOR0 to downstream modules.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-22: explicitly release MMSYS hardware resets, enable SMI LARB0 test mode, and insert a register dump on EOF timeout.
+Hypothesis: `DISP_DL_VALID_0` is 0 because either the display modules are held in reset (`MMSYS_SW0_RST_B`), OVL0 is stalling on `SMI_LARB0` fetch, or the `MOUT`/`SEL` routing is disconnected. Releasing resets and forcing the test mode should clear hardware stalls, and dumping the exact `MMSYS_CONFIG` registers upon timeout will isolate the broken link if it still stalls.
+Evidence: previous log identified `DISP_DL_VALID_0=0` with `MMSYS_CG_CON0=0xfffefffc`.
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` explicitly writes `0xFFFFFFFF` to `MMSYS_SW0_RST_B`, `SW1_RST_B`, and `LCM_RST_B`, and writes 1 to `MMSYS_MISC_FLD_SMI_LARB0_TEST_MODE`. `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` adds `M6 clean MTK diag: VALID_0=...` to dump pipeline state upon `DISP_PATH_EVENT_FRAME_DONE` wait timeout.
+Expected next marker: Next log will either boot without RDMA0 EOF timeout (if reset/SMI fix worked), or the dmesg will contain `M6 clean MTK diag: VALID_0=` with the exact routing register values (`OVL0_MOUT`, `COLOR0_SEL`, `DITHER_MOUT`, `RDMA0_SOUT`, `SW0_RST`, `MMSYS_CG`).
+Rollback condition: Revert the reset and SMI test mode changes if they cause immediate memory controller panic.
+Verification commands:
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/SHA256SUMS.diag-valid
+grep -E 'M6 clean MTK diag: VALID_0=' <next-capture>/mtp/adb/dmesg.txt
+```
+
+
+## 2026-05-22 source display no-ADB regression after diag-valid
+
+FACT: Recovery evidence archive `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/faedc765-6ef0-4896-aebd-759033f3c400/browser-debug-evidence-1779441875959.tar` has sha256 `697dec96c1e3c786a12a7762b55ea64c475a163818c0bb2d132199dcfb1365b9`. It identifies the recovery kernel as stock `Linux version 3.18.35+`, boot mode `recovery`, bootreason `wdt_by_pass_pwk`, and timestamp `Fri May 22 19:23:28 UTC 2026`.
+
+FACT: The same archive did not capture the failed `/boot` partition hash. It contains recovery/logo/expdb/para/rstinfo hashes only, so exact flashed boot identity for this no-ADB failure is not proven from the capture itself.
+
+FACT: The only failed-kernel signal in `pstore_dump.txt` and `/proc/last_kmsg` is `ram console header, hw_status: 2, fiq step 32` plus `SPM_SW_RSV5(0xfffffffe) 1pll init(val0=0x417000)` at `0.467288`. No source-kernel display log, LCM log, regular dmesg line, or `M6 clean MTK diag` line survived in the archive.
+
+FACT: The suspected artifact `/srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/boot-source-diag-valid-0.img` has sha256 `34eb150e3c3bd165cb72973a4f52ed34b68a972b9bf4f074577b2f6ab887d7a5`; matching payload `/srv/forge/android/export/meizu_m6_artifacts/source-kernel-manual-20260520/Image-diag-valid.gz-dtb` has sha256 `9d9ab9d5e08f5dd438188026386e98ff8be1fabf97267310cca2dde8501ec384`; matching `System.map.diag-valid` has sha256 `58cb3b4eefa0f4919cb4c0a9910d62c96e38fc8c92ec59eae24efb7b3baa9405`.
+
+INFERENCE: The no-ADB regression happened before the display timeout diagnostic could run. The strongest local code delta with boot-kill potential was the uncommitted `ddp_path_init()` behavior change: writes to `MMSYS_SW0_RST_B`, `MMSYS_SW1_RST_B`, `MMSYS_LCM_RST_B`, and `MMSYS_MISC_FLD_SMI_LARB0_TEST_MODE` before normal display top-clock power sequencing.
+
+REJECTED: Treating the reset/SMI test-mode writes as a BOOT-UNBLOCK fix is rejected. They were broad behavioral register writes, not backed by entry/exit markers, and the next evidence regressed to WDT/no ADB. They are removed from the worktree before the next build. The read-only `dpmgr_wait_event_timeout()` dump remains useful and is kept.
+
+PATCH HISTORY, DIAGNOSTIC, 2026-05-22: remove unsafe DDP path init writes from the next source-kernel test and keep only the read-only timeout dump.
+Hypothesis: The diag-valid no-ADB regression was caused by touching MMSYS reset and SMI test-mode registers at `ddp_path_init()` before the normal `ddp_path_top_clock_on()`/module init flow. Returning `ddp_path_init()` to pointer table initialization should restore the previous source-kernel boot/ADB frontier, while the timeout dump in `ddp_manager.c` can still report the first DDP route/VALID/READY failure if RDMA EOF remains.
+Evidence: capture and hashes above; source inspection shows `ddp_drv.c` calls `ddp_path_init()` immediately after register `of_iomap()` and before IRQ request, while `ddp_manager.c` later owns `ddp_path_top_clock_on()`. The current retained code path is read-only and emits `M6 clean MTK diag: VALID_0=...` only after a display path wait timeout.
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` has the uncommitted MMSYS reset/SMI writes removed from the worktree; `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` keeps the read-only timeout register dump; `BRINGUP_STATE.md` records this rejection and next verification route.
+Why each file changed: `ddp_path.c` must not mutate reset/test-mode state before the proven display clock/init sequence; `ddp_manager.c` is the earliest available safe timeout point for observing whether `DISP_DL_VALID_0`, `DISP_DL_READY_0`, and route registers remain wrong after the boot reaches userspace again.
+Expected next marker: a verified next capture should at minimum return to source kernel `3.18.140` with ADB/bootdiag or a richer pstore than the `SPM_SW_RSV5 1pll init` line. If it reaches the previous display frontier, dmesg should contain `M6 clean MTK diag: VALID_0=...` on RDMA EOF timeout.
+Rollback condition: If a verified flashed boot hash from the rebuilt artifact still dies with only the same early WDT/`SPM_SW_RSV5 1pll init` signal, stop treating the removed DDP writes as sufficient and inspect non-display kernel deltas plus add earlier forge markers before another display behavior change.
+Verification commands:
+```bash
+sha256sum <rebuilt-boot.img> <rebuilt-Image.gz-dtb> <rebuilt-System.map> <rebuilt-.config>
+gzip -cd <rebuilt-Image.gz-dtb> 2>/dev/null | strings | grep -E 'ili9881p_hd_dsi_txd|M6 clean MTK diag|M6 DDP clk'
+gzip -cd <rebuilt-Image.gz-dtb> 2>/dev/null | strings | grep -E 'MMSYS_SW0_RST_B|SMI_LARB0_TEST_MODE' || true
+grep -R -n -E 'SPM_SW_RSV5|M6 clean MTK diag: VALID_0=|FATAL ERROR!!!LCM|plcm is null|CMDQ_EVENT_DISP_(RDMA0|WDMA0)_EOF|M6 DDP clk|Built-in Screen|SetPowerMode' <next-capture>/evidence <next-capture>/mtp
+```
+
+## 2026-05-22 source readonly DDP diagnostic artifact
+
+PATCH HISTORY, DIAGNOSTIC, 2026-05-22: keep only read-only DDP timeout diagnostics after rejecting unsafe reset/SMI writes.
+
+Hypothesis: the last no-ADB regression was caused by broad MMSYS reset/SMI test-mode writes in `ddp_path_init()`, not by the read-only timeout dump itself. Building the ILI defconfig tree with only `dpmgr_wait_event_timeout()` register logging should return to the prior source-kernel boot/ADB frontier and, if the RDMA/WDMA EOF stall remains, emit the exact VALID/READY/route registers needed for the next evidence-backed display patch.
+
+Evidence: recovery capture `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/faedc765-6ef0-4896-aebd-759033f3c400/browser-debug-evidence-1779441875959.tar` had only `SPM_SW_RSV5(0xfffffffe) 1pll init` and no DDP timeout marker after the unsafe reset/SMI experiment. Source inspection showed `ddp_path_init()` runs before normal top-clock/module init, while this retained patch only logs after an already-observed display wait timeout.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` logs `DISP_DL_VALID_0`, `DISP_DL_READY_0`, OVL/COLOR/DITHER/RDMA/UFOE route registers, SW0 reset state, and `MMSYS_CG_CON0` only when `dpmgr_wait_event_timeout()` times out. `BRINGUP_STATE.md` records the build and test route.
+
+Why each file changed: `ddp_manager.c` owns the proven RDMA/WDMA EOF timeout point and can observe the route without mutating display hardware state; the state file is the required checkpoint for the next agent/test capture.
+
+Expected next marker: a verified recovery capture hashes `/dev/block/mmcblk0p21` as `3071aa69097dffe6c3e3668d8ea4cda4ae3cb5135bddac497bd324d4655b6cbc`. If Android reaches the previous display frontier, dmesg/logcat contains `M6 clean MTK diag: VALID_0=` plus `M6 DDP clk:` lines. If it still dies before ADB, pstore/last_kmsg must at least prove whether the failure is the same early WDT/SPM-only case.
+
+Rollback condition: revert this diagnostic if the verified flashed boot hash above still dies with only the same early WDT/`SPM_SW_RSV5 1pll init` signal and no display markers; in that case add earlier boot-stage markers before touching display registers again.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/SHA256SUMS
+zip -T /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/m6-source-readonly-ddp-diag-bootonly-20260522-signed.zip
+grep -n -E 'CONFIG_CUSTOM_KERNEL_LCM|CONFIG_MTK_LCM_DEVICE_TREE_SUPPORT|CONFIG_MTK_LCM=' /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/kernel-readonly-ddp-diag.config
+gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/Image-readonly-ddp-diag.gz-dtb 2>/dev/null | strings | grep -E 'ili9881p_hd_dsi_txd|M6 clean MTK diag|M6 DDP clk'
+grep -R -n -E 'SPM_SW_RSV5|M6 clean MTK diag: VALID_0=|FATAL ERROR!!!LCM|plcm is null|CMDQ_EVENT_DISP_(RDMA0|WDMA0)_EOF|M6 DDP clk|Built-in Screen|SetPowerMode' <next-capture>/evidence <next-capture>/mtp
+```
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/boot-source-readonly-ddp-diag-on-78c034cde8.img` sha256 `3071aa69097dffe6c3e3668d8ea4cda4ae3cb5135bddac497bd324d4655b6cbc`; signed recovery zip `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/m6-source-readonly-ddp-diag-bootonly-20260522-signed.zip` sha256 `8447100fc1cdb2fb964611905673c993a6806b3a8da41f95b2853d99108ca4df`; Build Station build `a930069d-ed6c-450c-b460-6cb6c4a28444`, boot artifact `f85ad5b3-7886-43a6-bdb2-85b5ff015e49`, flashable artifact `11491810-168b-4e5b-b143-f778d506e1b8`.

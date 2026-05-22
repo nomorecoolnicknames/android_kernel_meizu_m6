@@ -1718,6 +1718,16 @@ int dpmgr_wait_event_timeout(disp_path_handle dp_handle, DISP_PATH_EVENT event, 
 		if (ret == 0) {
 			DISPERR("wait %s timeout on scenario %s\n", path_event_name(event),
 				   ddp_get_scenario_name(handle->scenario));
+			DISPERR("M6 clean MTK diag: VALID_0=0x%x READY_0=0x%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x UFOE_SEL=0x%x SW0_RST=0x%x MMSYS_CG=0x%x\n",
+				DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+				DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+				DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_MOUT_EN),
+				DISP_REG_CONFIG_DISP_COLOR0_SEL_IN ? DISP_REG_GET(DISP_REG_CONFIG_DISP_COLOR0_SEL_IN) : 0,
+				DISP_REG_GET(DISP_REG_CONFIG_DISP_DITHER_MOUT_EN),
+				DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+				DISP_REG_GET(DISP_REG_CONFIG_DISP_UFOE_SEL_IN),
+				DISP_REG_GET(DISP_REG_CONFIG_MMSYS_SW0_RST_B),
+				DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 			/* dpmgr_check_status(dp_handle); */
 		} else if (ret < 0) {
 			DISPERR("wait %s interrupt by other timeleft %d on scenario %s\n",
