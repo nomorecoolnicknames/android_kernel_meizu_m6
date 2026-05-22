@@ -66,13 +66,37 @@ static DEFINE_MUTEX(binder_mmap_lock);
 static HLIST_HEAD(binder_procs);
 static HLIST_HEAD(binder_deferred_list);
 static HLIST_HEAD(binder_dead_nodes);
+static HLIST_HEAD(binder_devices);
 
 static struct dentry *binder_debugfs_dir_entry_root;
 static struct dentry *binder_debugfs_dir_entry_proc;
-static struct binder_node *binder_context_mgr_node;
-static kuid_t binder_context_mgr_uid = INVALID_UID;
 static int binder_last_id;
 static struct workqueue_struct *binder_deferred_workqueue;
+
+struct binder_node;
+
+struct binder_context {
+	struct binder_node *binder_context_mgr_node;
+	kuid_t binder_context_mgr_uid;
+	const char *name;
+};
+
+struct binder_device {
+	struct hlist_node hlist;
+	struct miscdevice miscdev;
+	struct binder_context context;
+};
+
+static bool binder_is_context_mgr_node(struct binder_node *node)
+{
+	struct binder_device *device;
+
+	hlist_for_each_entry(device, &binder_devices, hlist) {
+		if (device->context.binder_context_mgr_node == node)
+			return true;
+	}
+	return false;
+}
 
 #define RT_PRIO_INHERIT			"v1.7"
 #ifdef RT_PRIO_INHERIT
@@ -470,6 +494,7 @@ enum wait_on_reason {
 
 struct binder_proc {
 	struct hlist_node proc_node;
+	struct binder_context *context;
 	struct rb_root threads;
 	struct rb_root nodes;
 	struct rb_root refs_by_desc;
@@ -1986,7 +2011,7 @@ static int binder_inc_node(struct binder_node *node, int strong, int internal,
 		if (internal) {
 			if (target_list == NULL &&
 			    node->internal_strong_refs == 0 &&
-			    !(node == binder_context_mgr_node && node->has_strong_ref)) {
+			    !(binder_is_context_mgr_node(node) && node->has_strong_ref)) {
 				pr_err("invalid inc strong node for %d\n", node->debug_id);
 				return -EINVAL;
 			}
@@ -2103,7 +2128,7 @@ static struct binder_ref *binder_get_ref_for_node(struct binder_proc *proc,
 	rb_link_node(&new_ref->rb_node_node, parent, p);
 	rb_insert_color(&new_ref->rb_node_node, &proc->refs_by_node);
 
-	new_ref->desc = (node == binder_context_mgr_node) ? 0 : 1;
+	new_ref->desc = (node == proc->context->binder_context_mgr_node) ? 0 : 1;
 	for (n = rb_first(&proc->refs_by_desc); n != NULL; n = rb_next(n)) {
 		ref = rb_entry(n, struct binder_ref, rb_node_desc);
 		if (ref->desc > new_ref->desc)
@@ -2600,7 +2625,7 @@ static void binder_transaction(struct binder_proc *proc,
 			}
 			target_node = ref->node;
 		} else {
-			target_node = binder_context_mgr_node;
+			target_node = proc->context->binder_context_mgr_node;
 			if (target_node == NULL) {
 #ifdef MTK_BINDER_DEBUG
 				binder_user_error("%d:%d binder_context_mgr_node is NULL\n",
@@ -2828,7 +2853,7 @@ static void binder_transaction(struct binder_proc *proc,
 					}
 
 					if (t->code == ADD_SERVICE_CODE &&
-						target_node == binder_context_mgr_node &&
+						target_node == proc->context->binder_context_mgr_node &&
 						tr->data_size > SERVICE_NAME_OFFSET) {
 						len = *((u32*)(t->buffer->data + SERVICE_NAME_OFFSET));
 
@@ -3194,10 +3219,10 @@ static int binder_thread_write(struct binder_proc *proc,
 			if (get_user_preempt_disabled(target, (uint32_t __user *) ptr))
 				return -EFAULT;
 			ptr += sizeof(uint32_t);
-			if (target == 0 && binder_context_mgr_node &&
+			if (target == 0 && proc->context->binder_context_mgr_node &&
 				(cmd == BC_INCREFS || cmd == BC_ACQUIRE)) {
 				ref = binder_get_ref_for_node(proc,
-								binder_context_mgr_node);
+								proc->context->binder_context_mgr_node);
 				if (ref->desc != target) {
 					binder_user_error("%d:%d tried to acquire reference to desc 0, got %d instead\n",
 					proc->pid, thread->pid,
@@ -4307,37 +4332,37 @@ static int binder_ioctl_set_ctx_mgr(struct file *filp, struct binder_thread
 	struct binder_proc *proc = filp->private_data;
 	kuid_t curr_euid = current_euid();
 
-	if (binder_context_mgr_node != NULL) {
+	if (proc->context->binder_context_mgr_node != NULL) {
 		pr_err("BINDER_SET_CONTEXT_MGR already set\n");
 		ret = -EBUSY;
 		goto out;
 	}
 
-	if (uid_valid(binder_context_mgr_uid)) {
-		if (!uid_eq(binder_context_mgr_uid, curr_euid)) {
+	if (uid_valid(proc->context->binder_context_mgr_uid)) {
+		if (!uid_eq(proc->context->binder_context_mgr_uid, curr_euid)) {
 			pr_err("BINDER_SET_CONTEXT_MGR bad uid %d != %d\n",
 			       from_kuid(&init_user_ns, curr_euid),
-			       from_kuid(&init_user_ns, binder_context_mgr_uid));
+			       from_kuid(&init_user_ns, proc->context->binder_context_mgr_uid));
 			ret = -EPERM;
 			goto out;
 		}
 	} else {
-		binder_context_mgr_uid = curr_euid;
+		proc->context->binder_context_mgr_uid = curr_euid;
 	}
-	binder_context_mgr_node = binder_new_node(proc, 0, 0);
-	if (binder_context_mgr_node == NULL) {
+	proc->context->binder_context_mgr_node = binder_new_node(proc, 0, 0);
+	if (proc->context->binder_context_mgr_node == NULL) {
 		ret = -ENOMEM;
 		goto out;
 	}
 #ifdef BINDER_MONITOR
-	strcpy(binder_context_mgr_node->name, "servicemanager");
+	strcpy(proc->context->binder_context_mgr_node->name, "servicemanager");
 	pr_debug("%d:%d set as servicemanager uid %d\n",
-		 proc->pid, thread->pid, __kuid_val(binder_context_mgr_uid));
+		 proc->pid, thread->pid, __kuid_val(proc->context->binder_context_mgr_uid));
 #endif
-	binder_context_mgr_node->local_weak_refs++;
-	binder_context_mgr_node->local_strong_refs++;
-	binder_context_mgr_node->has_strong_ref = 1;
-	binder_context_mgr_node->has_weak_ref = 1;
+	proc->context->binder_context_mgr_node->local_weak_refs++;
+	proc->context->binder_context_mgr_node->local_strong_refs++;
+	proc->context->binder_context_mgr_node->has_strong_ref = 1;
+	proc->context->binder_context_mgr_node->has_weak_ref = 1;
 out:
 	return ret;
 }
@@ -4426,33 +4451,33 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 		break;
 	case BINDER_SET_CONTEXT_MGR:
-		if (binder_context_mgr_node != NULL) {
-			pr_err("BINDER_SET_CONTEXT_MGR already set\n");
+		if (proc->context->binder_context_mgr_node != NULL) {
+			pr_err("BINDER_SET_CONTEXT_MGR already set for %s\n", proc->context->name);
 			ret = -EBUSY;
 			goto err;
 		}
 		ret = security_binder_set_context_mgr(proc->tsk);
 		if (ret < 0)
 			goto err;
-		if (uid_valid(binder_context_mgr_uid)) {
-			if (!uid_eq(binder_context_mgr_uid, current->cred->euid)) {
+		if (uid_valid(proc->context->binder_context_mgr_uid)) {
+			if (!uid_eq(proc->context->binder_context_mgr_uid, current->cred->euid)) {
 				pr_err("BINDER_SET_CONTEXT_MGR bad uid %d != %d\n",
 					from_kuid(&init_user_ns, current->cred->euid),
-					from_kuid(&init_user_ns, binder_context_mgr_uid));
+					from_kuid(&init_user_ns, proc->context->binder_context_mgr_uid));
 				ret = -EPERM;
 				goto err;
 			}
 		} else
-			binder_context_mgr_uid = current->cred->euid;
-		binder_context_mgr_node = binder_new_node(proc, 0, 0);
-		if (binder_context_mgr_node == NULL) {
+			proc->context->binder_context_mgr_uid = current->cred->euid;
+		proc->context->binder_context_mgr_node = binder_new_node(proc, 0, 0);
+		if (proc->context->binder_context_mgr_node == NULL) {
 			ret = -ENOMEM;
 			goto err;
 		}
-		binder_context_mgr_node->local_weak_refs++;
-		binder_context_mgr_node->local_strong_refs++;
-		binder_context_mgr_node->has_strong_ref = 1;
-		binder_context_mgr_node->has_weak_ref = 1;
+		proc->context->binder_context_mgr_node->local_weak_refs++;
+		proc->context->binder_context_mgr_node->local_strong_refs++;
+		proc->context->binder_context_mgr_node->has_strong_ref = 1;
+		proc->context->binder_context_mgr_node->has_weak_ref = 1;
 		break;
 	case BINDER_THREAD_EXIT:
 		binder_debug(BINDER_DEBUG_THREADS, "%d:%d exit\n", proc->pid, thread->pid);
@@ -4639,6 +4664,7 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	proc = kzalloc(sizeof(*proc), GFP_KERNEL);
 	if (proc == NULL)
 		return -ENOMEM;
+	proc->context = &container_of(filp->private_data, struct binder_device, miscdev)->context;
 	get_task_struct(current);
 	proc->tsk = current;
 	proc->vma_vm_mm = current->mm;
@@ -4802,10 +4828,10 @@ static void binder_deferred_release(struct binder_proc *proc)
 
 	hlist_del(&proc->proc_node);
 
-	if (binder_context_mgr_node && binder_context_mgr_node->proc == proc) {
+	if (proc->context->binder_context_mgr_node && proc->context->binder_context_mgr_node->proc == proc) {
 		binder_debug(BINDER_DEBUG_DEAD_BINDER,
-			     "%s: %d context_mgr_node gone\n", __func__, proc->pid);
-		binder_context_mgr_node = NULL;
+			     "%s: %d %s context_mgr_node gone\n", __func__, proc->pid, proc->context->name);
+		proc->context->binder_context_mgr_node = NULL;
 	}
 
 	threads = 0;
@@ -5520,11 +5546,31 @@ static const struct file_operations binder_fops = {
 	.release = binder_release,
 };
 
-static struct miscdevice binder_miscdev = {
-	.minor = MISC_DYNAMIC_MINOR,
-	.name = "binder",
-	.fops = &binder_fops
-};
+static int __init init_binder_device(const char *name)
+{
+	int ret;
+	struct binder_device *binder_device;
+
+	binder_device = kzalloc(sizeof(*binder_device), GFP_KERNEL);
+	if (!binder_device)
+		return -ENOMEM;
+
+	binder_device->miscdev.minor = MISC_DYNAMIC_MINOR;
+	binder_device->miscdev.name = name;
+	binder_device->miscdev.fops = &binder_fops;
+	binder_device->context.binder_context_mgr_uid = INVALID_UID;
+	binder_device->context.name = name;
+
+	ret = misc_register(&binder_device->miscdev);
+	if (ret < 0) {
+		pr_err("failed to register binder device %s: %d\n", name, ret);
+		kfree(binder_device);
+		return ret;
+	}
+
+	hlist_add_head(&binder_device->hlist, &binder_devices);
+	return 0;
+}
 
 #ifdef BINDER_MONITOR
 static int binder_log_level_show(struct seq_file *m, void *unused)
@@ -5827,7 +5873,16 @@ static int __init binder_init(void)
 	if (binder_debugfs_dir_entry_root)
 		binder_debugfs_dir_entry_proc = debugfs_create_dir("proc",
 								   binder_debugfs_dir_entry_root);
-	ret = misc_register(&binder_miscdev);
+	ret = init_binder_device("binder");
+	if (ret)
+		return ret;
+	ret = init_binder_device("hwbinder");
+	if (ret)
+		return ret;
+	ret = init_binder_device("vndbinder");
+	if (ret)
+		return ret;
+
 	if (binder_debugfs_dir_entry_root) {
 		debugfs_create_file("state",
 				    S_IRUGO,

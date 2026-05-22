@@ -358,3 +358,46 @@ adb devices
 grep -R -n -E 'mount_all /fstab.mt6735|Parsing file init.mt6755.usb.rc|ffs_data_put|cannot find .*/sbin/sh|starting service .adbd.|sys.usb.state|android_usb gadget' <next-capture>/evidence
 ```
 
+## 2026-05-22 LOS15 source-kernel binder device boot image
+
+FACT: Live mini capture `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-initfix-v2/m6nOREO.tar.gz` has sha256 `8e70c82679b25f8cd9dcd2d38be5b9a17ed4286833483058dba51f88b066ae65`. Runtime reached Android 8.1 ADB with `init.svc.adbd=running`, but `surfaceflinger=stopped`, `zygote=stopped`, `zygote_secondary=stopped`, and `hwservicemanager` was unstable.
+
+FACT: The same capture's logcat repeatedly contains `Opening '/dev/hwbinder' failed: No such file or directory`, `Opening '/dev/vndbinder' failed: No such file or directory`, and `hwservicemanager: Failed to aquire binder FD. Aborting...`. It also contains the later display symptom `SurfaceFlinger: ERROR: failed to open framebuffer (Invalid argument), aborting`.
+
+FACT: The LOS15 initfix-v2 ramdisk already labels and permissions `/dev/binder`, `/dev/hwbinder`, and `/dev/vndbinder` in `ueventd.rc`; the running source kernel only registered the legacy `/dev/binder` misc device.
+
+INFERENCE: The earliest proven framework blocker is missing kernel binder device nodes for Oreo HIDL/vendor binder. Fixing `/dev/hwbinder` and `/dev/vndbinder` should stabilize `hwservicemanager` and HAL registration before the display framebuffer error becomes the next frontier.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-22: add per-device binder contexts for `/dev/binder`, `/dev/hwbinder`, and `/dev/vndbinder`, rebuild source kernel, and repack with the known ADB-working LOS15 initfix-v2 ramdisk.
+
+Hypothesis: Android 8.1 userspace is stalled before stable framework/service startup because the 3.18.140 MTK binder driver exposes only `/dev/binder`. Registering `hwbinder` and `vndbinder` as additional binder misc devices with separate context-manager state should let `hwservicemanager`, `vndservicemanager`, and HIDL clients acquire binder FDs instead of aborting.
+
+Evidence: capture/log facts above; ramdisk `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-initfix-v2/ramdisk-los15-initfix-v2.img` sha256 `51292bd1c0382528ed463e3f1771e73e687e0085982370b146ad73f9a4fbfea5` has `/dev/hwbinder` and `/dev/vndbinder` ueventd entries; source kernel build log `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-devices-v1/source-kernel-binder-devices-v1-build.log` completes with `CAT arch/arm64/boot/Image.gz-dtb`.
+
+Files changed: `kernel-3.18/drivers/staging/android/binder.c` adds `struct binder_device`, per-device `struct binder_context`, per-open context selection, context-manager state per binder device, and registration of `binder`, `hwbinder`, and `vndbinder`. `BRINGUP_STATE.md` records this patch cycle. Existing dirty display/DDP files are not part of this binder fix.
+
+Why each file changed: `binder.c` owns the missing kernel device nodes and must keep separate context managers so `/dev/binder`, `/dev/hwbinder`, and `/dev/vndbinder` do not fight for servicemanager state. The state file is required so the next capture can verify artifact identity before reading logs.
+
+Expected next marker: next capture must hash/trim flashed boot to sha256 `aec3c4dfe13766964c021d3cb7a6f97333c02585bfa57c3916707ee7f8875e7d`. If the hypothesis is correct, `/dev/hwbinder` and `/dev/vndbinder` exist, `Opening '/dev/hwbinder' failed` disappears, `hwservicemanager` no longer loops on missing binder FD, and the next remaining blocker is likely the existing `SurfaceFlinger: ERROR: failed to open framebuffer (Invalid argument)` display path.
+
+Rollback condition: If a verified capture with boot sha256 `aec3c4dfe13766964c021d3cb7a6f97333c02585bfa57c3916707ee7f8875e7d` still has no `/dev/hwbinder` or `/dev/vndbinder`, inspect binder init/registration and ramdisk uevent timing before touching display. If binder devices exist but `hwservicemanager` fails differently, keep the binder patch and move to the new first error. If boot regresses before ADB, revert only this binder patch and compare `binder.o` plus initcall logs.
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-devices-v1/boot-los15-source-kernel-binder-devices-v1.img` sha256 `aec3c4dfe13766964c021d3cb7a6f97333c02585bfa57c3916707ee7f8875e7d`, size `9449472`; kernel payload `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-devices-v1/Image-binder-devices-v1.gz-dtb` sha256 `cefa9edcad1864163297093941fbb65651191ff91a175627041893e0310f2112`; System.map sha256 `73665c343bd841234db4266a71898809c0a647b5d57271e69991e005e1b66f92`; config sha256 `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`. Build Station build `05e1de44-4a62-4430-aaf3-b1148d93450a`, boot artifact `19301203-dc01-43c9-9dff-4628b5dc3839`, log artifact `4934ac18-ae34-4365-aef1-37eed05fbfb5`.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-devices-v1/SHA256SUMS
+abootimg -i /srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-devices-v1/boot-los15-source-kernel-binder-devices-v1.img
+strings /home/n8n/forge-work/rom-b969cd04-32e2-4375-aaa9-c9d3b8655524/source-kernel/drivers/staging/android/binder.o | grep -E '^binder$|^hwbinder$|^vndbinder$|failed to register binder device'
+# Next capture identity:
+python3 - <<'PY2'
+from pathlib import Path
+import hashlib
+cap = Path('<next-capture>/evidence/adb/mtk/partitions/boot-partition-16m.img').read_bytes()
+expected = Path('/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-devices-v1/boot-los15-source-kernel-binder-devices-v1.img').read_bytes()
+print(hashlib.sha256(cap[:len(expected)]).hexdigest())
+print(cap[:len(expected)] == expected)
+PY2
+grep -R -n -E '/dev/(hw|vnd)?binder|Opening .*/dev/hwbinder|Opening .*/dev/vndbinder|hwservicemanager: Failed to aquire binder FD|init.svc.hwservicemanager|SurfaceFlinger: ERROR: failed to open framebuffer' <next-capture>/evidence
+```
