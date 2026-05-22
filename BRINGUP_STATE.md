@@ -401,3 +401,87 @@ print(cap[:len(expected)] == expected)
 PY2
 grep -R -n -E '/dev/(hw|vnd)?binder|Opening .*/dev/hwbinder|Opening .*/dev/vndbinder|hwservicemanager: Failed to aquire binder FD|init.svc.hwservicemanager|SurfaceFlinger: ERROR: failed to open framebuffer' <next-capture>/evidence
 ```
+
+
+## 2026-05-22 LOS15 source-kernel binder SG transaction boot image
+
+FACT: Debug run `371b9f40` / capture linked to build `05e1de44-4a62-4430-aaf3-b1148d93450a` verified the flashed `binder-devices-v1` boot image by trimmed boot hash `aec3c4dfe13766964c021d3cb7a6f97333c02585bfa57c3916707ee7f8875e7d`. ADB was online on Android 8.1, `/dev/hwbinder` and `/dev/vndbinder` existed, and `Opening '/dev/hwbinder' failed` was gone.
+
+FACT: The same fresh LOS15 capture still had `sys.boot_completed=false` and framework/HAL loops. The earliest new binder-specific failure in logcat was `binder: unknown command 1078485777`, where `1078485777 == 0x40486311 == BC_TRANSACTION_SG`, followed by HIDL service registration failures such as allocator/cas returning `-2147483648`. Later symptoms included `SurfaceFlinger: ERROR: failed to open framebuffer (Invalid argument), aborting`.
+
+INFERENCE: The previous binder-device patch moved the frontier from missing `/dev/hwbinder`/`/dev/vndbinder` to Oreo scatter-gather binder protocol support. Android 8.1 userspace now reaches HIDL binder clients, but the 3.18 binder driver rejects `BC_TRANSACTION_SG`, so HAL/service startup cannot stabilize.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-22: add Oreo binder scatter-gather transaction support and repack with the known ADB-working LOS15 initfix-v2 ramdisk.
+
+Hypothesis: Android 8.1 userspace is blocked because the legacy 3.18 binder driver lacks `BC_TRANSACTION_SG` / `BC_REPLY_SG` and the matching `binder_transaction_data_sg` object-buffer handling. Backporting the Oreo binder SG command surface should remove the `unknown command 1078485777` loop and let HIDL services progress to the next real framework or display blocker.
+
+Evidence: verified prior boot image sha256 `aec3c4dfe13766964c021d3cb7a6f97333c02585bfa57c3916707ee7f8875e7d`; debug run `371b9f40` fresh runtime identity matched build `05e1de44-4a62-4430-aaf3-b1148d93450a`; logcat contained `binder: unknown command 1078485777` after hwbinder/vndbinder devices were present. Local build log `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-v1/source-kernel-binder-sg-v1-build.log` completes with `CAT arch/arm64/boot/Image.gz-dtb`.
+
+Files changed: `kernel-3.18/drivers/staging/android/binder.c` adds SG transaction command handling, extra object-buffer allocation/copy, `BINDER_TYPE_PTR` and `BINDER_TYPE_FDA` object validation, parent fixups, FD-array translation/release, and stats/string coverage. `kernel-3.18/drivers/staging/android/uapi/binder.h` adds the Oreo UAPI constants and `struct binder_transaction_data_sg`. `BRINGUP_STATE.md` records this patch cycle. Existing dirty DDP/display files are not part of this binder fix.
+
+Why each file changed: `binder.c` owns the kernel protocol decoder that rejected command `0x40486311`; it must understand SG transactions before userspace HIDL clients can register services. `binder.h` must expose the exact command and object types used by Android 8.1 userspace so kernel and userspace layouts match. The state file is required so the next capture can verify artifact identity before reading logs.
+
+Expected next marker: next capture must hash/trim flashed boot to sha256 `ba85181c66d2c6540d2b982d52dee90ba4b58a26ffd54181a30395089ac5bf9c`. If the hypothesis is correct, `binder: unknown command 1078485777` disappears and allocator/cas/hwservicemanager move past the `-2147483648` registration failure. If framework then still loops, the next likely proven frontier is the existing framebuffer open `EINVAL` from SurfaceFlinger/display.
+
+Rollback condition: If a verified capture with boot sha256 `ba85181c66d2c6540d2b982d52dee90ba4b58a26ffd54181a30395089ac5bf9c` regresses before ADB/init, revert only this SG patch and compare binder init logs. If `unknown command 1078485777` remains, reject the artifact identity or inspect the built `binder.o` command table before touching display. If the command disappears but display still fails, keep the binder patch and move to framebuffer/DDP evidence.
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-v1/boot-los15-source-kernel-binder-sg-v1.img` sha256 `ba85181c66d2c6540d2b982d52dee90ba4b58a26ffd54181a30395089ac5bf9c`, size `9469952`; kernel payload `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-v1/Image-binder-sg-v1.gz-dtb` sha256 `a85f3ae7636187ca65eefcd259b89d76a72ed007ad150ebe6ee720293ffd4368`; System.map sha256 `fd7d0ceef1faaba8f48c87c1f6ea9dd7f53920181e01d8c9bc6ab7623e5fb348`; config sha256 `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`; ramdisk sha256 `51292bd1c0382528ed463e3f1771e73e687e0085982370b146ad73f9a4fbfea5`.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-v1/SHA256SUMS
+abootimg -i /srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-v1/boot-los15-source-kernel-binder-sg-v1.img
+# Next capture identity:
+python3 - <<'PY2'
+from pathlib import Path
+import hashlib
+cap = Path('<next-capture>/evidence/adb/mtk/partitions/boot-partition-16m.img').read_bytes()
+expected = Path('/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-v1/boot-los15-source-kernel-binder-sg-v1.img').read_bytes()
+print(hashlib.sha256(cap[:len(expected)]).hexdigest())
+print(cap[:len(expected)] == expected)
+PY2
+grep -R -n -E 'binder: unknown command 1078485777|BC_TRANSACTION_SG|Unable to register allocator service|Error while registering cas service|hwservicemanager|SurfaceFlinger: ERROR: failed to open framebuffer|sys.boot_completed' <next-capture>/evidence
+```
+
+
+## 2026-05-22 LOS15 binder SG verified; next boot uses default gralloc framebuffer fallback
+
+FACT: Fresh debug evidence `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/870a1516-3aa5-43fc-8c1f-504749c3085f/browser-debug-evidence-1779460071340.tar` has sha256 `fd54ea11af528e20a522284cffd366b63aa10267749f8b4357c109810d18f3e2`. The captured boot partition trimmed to the tested image matches `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-v1/boot-los15-source-kernel-binder-sg-v1.img` sha256 `ba85181c66d2c6540d2b982d52dee90ba4b58a26ffd54181a30395089ac5bf9c`.
+
+FACT: Runtime is Android 8.1 / SDK 27 with ADB online, `init.svc.adbd=running`, `init.svc.hwservicemanager=running`, `init.svc.vndservicemanager=running`, `hwservicemanager.ready=true`, `init.svc.surfaceflinger=restarting`, and `sys.boot_completed` empty. The previous `binder: unknown command 1078485777` and HIDL allocator `-2147483648` blocker is absent from this capture.
+
+FACT: The earliest remaining system-start blocker is SurfaceFlinger display init. Logcat shows `/vendor/lib64/hw/hwcomposer.mt6750.so` fails to load because it cannot locate symbol `_ZN7android11BufferQueue17createBufferQueueEPNS_2spINS_22IGraphicBufferProducerEEEPNS1_INS_22IGraphicBufferConsumerEEERKNS1_INS_19IGraphicBufferAllocEEE`, then SurfaceFlinger reports `hwcomposer module not found` and aborts on `ERROR: failed to open framebuffer (Invalid argument)`. Kernel fb0 exists as `mtkfb`, mode `720x1280`, `bits_per_pixel=32`, virtual size `736,3840`, but display IRQs remain near zero.
+
+INFERENCE: The binder SG patch succeeded and should stay. The next boot-unblock should avoid the incompatible stock MTK HWC HAL and force the AOSP framebuffer/gralloc path so zygote/system_server can stop being killed by SurfaceFlinger restarts. This is a userspace HAL selection test; it is not a kernel display proper-fix.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-22: repack the verified binder-SG kernel with LOS15 initfix-v2 ramdisk forcing AOSP gralloc/default framebuffer fallback and disabling the stock MTK HWC module.
+
+Hypothesis: Android 8.1 cannot complete boot because the stock `hwcomposer.mt6750.so` is ABI-incompatible with Oreo SurfaceFlinger and aborts before a stable display service exists. Forcing `ro.hardware.gralloc=default`, `ro.hardware.hwcomposer=none`, and `debug.sf.disable_hwc=1` in the ramdisk should bypass the bad HWC and make SurfaceFlinger use the AOSP fbdev/gralloc path. If fbdev still returns `EINVAL`, the next blocker is kernel framebuffer var/ioctl compatibility rather than HWC linkage.
+
+Evidence: verified capture facts above; source code in `hardware/libhardware/hardware.c` checks `ro.hardware.<class>` before platform variants, so ramdisk properties can redirect module selection without rebuilding system. The new image keeps the exact binder-SG kernel payload sha256 `a85f3ae7636187ca65eefcd259b89d76a72ed007ad150ebe6ee720293ffd4368` and changes only ramdisk properties.
+
+Files changed: no kernel source changed for this artifact-only cycle; generated ramdisk `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-gfxfb-v1/ramdisk-los15-initfix-v2-gfxfb.img`; generated boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-gfxfb-v1/boot-los15-source-kernel-binder-sg-gfxfb-v1.img`; `BRINGUP_STATE.md` records this next route.
+
+Why each file changed: ramdisk `default.prop` now selects `gralloc.default`, avoids the incompatible `hwcomposer.mt6750`, and keeps the ADB/initfix-v2 properties; boot image packages those properties with the already verified binder-SG kernel. The state file preserves the identity and next verification requirements.
+
+Expected next marker: next capture must hash/trim flashed boot to sha256 `82ef5de38bcd5b7f52feec93d902183aec04b540ac60781f2039634454d9cf98`. If the hypothesis is correct, logcat no longer contains the `BufferQueue::createBufferQueue` HWC dlopen failure and SurfaceFlinger no longer restarts. If it still aborts with framebuffer `EINVAL`, inspect `FBIOPUT_VSCREENINFO` / `mtkfb_check_var` / fbdev var screeninfo next.
+
+Rollback condition: If verified boot sha256 `82ef5de38bcd5b7f52feec93d902183aec04b540ac60781f2039634454d9cf98` regresses before ADB or binder/HIDL service stability, revert to `ba85181c...` and treat the ramdisk HAL selection as bad. If only HWC is bypassed but fbdev still fails, keep the binder SG source patch and move to framebuffer ioctl/kernel compatibility.
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-gfxfb-v1/boot-los15-source-kernel-binder-sg-gfxfb-v1.img` sha256 `82ef5de38bcd5b7f52feec93d902183aec04b540ac60781f2039634454d9cf98`, size `9467904`; ramdisk sha256 `dc95b46764acd2814c6de56099eef4c426156eb9e33789a112b2aeede7b484e7`; kernel payload sha256 `a85f3ae7636187ca65eefcd259b89d76a72ed007ad150ebe6ee720293ffd4368`; System.map sha256 `fd7d0ceef1faaba8f48c87c1f6ea9dd7f53920181e01d8c9bc6ab7623e5fb348`; config sha256 `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-gfxfb-v1/SHA256SUMS
+python3 - <<'PY2'
+from pathlib import Path
+import hashlib
+cap = Path('<next-capture>/evidence/adb/mtk/partitions/boot-partition-16m.img').read_bytes()
+expected = Path('/srv/forge/android/export/meizu_m6_artifacts/20260522-los15-source-kernel-binder-sg-gfxfb-v1/boot-los15-source-kernel-binder-sg-gfxfb-v1.img').read_bytes()
+print(hashlib.sha256(cap[:len(expected)]).hexdigest())
+print(cap[:len(expected)] == expected)
+PY2
+grep -R -n -E 'BufferQueue17createBufferQueue|hwcomposer.mt6750|hwcomposer module not found|failed to open framebuffer|SurfaceFlinger is starting|init.svc.surfaceflinger|sys.boot_completed|FBIOPUT|mtkfb_check_var' <next-capture>/evidence
+```
