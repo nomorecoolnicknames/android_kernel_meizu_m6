@@ -315,3 +315,46 @@ print(cap[:len(expected)] == expected)
 PY2
 grep -R -n -E 'init.svc.adbd|sys.usb.(config|state|configfs)|Service .adbd|android_usb|musb|cmode' <next-capture>/evidence
 ```
+
+## 2026-05-22 recovery capture 1779453120821: adbfix still has broken init sequencing
+
+FACT: Recovery capture `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/b6376b9b-3379-46cc-8caf-30b91f85aa36/browser-debug-evidence-1779453120821.tar` has archive sha256 `d040959630a9fcdac0a201a89fa77b2a6ea312047e93d13809c37ae0059aa371` and was extracted locally at `/tmp/m6-1779453120821`.
+
+FACT: The recovery-side identity is stock recovery kernel `Linux version 3.18.35+ ... Sat Nov 18 16:44:53 CST 2017`, `bootmode=recovery`, `bootreason=power_key`. The Android-failed signal is pstore/last_kmsg only.
+
+FACT: The capture could not hash the boot partition image identity: `mtk/boot_candidate_rejected.txt` says `/dev/block/mmcblk0p21` is missing Android boot magic at offset 0 or 512. Therefore the exact flashed boot image is not proven from this capture.
+
+FACT: Pstore/last_kmsg shows the source kernel reaches init and runs for at least 43 seconds. USB gadget initializes at `3.792704` with `android_usb gadget: android_usb ready`.
+
+FACT: The ramdisk content shown by pstore is still the broken LOS15 adbfix init sequence, not the post-analysis initfix-v2 sequence: `/init.rc` runs `mount_all /fstab.mt6735` and fails; `/system/etc/init` is parsed before `/system` is mounted; `init.project.rc` imports `init.mt6755.usb.rc` a second time; the second FunctionFS mount frees ffs and fails; `meizu-detect` still points to `/sbin/sh`; `logd`, `servicemanager`, `hwservicemanager`, and `vndservicemanager` are not found when started.
+
+INFERENCE: ADB is absent because init never reaches a coherent Android service graph. Kernel USB is present, but userspace starts with wrong fs/mount/import ordering and duplicate USB init, so `adbd` is not observed as started before the boot hangs.
+
+REJECTED: Treating this as a kernel USB regression is rejected for this capture. The kernel has `android_usb ready`; the earlier proven failure is userspace init sequencing. Also, boot image identity was not captured, so any kernel-level conclusion would be weaker than the init log evidence.
+
+HYPOTHESIS: A boot image with the same source kernel payload but a repaired LOS15 ramdisk should recover the ADB path or at least move the next capture past `mount_all /fstab.mt6735` and duplicate FunctionFS failure.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-22: rebuild boot.img only with source kernel + LOS15 ramdisk init sequencing fix + early legacy ADB.
+
+Hypothesis: The previous ADB-fix boot kept the source 3.18.140 kernel but left LOS15 init broken by a wrong m2note `/fstab.mt6735` block, duplicate `init.mt6755.usb.rc` import, and `/sbin/sh` service path. Removing those blockers and forcing early legacy `android_usb` ADB should let the same kernel expose ADB or the next framework/display frontier.
+
+Evidence: Capture `1779453120821` pstore lines show `mount_all /fstab.mt6735`, duplicate `init.mt6755.usb.rc`, failed duplicate FunctionFS mount, missing `/system/etc/init` before system mount, `Service logd not found`, `Service servicemanager not found`, `Service hwservicemanager not found`, `Service vndservicemanager not found`, and `cannot find '/sbin/sh', disabling 'meizu-detect'`. Kernel-side USB shows `android_usb gadget: android_usb ready`.
+
+Files changed: no kernel source changed for this patch cycle; generated ramdisk `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-initfix-v2/ramdisk-los15-initfix-v2.img`; generated boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-initfix-v2/boot-source-readonly-ddp-diag-los15-initfix-v2.img`; Build Station build `f2cb41b1-aa8f-4247-b947-e9cb6da87d66`, boot artifact `f647f136-ec07-41e0-bffc-2c75fd4f4f3f`.
+
+Why each file changed: `init.rc` no longer carries the wrong m2note `/fstab.mt6735` manual mount block; `init.project.rc` no longer imports `init.mt6755.usb.rc` a second time; `init.meizu_mt675x.rc` starts `meizu-detect` with `/system/bin/sh`; `init.mt6755.usb.rc` adds early non-configfs `/sys/class/android_usb/android0` ADB setup and starts `adbd`; the boot image preserves the source kernel payload sha256 `ec204ae9c47312a31f2910e00db71e65dfd3e0d48ace0367ad1803bafc7fb0c9`.
+
+Expected next marker: next capture must either hash/trim the flashed boot to sha256 `34a365473cef73f08246f97b195e6815d436f3712b1be0be4e24eb5ea1bfc89f`, or at least pstore must no longer contain `mount_all /fstab.mt6735`, duplicate `Parsing file init.mt6755.usb.rc`, or `cannot find '/sbin/sh', disabling 'meizu-detect'`. Desired ADB markers are `starting service 'adbd'`, `init.svc.adbd=running`, and `sys.usb.state=adb`.
+
+Rollback condition: If a verified capture with boot sha256 `34a365473cef73f08246f97b195e6815d436f3712b1be0be4e24eb5ea1bfc89f` still shows the same broken init markers, reject this artifact as not actually flashed or inspect ramdisk packing. If those markers are gone but ADB is still absent, move to USB gadget/adbd SELinux/property trigger evidence instead of editing display.
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-initfix-v2/boot-source-readonly-ddp-diag-los15-initfix-v2.img` sha256 `34a365473cef73f08246f97b195e6815d436f3712b1be0be4e24eb5ea1bfc89f`, size `9447424`; ramdisk sha256 `51292bd1c0382528ed463e3f1771e73e687e0085982370b146ad73f9a4fbfea5`, size `1896976`; kernel payload sha256 `ec204ae9c47312a31f2910e00db71e65dfd3e0d48ace0367ad1803bafc7fb0c9`; boot header magic `ANDROID!`, page `2048`, kernel addr `0x40080000`, ramdisk addr `0x45000000`, tags addr `0x44000000`, OS version/patch encoded from `8.1.0 / 2021-10-05`.
+
+Verification commands:
+
+```bash
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-initfix-v2/boot-source-readonly-ddp-diag-los15-initfix-v2.img
+adb devices
+grep -R -n -E 'mount_all /fstab.mt6735|Parsing file init.mt6755.usb.rc|ffs_data_put|cannot find .*/sbin/sh|starting service .adbd.|sys.usb.state|android_usb gadget' <next-capture>/evidence
+```
+
