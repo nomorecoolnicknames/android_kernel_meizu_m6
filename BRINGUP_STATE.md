@@ -217,3 +217,57 @@ zip -T /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp
 unzip -p /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/m6-source-readonly-ddp-diag-bootonly-20260522-v2-extractfix-signed.zip boot.img | sha256sum
 docker exec android-forge-postgres-1 psql -U forge -d forge -c "select id, sha256, size_bytes, metadata->>'filename' from artifacts where id='5d80020e-22c3-4f42-9cbf-da8e13c659dc';"
 ```
+
+
+## 2026-05-22 fresh source-kernel LOS15 capture 6b174034
+
+FACT: Fresh capture `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/878abca6-e70a-4ae0-b5fb-2ce407070669/browser-debug-evidence-1779450514270.tar` has sha256 `f19fb1e1c9b49c09209d4e16f4963b7f793c7bbd928b76bb950983f04b3b7448`; Build Station test `6b174034-9baa-47af-8bd1-70e5f89f12c4` recorded `boot_state=adb_online`, `boot_completed=false`, `adb_reconnected=true`.
+
+FACT: Captured `/dev/block/mmcblk0p21` is the source readonly DDP diagnostic boot image, not stale 14.1/stock-kernel evidence. Full partition sha256 is `7db305d13cad844187ac93326a8a6de6c064f33926c1efd9ee5e6cb47a960c07`; trimming to the Android boot image length `9922560` matches `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/boot-source-readonly-ddp-diag-on-78c034cde8.img` sha256 `3071aa69097dffe6c3e3668d8ea4cda4ae3cb5135bddac497bd324d4655b6cbc`. It does not match the new LOS15-ramdisk boot image sha256 `9bbb03365e2be34fdd9fa53e4c87e1e9a586ea6c2b8c446c80bc992729c04a89`, which had not been tested yet.
+
+FACT: Runtime identity is `Linux version 3.18.140 ... #8 SMP PREEMPT Fri May 22 06:12:33 CDT 2026`, `ro.build.version.release=8.1.0`, `ro.lineage.version=15.1-UNOFFICIAL-meizu_m6`. The stale property `ro.forge.meizu.kernel=stock-7.1.2.0G-prebuilt-3.18.35` is rejected as ramdisk/system metadata, not flashed-kernel truth.
+
+FACT: Android userspace does not complete boot. `sys.boot_completed` is empty; `init.svc.surfaceflinger` is empty; `init.svc.logd=restarting`; `init.svc.keystore=restarting`; `init.svc.mediacodec` is unstable; `ril-daemon=stopped`. Pstore/last_kmsg repeats `Service 'zygote_secondary' ... exited with status 1`, `Service 'zygote' is being killed`, `Service 'logd' ... exited with status 1`, `Service 'keystore' ... exited with status 255`, plus permissive SELinux `unlabeled` accesses under `/system/vendor`.
+
+FACT: Display is registered but not lit. `/proc/fb` shows `0 mtkfb`; `/sys/class/graphics/fb0` reports `U:720x1280p-0`, bpp `32`, virtual `736,3840`, stride `2944`; lcd backlight brightness is `0/255`; display IRQ counts are near-zero (`mtk_cmdq 0/0/1`, `ovl0 1/0/0`, `rdma0 1/2/3`, `dsi0 0/1/0`). Live `dmesg` and `logcat` are not useful because `dmesg.txt` is effectively empty and `logd` is crashing.
+
+REJECTED: Treating the current scrcpy exception as display proof is rejected. Scrcpy fails after `IServiceManager.getService(...) on a null object reference` while zygote/logd/keystore are looping and `servicemanager`/SurfaceFlinger are not stably observable. That is framework/service-manager instability first, not proof of a specific DSI panel layer.
+
+INFERENCE: The earliest proven blocker for this capture is boot-image/ramdisk mismatch against LOS15 userspace. The source kernel itself reaches ADB and registers fb0, but the tested boot image used the older stock-parity/14.1-style ramdisk (`ramdisk-from-stock-78c034cde8.img` sha256 `9f281a9df3e766bf8cd9a31bd38468fc21b78cb026e98d34f8783d11a655186f`) with an Oreo 8.1 system. That mismatch is a stronger explanation for logd/keystore/zygote instability than another display register edit.
+
+HYPOTHESIS: Repacking the same verified source kernel payload (`Image-readonly-ddp-diag.gz-dtb` sha256 `ec204ae9c47312a31f2910e00db71e65dfd3e0d48ace0367ad1803bafc7fb0c9`) with the LOS15 boot ramdisk (`ramdisk-los15.img` sha256 `564c126547097d7b1e69bedfb4d7d16a2813e5d09abad01c2e72562572ed6dcb`) should remove the Oreo ramdisk/init mismatch and either reach stable SurfaceFlinger/logcat or expose the next kernel display frontier with usable logs.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-22: repackage the source readonly DDP diagnostic kernel with the LOS15 ramdisk and register it as a clean Build Station build.
+
+Hypothesis: The tested source-kernel boot image advanced to ADB but left Oreo userspace in a restart loop because it combined the 3.18.140 source kernel with the previous stock-parity/14.1 ramdisk. Reusing the same kernel payload with the LOS15 ramdisk should make init services coherent enough to debug the remaining black display as display, not as framework collapse.
+
+Evidence: capture/test/hash facts above; base LOS15 boot `/srv/forge/android/rom-lineage-15.1-meizu_m6-experimental/out/target/product/meizu_m6/boot.img` sha256 `895c2d0dc2e3caafbd5815c666cc6e657c54435332840ec1e77d76c9385da590`; extracted LOS15 ramdisk sha256 `564c126547097d7b1e69bedfb4d7d16a2813e5d09abad01c2e72562572ed6dcb`; tested old source boot sha256 `3071aa69097dffe6c3e3668d8ea4cda4ae3cb5135bddac497bd324d4655b6cbc` is exactly what capture boot partition contains.
+
+Files changed: no kernel source changed; `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-ramdisk/boot-source-readonly-ddp-diag-los15-ramdisk.img` is the new boot image; `m6-source-readonly-ddp-diag-los15-ramdisk-v1-extractfix-signed.zip` is the recovery flashable package using the proven v2 `extract_one` installer; Build Station DB now has build `e614a1ad-6d74-4e3e-893e-b6ab80035d08`, boot artifact `978d26fe-d7dc-473e-84bc-e8bfce2a4470`, and flashable artifact `4253894b-8615-4293-bf54-9f964f77d840`; this state file records the patch cycle.
+
+Why each file changed: the boot image changes only the ramdisk while preserving the source kernel payload and boot addresses; the zip package makes the image flashable from recovery without the prior `cannot extract boot.img` installer failure; the DB build prevents future debug identity checks from comparing the next capture against the old stock-ramdisk artifact.
+
+Expected next marker: next capture must show boot partition trimmed sha256 `9bbb03365e2be34fdd9fa53e4c87e1e9a586ea6c2b8c446c80bc992729c04a89`. If the hypothesis is correct, `logd` and `keystore` should stop persistent restart loops and either `init.svc.surfaceflinger` should become visible/running or logcat/dmesg should contain the next display failure. If the physical panel remains black with stable userspace, continue at display IRQ/backlight/DDP diagnostic frontier.
+
+Rollback condition: If a verified capture with boot sha256 `9bbb03365e2be34fdd9fa53e4c87e1e9a586ea6c2b8c446c80bc992729c04a89` still shows the same early zygote/logd/keystore loop and no useful logcat, reject ramdisk mismatch as sufficient and inspect LOS15 vendor/system ABI plus 64/32 zygote and linker/service crashes before another DDP behavior patch. If the new image regresses before ADB, compare the LOS15 ramdisk init/fstab/SELinux triggers against the old boot and add earlier boot markers rather than editing display registers blind.
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-ramdisk/boot-source-readonly-ddp-diag-los15-ramdisk.img` sha256 `9bbb03365e2be34fdd9fa53e4c87e1e9a586ea6c2b8c446c80bc992729c04a89`, size `8794112`, kernel size `7546828`, ramdisk size `1245137`, page `2048`, kernel addr `0x40080000`, ramdisk addr `0x45000000`, tags addr `0x44000000`, board `1554686824`, OS version/patch encoded from `8.1.0 / 2021-10-05`. Signed zip `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-ramdisk/m6-source-readonly-ddp-diag-los15-ramdisk-v1-extractfix-signed.zip` sha256 `d18022fe5ec3eff86262bd5ab5b3089ee21e4b905d0f0bb911592ddc9c3296f9`, size `8704895`; embedded `boot.img` sha256 is `9bbb03365e2be34fdd9fa53e4c87e1e9a586ea6c2b8c446c80bc992729c04a89`.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-ramdisk/SHA256SUMS
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-ramdisk/ZIP_SHA256SUMS
+zip -T /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-ramdisk/m6-source-readonly-ddp-diag-los15-ramdisk-v1-extractfix-signed.zip
+unzip -p /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-ramdisk/m6-source-readonly-ddp-diag-los15-ramdisk-v1-extractfix-signed.zip boot.img | sha256sum
+# Next capture identity:
+python3 - <<'PY2'
+from pathlib import Path
+import hashlib
+cap = Path('<next-capture>/evidence/adb/mtk/partitions/boot-partition-16m.img').read_bytes()
+expected = Path('/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-ramdisk/boot-source-readonly-ddp-diag-los15-ramdisk.img').read_bytes()
+print(hashlib.sha256(cap[:len(expected)]).hexdigest())
+print(cap[:len(expected)] == expected)
+PY2
+grep -R -n -E "init.svc.(surfaceflinger|logd|keystore|zygote|zygote_secondary)|sys.boot_completed|M6 clean MTK diag: VALID_0=|CMDQ_EVENT_DISP_(RDMA0|WDMA0)_EOF|/sys/class/leds/lcd-backlight/brightness" <next-capture>/evidence
+```
