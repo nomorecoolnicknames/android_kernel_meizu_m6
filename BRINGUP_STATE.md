@@ -200,3 +200,20 @@ grep -R -n -E 'SPM_SW_RSV5|M6 clean MTK diag: VALID_0=|FATAL ERROR!!!LCM|plcm is
 ```
 
 Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/boot-source-readonly-ddp-diag-on-78c034cde8.img` sha256 `3071aa69097dffe6c3e3668d8ea4cda4ae3cb5135bddac497bd324d4655b6cbc`; signed recovery zip `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/m6-source-readonly-ddp-diag-bootonly-20260522-signed.zip` sha256 `8447100fc1cdb2fb964611905673c993a6806b3a8da41f95b2853d99108ca4df`; Build Station build `a930069d-ed6c-450c-b460-6cb6c4a28444`, boot artifact `f85ad5b3-7886-43a6-bdb2-85b5ff015e49`, flashable artifact `11491810-168b-4e5b-b143-f778d506e1b8`.
+
+## 2026-05-22 flashable v2 extractfix
+
+FACT: The first signed flashable zip `m6-source-readonly-ddp-diag-bootonly-20260522-signed.zip` used a new minimal installer that extracted `boot.img` with `unzip -p` and only checked `unzip`, `/sbin/busybox`, and `/tmp/busybox`. User reported recovery error `cannot extract boot img`.
+
+FACT: The known-working hotfix package `/srv/forge/android/export/meizu_m6_artifacts/20260522-m6-14.1-9ed1d8cc-flashable-hotfix/m6-14.1-9ed1d8cc-flashable-hotfix.zip` uses `unzip -o "$ZIP" "$SRC" -d "$TMP"` plus fallbacks for `unzip`, `/sbin/unzip`, `busybox`, and `/sbin/busybox`.
+
+INFERENCE: The failure is installer compatibility, not kernel payload identity. The v2 package keeps the exact same boot image sha256 `3071aa69097dffe6c3e3668d8ea4cda4ae3cb5135bddac497bd324d4655b6cbc` and only changes recovery extraction logic to match the working hotfix style.
+
+Artifacts: fixed signed zip `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/m6-source-readonly-ddp-diag-bootonly-20260522-v2-extractfix-signed.zip` sha256 `8636a0e532eb64b7af34ea515ee961da8b7c5e927ad7b52f816aa3ef17244d71`; Build Station artifact `5d80020e-22c3-4f42-9cbf-da8e13c659dc`; old flashable artifact `11491810-168b-4e5b-b143-f778d506e1b8` is marked superseded in DB metadata.
+
+Verification commands:
+```bash
+zip -T /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/m6-source-readonly-ddp-diag-bootonly-20260522-v2-extractfix-signed.zip
+unzip -p /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-on-78c034cde8/m6-source-readonly-ddp-diag-bootonly-20260522-v2-extractfix-signed.zip boot.img | sha256sum
+docker exec android-forge-postgres-1 psql -U forge -d forge -c "select id, sha256, size_bytes, metadata->>'filename' from artifacts where id='5d80020e-22c3-4f42-9cbf-da8e13c659dc';"
+```
