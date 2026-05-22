@@ -271,3 +271,47 @@ print(cap[:len(expected)] == expected)
 PY2
 grep -R -n -E "init.svc.(surfaceflinger|logd|keystore|zygote|zygote_secondary)|sys.boot_completed|M6 clean MTK diag: VALID_0=|CMDQ_EVENT_DISP_(RDMA0|WDMA0)_EOF|/sys/class/leds/lcd-backlight/brightness" <next-capture>/evidence
 ```
+
+
+## 2026-05-22 LOS15 ramdisk ADB fix boot image
+
+FACT: User reported the first LOS15-ramdisk repack broke ADB. No fresh capture for that boot is available in this section, so the exact runtime failure is not proven from logs.
+
+FACT: The first LOS15 ramdisk used `service adbd /system/bin/adbd`, did not write `/sys/devices/platform/11270000.usb3/musb-hdrc/cmode 1` in the generic `adb` path, and left `ro.secure=1`. The previous ADB-working stock-parity ramdisk used `/sbin/adbd`, forced `cmode 1`, and set `sys.usb.config adb` during `on boot`.
+
+FACT: The Oreo/LOS15 build output contains a static `/system/bin/adbd` (`ELF 64-bit LSB executable, ARM aarch64, statically linked`), so it can be embedded as `/sbin/adbd` without pulling old 14.1 adbd into the new ramdisk.
+
+HYPOTHESIS: ADB broke because the LOS15 ramdisk starts adbd from `/system/bin/adbd` and does not force the legacy `android_usb` gadget into device mode early enough for this 3.18 MTK kernel. Embedding the Oreo static adbd as `/sbin/adbd`, forcing `sys.usb.config=adb`, and restoring `cmode 1` should keep the Oreo ramdisk while recovering the known-good USB/ADB path.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-22: rebuild boot.img only with source kernel + LOS15 ramdisk + early legacy ADB wiring.
+
+Hypothesis: The source kernel payload is still the wanted new kernel and should not be changed for this cycle. The broken part is the LOS15 ramdisk's ADB startup wiring against the legacy non-configfs MTK USB gadget.
+
+Evidence: previous capture `6b174034-9baa-47af-8bd1-70e5f89f12c4` proved the source kernel payload boots to ADB when the old ramdisk owns USB; local ramdisk diff proves the LOS15 ramdisk changed adbd path and removed early `cmode 1`/`sys.usb.config adb`. Kernel config for this artifact has `CONFIG_USB_G_ANDROID=y`, `CONFIG_USB_F_FS=y`, and `# CONFIG_USB_CONFIGFS is not set`, so the non-configfs `/sys/class/android_usb/android0` path remains the relevant boot-time USB path.
+
+Files changed: no kernel source changed; generated artifact `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-adbfix/boot-source-readonly-ddp-diag-los15-adbfix.img`; generated ramdisk `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-adbfix/ramdisk-los15-adbfix.img`; Build Station DB build `adb0660b-044c-4ae4-b7c5-166f1f920700`, boot artifact `cc277cd4-f113-43e9-b827-33229255c2d9`.
+
+Why each file changed: `init.usb.rc` inside the generated ramdisk now uses `/sbin/adbd`, writes `cmode 1` during `on boot` and the `sys.usb.config=adb` trigger, and sets `sys.usb.config adb`; `default.prop` inside the generated ramdisk sets `ro.secure=0`, `ro.adb.secure=0`, `persist.sys.usb.config=adb`, and `sys.usb.config=adb`; `/sbin/adbd` is copied from the LOS15 system output, not from the old 14.1 ramdisk.
+
+Expected next marker: after flashing only this boot image, `adb devices` should return. A fresh capture must show trimmed boot sha256 `7fb6f9105626a05ead9c4fcda4d3788a88368fe717054711c4f80e591ba1fef6`; runtime props should include `init.svc.adbd=running`, `sys.usb.config=adb`, `sys.usb.state=adb`, and `sys.usb.configfs=0`.
+
+Rollback condition: If verified boot sha256 `7fb6f9105626a05ead9c4fcda4d3788a88368fe717054711c4f80e591ba1fef6` still has no ADB, capture recovery pstore plus USB sysfs if possible and inspect kernel gadget/cmode logs before changing display. If ADB returns but framework still loops, continue from logd/keystore/zygote/system ABI evidence.
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-adbfix/boot-source-readonly-ddp-diag-los15-adbfix.img` sha256 `7fb6f9105626a05ead9c4fcda4d3788a88368fe717054711c4f80e591ba1fef6`, size `9445376`; ramdisk sha256 `90ae94dcce79d107fc9888596f3be80430067782195c7c419f1eab383fec3e19`; kernel payload sha256 `ec204ae9c47312a31f2910e00db71e65dfd3e0d48ace0367ad1803bafc7fb0c9`; page `2048`, kernel addr `0x40080000`, ramdisk addr `0x45000000`, tags addr `0x44000000`, OS version/patch `8.1.0 / 2021-10-05`.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-adbfix/SHA256SUMS
+gzip -dc /srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-adbfix/ramdisk-los15-adbfix.img | cpio -it --quiet | grep -E '^(sbin/adbd|init.usb.rc|default.prop)$'
+# Next capture identity check:
+python3 - <<'PY2'
+from pathlib import Path
+import hashlib
+cap = Path('<next-capture>/evidence/adb/mtk/partitions/boot-partition-16m.img').read_bytes()
+expected = Path('/srv/forge/android/export/meizu_m6_artifacts/20260522-source-readonly-ddp-diag-los15-adbfix/boot-source-readonly-ddp-diag-los15-adbfix.img').read_bytes()
+print(hashlib.sha256(cap[:len(expected)]).hexdigest())
+print(cap[:len(expected)] == expected)
+PY2
+grep -R -n -E 'init.svc.adbd|sys.usb.(config|state|configfs)|Service .adbd|android_usb|musb|cmode' <next-capture>/evidence
+```
