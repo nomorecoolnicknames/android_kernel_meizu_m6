@@ -110,6 +110,7 @@ static bool primary_video_trigger_loop_diag_logged;
 static bool primary_video_first_cfg_diag_logged;
 static bool primary_video_first_wait_skipped;
 static bool primary_present_fence_timeout_diag_logged;
+static bool primary_m6_direct_dsi_route_applied;
 static unsigned int g_keep;
 static unsigned int g_skip;
 static DISP_POWER_STATE power_stat_backup;
@@ -3172,6 +3173,25 @@ static int update_primary_intferface_module(void)
 	return 0;
 }
 
+static void update_primary_ufoe_route(LCM_PARAMS *lcm_param)
+{
+	if (!lcm_param || lcm_param->type != LCM_TYPE_DSI)
+		return;
+
+	if (lcm_param->dsi.ufoe_enable)
+		return;
+
+	if (primary_m6_direct_dsi_route_applied)
+		return;
+
+	DISPERR("M6 DDP ufoe route: panel ufoe_enable=0; route RDMA0 directly to DSI0\n");
+	ddp_remove_module(DDP_SCENARIO_PRIMARY_DISP, DISP_MODULE_UFOE);
+	ddp_remove_module(DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP, DISP_MODULE_UFOE);
+	ddp_remove_module(DDP_SCENARIO_PRIMARY_ALL, DISP_MODULE_UFOE);
+	ddp_remove_module(DDP_SCENARIO_DITHER_1TO2, DISP_MODULE_UFOE);
+	primary_m6_direct_dsi_route_applied = true;
+}
+
 int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited)
 {
 	DISP_STATUS ret = DISP_STATUS_OK;
@@ -3226,6 +3246,7 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	}
 
 	update_primary_intferface_module();
+	update_primary_ufoe_route(lcm_param);
 
 	if (use_cmdq) {
 		ret = cmdqCoreRegisterCB(CMDQ_GROUP_DISP, cmdqDdpClockOn,

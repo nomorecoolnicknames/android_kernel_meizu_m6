@@ -485,3 +485,49 @@ print(cap[:len(expected)] == expected)
 PY2
 grep -R -n -E 'BufferQueue17createBufferQueue|hwcomposer.mt6750|hwcomposer module not found|failed to open framebuffer|SurfaceFlinger is starting|init.svc.surfaceflinger|sys.boot_completed|FBIOPUT|mtkfb_check_var' <next-capture>/evidence
 ```
+
+## 2026-05-23 LOS15 c8531b6f display UFOE direct-route boot image
+
+FACT: Fresh debug evidence `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/f17594a9-3fde-4bd1-a7f2-7ee4cf28b3bf/browser-debug-evidence-1779548908639.tar` reaches Android ADB with `surfaceflinger`, `bootanim`, `audioserver`, and `zygote` running, but `sys.boot_completed` is empty. The capture does not include a raw boot partition image, so exact flashed boot hash is not proven from the archive.
+
+FACT: The runtime strongly matches build `8d802cc7` plus insecure ADB boot patch: local expected boot `/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-8d802cc7-adb-insecure-bootpatch/boot-adb-insecure-8d802cc7.img` has sha256 `2d84ac1196728c25ebab8c62ccabb566c240b94f49d0fa4449a4f1f8352b546f`, and its kernel payload contains the current M6 DDP diagnostic strings.
+
+FACT: Display is the earliest current boot frontier. `/proc/fb` reports `mtkfb` with `720x1280`, but display IRQs are near zero and dmesg repeats `CMDQ_EVENT_DISP_RDMA0_EOF` token 0 with `DISP_DL_VALID_0=0` and `DISP_DL_READY_0=0`. The decisive route dump is `M6 clean MTK diag: VALID_0=0x0 READY_0=0x0 OVL0_MOUT=0x1 COLOR0_SEL=0x1 DITHER_MOUT=0x1 RDMA0_SOUT=0x0 UFOE_SEL=0x0 SW0_RST=0xffffffff MMSYS_CG=0xfe706bfc`; CMDQ dump also shows `DISP_UFOE_MOUT_EN=0x1`, `DISP_UFOE_SEL_IN=0`, `DSI0_SEL_IN=0`, and `DISP_RDMA0_SOUT_SEL_IN=0`.
+
+FACT: The active panel is `ili9881p_hd_dsi_txd`; its LCM driver does not set `params->dsi.ufoe_enable`, so the runtime panel config has UFOE disabled.
+
+INFERENCE: The display path is routed through an inactive UFOE stage despite the active M6 panel not enabling UFOE compression. This leaves the DITHER/RDMA/UFOE/DSI selectors inconsistent and prevents RDMA0 EOF from ever completing.
+
+PATCH HISTORY, BOOT-UNBLOCK/PROPER-FIX, 2026-05-23: register UFOE as route-only for diagnostics and remove UFOE from the primary display scenarios when the active DSI panel has `ufoe_enable=0`.
+
+Hypothesis: The source kernel display path stalls because the static MT6755 DDP scenario includes `DISP_MODULE_UFOE` even when the M6 ILI9881P panel disables UFOE. Keeping a route-only UFOE driver for safe dumps while removing UFOE from the active primary scenarios should make `ddp_connect_path_l()` route RDMA0 directly to DSI0, allowing the first video frame fence to receive `CMDQ_EVENT_DISP_RDMA0_EOF` instead of timing out forever.
+
+Evidence: capture `browser-debug-evidence-1779548908639.tar` facts above; matching System.map for the new artifact is `/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-ufoe-direct-route/System.map-ufoe-direct-route` sha256 `93fafebbb74f7449f2a0610e97d725ba1fac1855afe3634eb87f662dd61281b8`. Build verification produced `Image-ufoe-direct-route.gz-dtb` sha256 `f0c383dbee0cd667dfad89762b3aa0208b5be62bc2891f97dbe9b46da620c250` and the string `M6 DDP ufoe route: panel ufoe_enable=0; route RDMA0 directly to DSI0`.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/Makefile` builds `ddp_ufoe.o`; `ddp_info.c` and `ddp_info.h` register `ddp_driver_ufoe`; `ddp_ufoe.c` makes the UFOE driver route-only when present and logs route state without programming compression for disabled panels; `primary_display.c` removes `DISP_MODULE_UFOE` from `DDP_SCENARIO_PRIMARY_DISP`, `DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP`, `DDP_SCENARIO_PRIMARY_ALL`, and `DDP_SCENARIO_DITHER_1TO2` when the active DSI panel reports `ufoe_enable=0`; `BRINGUP_STATE.md` records this patch cycle.
+
+Why each file changed: the Makefile/info files are required because `DISP_MODULE_UFOE` was in the active DDP scenario table but had no driver. `ddp_ufoe.c` must not start or configure compression when the panel disables it, but it must provide init/config/dump hooks so route state is observable. `primary_display.c` is the earliest point where `LCM_PARAMS` is available before CMDQ/DDP path setup, so it owns the panel-specific scenario correction.
+
+Expected next marker: next capture from boot sha256 `6205461913e69f81ddbd5b9691f761739774db7c58a553373784b971ce58b1a9` should contain `M6 DDP ufoe route: panel ufoe_enable=0; route RDMA0 directly to DSI0`; the DDP timeout dump should either disappear or show `RDMA0_SOUT`/`DSI0_SEL` connected to RDMA0 instead of UFOE. Success criteria are no repeated `CMDQ_EVENT_DISP_RDMA0_EOF` token-0 wait, rising `rdma0`/`dsi0` IRQ counts, and boot moving to the known audio HAL blocker or to `sys.boot_completed=1`.
+
+Rollback condition: revert this patch if a verified capture with boot sha256 `6205461913e69f81ddbd5b9691f761739774db7c58a553373784b971ce58b1a9` regresses before ADB/SurfaceFlinger, or if it logs the direct-route message but the route dump still shows `RDMA0_SOUT=0x0`, `DSI0_SEL_IN=0`, and the identical RDMA0 EOF stall with no route change.
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-ufoe-direct-route/boot-los15-sourcekernel-ufoe-direct-route.img` sha256 `6205461913e69f81ddbd5b9691f761739774db7c58a553373784b971ce58b1a9`, size `8820736`; signed boot-only recovery zip `/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-ufoe-direct-route/m6-los15-sourcekernel-ufoe-direct-route-bootonly-signed.zip` sha256 `d58ad45d8ff23f850e99f84076c28c9429998fe3dcf05009cd7e548287dcfeb8`; kernel payload sha256 `f0c383dbee0cd667dfad89762b3aa0208b5be62bc2891f97dbe9b46da620c250`; System.map sha256 `93fafebbb74f7449f2a0610e97d725ba1fac1855afe3634eb87f662dd61281b8`; config sha256 `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`; ramdisk sha256 `db778817422d17c3340b8dc06dc76ab560cc62bc085ca123945e3f01317d17e8`.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-ufoe-direct-route/SHA256SUMS
+/usr/bin/zip -T /srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-ufoe-direct-route/m6-los15-sourcekernel-ufoe-direct-route-bootonly-signed.zip
+unzip -p /srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-ufoe-direct-route/m6-los15-sourcekernel-ufoe-direct-route-bootonly-signed.zip boot.img | sha256sum
+gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-ufoe-direct-route/Image-ufoe-direct-route.gz-dtb 2>/dev/null | strings | grep -E 'M6 DDP ufoe route|M6 clean MTK diag|M6 DDP ufoe'
+python3 - <<'PY2'
+from pathlib import Path
+import hashlib
+cap = Path('<next-capture>/evidence/adb/mtk/partitions/boot-partition-16m.img').read_bytes()
+expected = Path('/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-ufoe-direct-route/boot-los15-sourcekernel-ufoe-direct-route.img').read_bytes()
+print(hashlib.sha256(cap[:len(expected)]).hexdigest())
+print(cap[:len(expected)] == expected)
+PY2
+grep -R -n -E 'M6 DDP ufoe route|M6 clean MTK diag|DISP_DL_VALID_0|DISP_DL_READY_0|CMDQ_EVENT_DISP_RDMA0_EOF|DISP_UFOE|DSI0_SEL|RDMA0_SOUT|Built-in Screen|sys.boot_completed|android.hardware.audio@2.0-service|Error retrieving audio properties from HAL' <next-capture>/evidence <next-capture>/mtp
+```

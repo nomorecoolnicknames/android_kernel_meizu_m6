@@ -14,6 +14,7 @@
 obj-y +=	ddp_ovl.o              \
 		ddp_rdma.o             \
 		ddp_wdma.o             \
+		ddp_ufoe.o             \
 		ddp_dsi.o              \
 		ddp_dpi.o              \
 		ddp_clkmgr.o           \
