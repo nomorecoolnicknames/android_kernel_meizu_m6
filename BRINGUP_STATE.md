@@ -531,3 +531,47 @@ print(cap[:len(expected)] == expected)
 PY2
 grep -R -n -E 'M6 DDP ufoe route|M6 clean MTK diag|DISP_DL_VALID_0|DISP_DL_READY_0|CMDQ_EVENT_DISP_RDMA0_EOF|DISP_UFOE|DSI0_SEL|RDMA0_SOUT|Built-in Screen|sys.boot_completed|android.hardware.audio@2.0-service|Error retrieving audio properties from HAL' <next-capture>/evidence <next-capture>/mtp
 ```
+
+## 2026-05-23 LOS15 source-kernel SMI LARB0 display boot image
+
+FACT: Fresh debug evidence `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/8c743bf4-015f-485c-95e5-761d193d4a93/browser-debug-evidence-1779572584002.tar` has sha256 `8c299101f7a71f8474de18a17026874df6159729a166b27921eda9e6e330cef9` and reaches Android 8.1 with ADB online, `surfaceflinger`/`audioserver` running, `/proc/fb` reporting `mtkfb`, fb0 `720x1280`, brightness `102`, Built-in Screen visible to SurfaceFlinger, Mali EGL/GLES loaded, and HWC enabled. `sys.boot_completed` is empty.
+
+FACT: The same capture does not include a raw boot partition image, so the flashed boot hash is not proven. The prior expected artifact remains `/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-ufoe-direct-route/boot-los15-sourcekernel-ufoe-direct-route.img` sha256 `6205461913e69f81ddbd5b9691f761739774db7c58a553373784b971ce58b1a9`; conclusions from this capture are identity-gated until the next capture includes a trimmed boot hash.
+
+FACT: Display advanced beyond the UFOE route blocker: the new route dump shows `RDMA0_SOUT=0x2`, while `DISP_DL_VALID_0=0`, `DISP_DL_READY_0=0`, and repeated `CMDQ_EVENT_DISP_RDMA0_EOF` token-0 waits remain. The display IRQ counters are still near zero (`cmdq` around `1/1/1`, `rdma0` around `0/3/3`, `dsi0` around `0/1/0`), SurfaceFlinger reports VSYNC disabled, and nearby DEVAPC logs reference `SMI_LARB1`, `SMI_LARB2`, and `SMI_LARB3` addresses including `0x16010000`, `0x150012fc`, and `0x17001014/0xa8`.
+
+INFERENCE: The direct DSI route is now applied, but the first RDMA0 frame still cannot retire because display memory path enable/order or diagnostic access around SMI/LARB is inconsistent. With CCF enabled (`# CONFIG_MTK_CLKMGR is not set`), the DDP first-call path must enable `DISP_MTCMOS_CLK`, `DISP0_SMI_COMMON`, and display `DISP0_SMI_LARB0` in order before DDP activity. CMDQ timeout dumps must also stay display-scoped so unrelated LARB1/2/3 DEVAPC reads do not hide the display LARB0 state.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-23: enable M6 display SMI clocks on the first CCF DDP clock-on path and keep timeout SMI diagnostics display-scoped.
+
+Hypothesis: The M6 source kernel stalls at RDMA0 EOF after the UFOE route fix because the CCF DDP top-clock path leaves display MTCMOS/SMI common/LARB0 disabled on the first call, so OVL/RDMA/WDMA memory traffic cannot reach a valid display LARB0 transaction. Enabling those clocks in order on every DDP top-clock-on call should let RDMA0 reach EOF; narrowing CMDQ SMI hang detection to `SMI_DBG_DISPSYS` and dumping read-only LARB0 status on timeouts should confirm whether remaining failures are in the display LARB0 path without triggering unrelated LARB1/2/3 DEVAPC noise.
+
+Evidence: capture `browser-debug-evidence-1779572584002.tar` facts above; display pack `/tmp/m6_1779572584002_display_pack.txt`; build output `/srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb` sha256 `7fc44d716c7a132b7d96fb0bf1e0401dc3c1b7d800eb353234f4a4883e65bfac`; matching System.map `/srv/forge/work/m6-source-kernel-manual-20260520/out/System.map` sha256 `1b0f5187082238210eba7602b94fb7921c939add83269ffcd0c5272f18cff559`; `.config` has `CONFIG_ARCH_MT6755=y`, `# CONFIG_MTK_CLKMGR is not set`, `CONFIG_CUSTOM_KERNEL_LCM="ili9881p_hd_dsi_txd"`, `CONFIG_MTK_SMI_EXT=y`, and `# CONFIG_MTK_SMI_VARIANT is not set`. The built kernel contains `M6 DDP SMI clk: mtcmos/common/larb0 enabled in order`, `M6 CMDQ SMI diag: display-only LARB mask`, `M6 SMI diag: LARB0_STA=...`, and the prior `M6 DDP ufoe route: panel ufoe_enable=0; route RDMA0 directly to DSI0` marker.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` enables MTCMOS, SMI common, and LARB0 in order in the CCF DDP top-clock-on path, including the first call. `kernel-3.18/drivers/misc/mediatek/cmdq/v2/cmdq_virtual.c` limits CMDQ SMI hang detection to `SMI_DBG_DISPSYS`. `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` adds a read-only LARB0 status/MMU/GREQ dump beside the existing RDMA EOF timeout dump. `BRINGUP_STATE.md` records this patch cycle.
+
+Why each file changed: `ddp_path.c` owns the DDP top-clock sequence and is the earliest common point before OVL/RDMA/WDMA display traffic; the generated `.config` proves the CCF branch is active for this build. `cmdq_virtual.c` owns the SMI hang detector called from CMDQ error handling; display timeouts should not probe unrelated multimedia larbs while LARB1/2/3 DEVAPC violations are the current noise frontier. `ddp_manager.c` owns the DDP event wait timeout path where `CMDQ_EVENT_DISP_RDMA0_EOF` is observed, so it is the narrow place to snapshot display LARB0 state without changing fences or skipping waits. The state file is required by the kernel-tree contract.
+
+Expected next marker: next capture must first prove the flashed boot by hashing the captured raw boot partition trimmed to `/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-smi-larb0-v1/boot-los15-sourcekernel-smi-larb0-v1.img` sha256 `822fc4b81ac068040b064b298ce2176bccb57bde5b129d151f075ca4f0bfc731`. If the hypothesis is correct, dmesg contains `M6 DDP SMI clk: mtcmos/common/larb0 enabled in order`, the RDMA EOF timeout either disappears or the `M6 SMI diag: LARB0_STA=...` line shows the real display LARB0/MMU/GREQ state, `rdma0`/`dsi0`/`cmdq` IRQ counters rise, VSYNC/flips advance, and `DISP_DL_VALID_0`/`DISP_DL_READY_0` are no longer both zero.
+
+Rollback condition: Revert this patch if a verified capture with boot sha256 `822fc4b81ac068040b064b298ce2176bccb57bde5b129d151f075ca4f0bfc731` regresses before ADB/SurfaceFlinger, if the new SMI-clock marker appears but `MMSYS_CG`/LARB0 state proves the clock sequence is harmful, or if RDMA0 EOF behavior is identical and the LARB0 dump proves clocks were already valid before the timeout. If the only change is that unrelated LARB1/2/3 DEVAPC noise disappears while display still times out, keep the diagnostic scoping and use the LARB0 dump as the next display evidence.
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-smi-larb0-v1/boot-los15-sourcekernel-smi-larb0-v1.img` sha256 `822fc4b81ac068040b064b298ce2176bccb57bde5b129d151f075ca4f0bfc731`, size `8820736`; signed boot-only recovery zip `/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-smi-larb0-v1/m6-los15-sourcekernel-smi-larb0-v1-bootonly-signed.zip` sha256 `db190991c036be23435d8960d71b8f40ba0e49e8f0c6d8a44e2c4de3e8bf49ab`; kernel payload sha256 `7fc44d716c7a132b7d96fb0bf1e0401dc3c1b7d800eb353234f4a4883e65bfac`; System.map sha256 `1b0f5187082238210eba7602b94fb7921c939add83269ffcd0c5272f18cff559`; config sha256 `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`; vmlinux sha256 `03e2867182f013991fda03f4e2d4c34dcbafad29929a9ef58742288cffe76305`; ramdisk sha256 `db778817422d17c3340b8dc06dc76ab560cc62bc085ca123945e3f01317d17e8`.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-smi-larb0-v1/SHA256SUMS
+/usr/bin/zip -T /srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-smi-larb0-v1/m6-los15-sourcekernel-smi-larb0-v1-bootonly-signed.zip
+unzip -p /srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-smi-larb0-v1/m6-los15-sourcekernel-smi-larb0-v1-bootonly-signed.zip boot.img | sha256sum
+gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-smi-larb0-v1/Image-smi-larb0-v1.gz-dtb 2>/dev/null | strings | grep -E 'M6 DDP SMI clk|M6 CMDQ SMI diag|M6 SMI diag|M6 DDP ufoe route'
+python3 - <<'PY2'
+from pathlib import Path
+import hashlib
+cap = Path('<next-capture>/evidence/adb/mtk/partitions/boot-partition-16m.img').read_bytes()
+expected = Path('/srv/forge/android/export/meizu_m6_artifacts/20260523-los15-sourcekernel-smi-larb0-v1/boot-los15-sourcekernel-smi-larb0-v1.img').read_bytes()
+print(hashlib.sha256(cap[:len(expected)]).hexdigest())
+print(cap[:len(expected)] == expected)
+PY2
+grep -R -n -E 'M6 DDP SMI clk|M6 CMDQ SMI diag|M6 SMI diag|DISP_DL_VALID_0|DISP_DL_READY_0|CMDQ_EVENT_DISP_RDMA0_EOF|DEVAPC.*SMI_LARB|RDMA0_SOUT|DSI0_SEL|Built-in Screen|VSYNC|sys.boot_completed|AudioFlinger::RecordThread::readInputParameters_l' <next-capture>/evidence <next-capture>/mtp
+```

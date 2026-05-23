@@ -1728,6 +1728,13 @@ int dpmgr_wait_event_timeout(disp_path_handle dp_handle, DISP_PATH_EVENT event, 
 				DISP_REG_GET(DISP_REG_CONFIG_DISP_UFOE_SEL_IN),
 				DISP_REG_GET(DISP_REG_CONFIG_MMSYS_SW0_RST_B),
 				DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
+			DISPERR("M6 SMI diag: LARB0_STA=0x%x LARB0_MMU=0x%x/0x%x/0x%x/0x%x LARB0_GREQ=0x%x\n",
+				DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0x0),
+				DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0xa0),
+				DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0xa4),
+				DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0xa8),
+				DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0xac),
+				DISP_REG_GET(DISP_REG_CONFIG_SMI_LARB0_GREQ));
 			/* dpmgr_check_status(dp_handle); */
 		} else if (ret < 0) {
 			DISPERR("wait %s interrupt by other timeleft %d on scenario %s\n",

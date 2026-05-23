@@ -213,6 +213,7 @@ int ddp_path_init(void)
 	return 0;
 }
 
+
 static module_map_t module_mutex_map[DISP_MODULE_NUM] = {
 	{DISP_MODULE_OVL0, 7},
 	{DISP_MODULE_OVL1, 8},
@@ -1165,17 +1166,14 @@ int ddp_path_top_clock_on(void)
 	enable_clock(MT_CG_DISP0_SMI_COMMON, "DDP_SMI");
 	enable_clock(MT_CG_DISP0_SMI_LARB0, "DDP_LARB0");
 #else
-	if (need_enable) {
-		if (disp_helper_get_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK))
-			ddp_clk_prepare_enable(MM_VENCPLL);
-		ddp_clk_prepare_enable(DISP_MTCMOS_CLK);
-		ddp_clk_prepare_enable(DISP0_SMI_COMMON);
-		ddp_clk_prepare_enable(DISP0_SMI_LARB0);
-	} else {
+	if (!need_enable)
 		need_enable = 1;
-		if (disp_helper_get_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK))
-			ddp_clk_prepare_enable(MM_VENCPLL);
-	}
+	if (disp_helper_get_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK))
+		ddp_clk_prepare_enable(MM_VENCPLL);
+	ddp_clk_prepare_enable(DISP_MTCMOS_CLK);
+	ddp_clk_prepare_enable(DISP0_SMI_COMMON);
+	ddp_clk_prepare_enable(DISP0_SMI_LARB0);
+	DISPMSG("M6 DDP SMI clk: mtcmos/common/larb0 enabled in order\n");
 #endif
 	/* enable_clock(MT_CG_DISP0_MUTEX_32K   , "DDP_MUTEX"); */
 	DISPMSG("ddp CG:%x\n", DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
