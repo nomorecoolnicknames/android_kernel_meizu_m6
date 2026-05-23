@@ -985,7 +985,7 @@ int _should_insert_wait_frame_done_token(void)
 	if (primary_display_cmdq_enabled()) {
 		if (primary_display_is_video_mode()) {
 			if (!primary_video_frame_wait_diag_logged) {
-				DISPPR_ERROR("M6 DDP clk fix: keep video frame-done wait; engine clocks enabled in DDP init\n");
+				DISPPR_ERROR("M6 video CMDQ boot-unblock: keep frame-done waits after first config release\n");
 				primary_video_frame_wait_diag_logged = true;
 			}
 			return 1;
@@ -1138,7 +1138,7 @@ static void _cmdq_build_trigger_loop(void)
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), pgc->cmdq_handle_trigger, 0);
 
 		if (!primary_video_trigger_loop_diag_logged) {
-			DISPPR_ERROR("M6 clean MTK diag: trigger loop waits RDMA0_EOF then MUTEX0_STREAM_EOF; no synthetic event prime\n");
+			DISPPR_ERROR("M6 video CMDQ boot-unblock: trigger loop waits RDMA0_EOF/MUTEX0_STREAM_EOF; first config wait is skipped until real frame done\n");
 			primary_video_trigger_loop_diag_logged = true;
 		}
 
@@ -1284,7 +1284,7 @@ void _cmdq_start_trigger_loop(void)
 	int ret = 0;
 	/*cmdqRecDumpCommand(pgc->cmdq_handle_trigger);*/
 	if (primary_display_is_video_mode())
-		DISPPR_ERROR("M6 video CMDQ: start trigger loop without synthetic EOF prime\n");
+		DISPPR_ERROR("M6 video CMDQ: start trigger loop; first config path does not pre-wait frame done\n");
 	/* this should be called only once because trigger loop will nevet stop */
 	ret = cmdqRecStartLoop(pgc->cmdq_handle_trigger);
 	if (!primary_display_is_video_mode()) {
@@ -1392,15 +1392,30 @@ static void _cmdq_flush_config_handle_mira(void *handle, int blocking)
 
 void _cmdq_insert_wait_primary_path_frame_done(void *handle)
 {
-	if (primary_display_is_video_mode())
+	if (primary_display_is_video_mode()) {
+		if (!primary_video_first_config_flushed) {
+			if (!primary_video_first_wait_skipped) {
+				DISPPR_ERROR("M6 video CMDQ boot-unblock: skip pre-first-config frame-done wait\n");
+				primary_video_first_wait_skipped = true;
+			}
+			return;
+		}
 		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
-	else
+	} else {
 		cmdqRecWaitNoClear(handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
+	}
 }
 
 void _cmdq_insert_wait_frame_done_token_mira(void *handle)
 {
 	if (primary_display_is_video_mode()) {
+		if (!primary_video_first_config_flushed) {
+			if (!primary_video_first_wait_skipped) {
+				DISPPR_ERROR("M6 video CMDQ boot-unblock: skip pre-first-config RDMA0/MUTEX0 frame-done wait\n");
+				primary_video_first_wait_skipped = true;
+			}
+			return;
+		}
 		cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
 		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), handle, 0);
@@ -3053,11 +3068,10 @@ static int _present_fence_release_worker_thread(void *data)
 
 			if (ret <= 0) {
 				if (!primary_present_fence_timeout_diag_logged || (count++ % 60) == 0) {
-					DISPPR_ERROR("M6 clean MTK diag: IF_VSYNC timeout; not releasing present fence idx=%u ret=%d\n",
+					DISPPR_ERROR("M6 display isolation: IF_VSYNC timeout; release present fence idx=%u ret=%d to keep boot moving\n",
 						gPresentFenceIndex, ret);
 					primary_present_fence_timeout_diag_logged = true;
 				}
-				continue;
 			}
 			/* dpmgr_wait_event(pgc->dpmgr_handle, DISP_PATH_EVENT_FRAME_DONE); */
 		}
