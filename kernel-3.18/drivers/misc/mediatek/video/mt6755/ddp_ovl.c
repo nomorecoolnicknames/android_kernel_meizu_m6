@@ -496,6 +496,7 @@ int ovl_clock_on(DISP_MODULE_ENUM module, void *handle)
 		ret = enable_clock(MT_CG_DISP0_DISP_OVL0, ddp_get_module_name(module));
 #else
 		ret = ddp_clk_enable(DISP0_DISP_OVL0);
+		ret += ddp_clk_enable(DISP0_DISP_OVL0_MOUT);
 #endif
 		break;
 	case DISP_MODULE_OVL1:
@@ -544,7 +545,8 @@ int ovl_clock_off(DISP_MODULE_ENUM module, void *handle)
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_OVL0, ddp_get_module_name(module));
 #else
-		ret = ddp_clk_disable(DISP0_DISP_OVL0);
+		ret = ddp_clk_disable(DISP0_DISP_OVL0_MOUT);
+		ret += ddp_clk_disable(DISP0_DISP_OVL0);
 #endif
 		break;
 	case DISP_MODULE_OVL1:

@@ -575,3 +575,51 @@ print(cap[:len(expected)] == expected)
 PY2
 grep -R -n -E 'M6 DDP SMI clk|M6 CMDQ SMI diag|M6 SMI diag|DISP_DL_VALID_0|DISP_DL_READY_0|CMDQ_EVENT_DISP_RDMA0_EOF|DEVAPC.*SMI_LARB|RDMA0_SOUT|DSI0_SEL|Built-in Screen|VSYNC|sys.boot_completed|AudioFlinger::RecordThread::readInputParameters_l' <next-capture>/evidence <next-capture>/mtp
 ```
+
+
+## 2026-05-24 LOS15 source-kernel M4U/OVL0_MOUT display boot image
+
+FACT: Fresh capture `/tmp/m6_71799c1a_latest` was collected at `2026-05-24T06:18:44.095Z` and reaches Android 8.1 ADB with `surfaceflinger`, `bootanim`, `audioserver`, `zygote`, and `hwservicemanager` running, but `sys.boot_completed` is empty. Runtime kernel identity is `Linux version 3.18.140 ... #18 SMP PREEMPT Sun May 24 05:19:37 UTC 2026`, `ro.lineage.version=15.1-20260524-UNOFFICIAL-meizu_m6`, `ro.adb.secure=0`, and `ro.debuggable=1`.
+
+FACT: The same capture does not prove raw boot identity: `/tmp/m6_71799c1a_latest/evidence/adb/mtk/partitions/boot-hash.txt` contains `sha256sum: /dev/block/mmcblk0p21: Permission denied`, `md5sum: /dev/block/mmcblk0p21: Permission denied`, and `no_hash_tool`. The next capture must include root/recovery raw boot dump or the captured boot partition trimmed to the expected image length.
+
+FACT: Display is registered in userspace but hardware scanout is still stalled. `surfaceflinger.txt` shows `Built-in Screen` `720x1280`, `flips=6`, `powerMode=2`, HWC present/enabled, Mali EGL/GLES loaded, and `VSYNC state: disabled`. `/proc/fb` reports `0 mtkfb`; fb0 is `720x1280`, bpp `32`, stride `2944`; backlight brightness is `102/255`. Display IRQs remain near zero: `mtk_cmdq 0/0`, `ovl0 0/1`, `rdma0 3/1`, `dsi0 0/0`.
+
+FACT: Dmesg in the same capture repeats `CMDQ_EVENT_DISP_RDMA0_EOF` token 0 and `wait VSYNC timeout on scenario primary_disp`. The read-only display dump shows `VALID_0=0x0 READY_0=0x0 OVL0_MOUT=0x1 COLOR0_SEL=0x1 DITHER_MOUT=0x1 RDMA0_SOUT=0x2 UFOE_SEL=0x0 SW0_RST=0xffffffff MMSYS_CG=0xfe706bfc` and `LARB0_STA=0x0 LARB0_MMU=0x0/0x0/0x0/0x0 LARB0_GREQ=0x0`. CMDQ dump confirms `DSI0_SEL_IN=0x00000001`, `DISP_RDMA0_SOUT_SEL_IN=0x00000002`, `DISP_DL_VALID_0=0`, and `DISP_DL_READY_0=0`.
+
+INFERENCE: The UFOE direct-route fix is active, but `MMSYS_CG=0xfe706bfc` still leaves the OVL0 MOUT gate bit disabled while the path depends on `OVL0_MOUT=0x1`. The CCF branch is active (`# CONFIG_MTK_CLKMGR is not set`), so the display driver must request and enable the exact M4U/dispsys SMI and OVL0_MOUT clock handles exposed by `clk-mt6755.c`/DTS, not only the coarse SMI common/LARB0 handles.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-24: enable the exact M6 display SMI M4U/dispsys clock handles and OVL0 MOUT gate in the CCF display path.
+
+Hypothesis: the source kernel reaches SurfaceFlinger/HWC but RDMA0 never produces EOF because the path route is programmed while OVL0_MOUT and the display-specific SMI child gates are not requested/enabled through CCF. Adding the exact DT clock names and enabling SMI common M4U/dispsys, LARB0 M4U/dispsys, and OVL0_MOUT before display traffic should let the OVL0->COLOR0->DITHER->RDMA0->DSI0 route produce valid/ready data and real RDMA0/DSI0 IRQs.
+
+Evidence: capture `/tmp/m6_71799c1a_latest` facts above; generated `.config` has `CONFIG_ARCH_MT6755=y`, `CONFIG_CUSTOM_KERNEL_LCM="ili9881p_hd_dsi_txd"`, `# CONFIG_MTK_CLKMGR is not set`, `CONFIG_MTK_SMI_EXT=y`, and `# CONFIG_MTK_SMI_VARIANT is not set`. Build log `/srv/forge/android/export/meizu_m6_artifacts/20260524-los15-sourcekernel-m4u-ovl0mout-v1/source-kernel-m4u-ovl0mout-v1-build.log` completes `CAT arch/arm64/boot/Image.gz-dtb`; the built kernel contains `M6 DDP SMI clk: mtcmos/common+m4u+dispsys/larb0+m4u+dispsys/ovl0_mout enabled in order` plus the existing DDP route/SMI diagnostic strings.
+
+Files changed: `kernel-3.18/arch/arm64/boot/dts/mt6755.dtsi` adds the missing display SMI M4U/dispsys and OVL0_MOUT clocks to the display node. `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_clkmgr.h` adds clock IDs for the new handles. `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_drv.c` keeps `disp_clk_name[]` aligned with the enum/DTS order and prepares the added SMI handles at probe. `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` enables/disables SMI common, SMI LARB0, their M4U/dispsys child handles, and OVL0_MOUT in order. `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c` enables OVL0_MOUT with OVL0 and disables it before OVL0 shutdown.
+
+Why each file changed: the DTS/enum/name table are one contract for `devm_clk_get()`; changing only one would shift indexes or leave a CCF handle unresolved. `ddp_path.c` owns the common top-clock sequence before OVL/RDMA/CMDQ display traffic. `ddp_ovl.c` owns the OVL0 module clock boundary and keeps the MOUT gate refcounted with the producer module. No fake-ready, fence-skip, GED, or backlight wait bypass is part of this patch.
+
+Expected next marker: next capture first proves the flashed boot by hashing raw boot trimmed to `/srv/forge/android/export/meizu_m6_artifacts/20260524-los15-sourcekernel-m4u-ovl0mout-v1/boot-los15-sourcekernel-m4u-ovl0mout-v1.img` sha256 `96c1a927136a56c58a73c824305243df9c34a3ae5b019501f2f704e7283fd734`. If the hypothesis is correct, dmesg contains the new `common+m4u+dispsys/larb0+m4u+dispsys/ovl0_mout` marker, `MMSYS_CG` has OVL0_MOUT bit 25 cleared, `DISP_DL_VALID_0`/`DISP_DL_READY_0` no longer both stay zero, `CMDQ_EVENT_DISP_RDMA0_EOF` token-0 waits stop repeating, display IRQ counters rise, VSYNC/flips advance, and the boot moves to the known audioserver capture-advertising crash or to `sys.boot_completed=1`.
+
+Rollback condition: revert this patch if a verified capture with boot sha256 `96c1a927136a56c58a73c824305243df9c34a3ae5b019501f2f704e7283fd734` regresses before ADB/SurfaceFlinger, if the new marker appears but OVL0_MOUT bit 25 is still gated due unresolved CCF handles, or if RDMA0 EOF behavior is identical and the route dump proves OVL0_MOUT and SMI child gates are already valid before timeout.
+
+Artifacts: boot image `/srv/forge/android/export/meizu_m6_artifacts/20260524-los15-sourcekernel-m4u-ovl0mout-v1/boot-los15-sourcekernel-m4u-ovl0mout-v1.img` sha256 `96c1a927136a56c58a73c824305243df9c34a3ae5b019501f2f704e7283fd734`, size `8820736`; signed boot-only recovery zip `/srv/forge/android/export/meizu_m6_artifacts/20260524-los15-sourcekernel-m4u-ovl0mout-v1/m6-los15-sourcekernel-m4u-ovl0mout-v1-bootonly-signed.zip` sha256 `da538333b8bc8b6f4499a92274e4dae91a7e1f9b0a3b68c35c7dc7320c5f6491`; kernel payload sha256 `9388585af48d7b3a084e0a3b6ae29fc4c5c61572a86cee67fa8ab7ee30251fde`; System.map sha256 `8c5fe80276455d2d193e1cb137a2abf9859c01c4f0a404d57c1473f532e35488`; config sha256 `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`; vmlinux sha256 `fba181ac9f9561e729e55c6dc890fa3e720cae6a1b235be0bd02e4d40548e4f3`; ramdisk sha256 `8069edc1162af5a9dd3fbebe4428008d91cce41dbaaf3ebdc9eabdf1d8adb6b6`.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260524-los15-sourcekernel-m4u-ovl0mout-v1
+(cd "$ART" && sha256sum -c SHA256SUMS && sha256sum -c ZIP_SHA256SUMS)
+/usr/bin/zip -T "$ART/m6-los15-sourcekernel-m4u-ovl0mout-v1-bootonly-signed.zip"
+unzip -p "$ART/m6-los15-sourcekernel-m4u-ovl0mout-v1-bootonly-signed.zip" boot.img | sha256sum
+gzip -cd "$ART/Image-m4u-ovl0mout-v1.gz-dtb" 2>/dev/null | strings | grep -E 'M6 DDP SMI clk|M6 clean MTK diag|M6 SMI diag|M6 DDP ufoe route|ili9881p_hd_dsi_txd'
+python3 - <<'PY2'
+from pathlib import Path
+import hashlib
+cap = Path('<next-capture>/evidence/adb/mtk/partitions/boot-partition-16m.img').read_bytes()
+expected = Path('/srv/forge/android/export/meizu_m6_artifacts/20260524-los15-sourcekernel-m4u-ovl0mout-v1/boot-los15-sourcekernel-m4u-ovl0mout-v1.img').read_bytes()
+print(hashlib.sha256(cap[:len(expected)]).hexdigest())
+print(cap[:len(expected)] == expected)
+PY2
+grep -R -n -E 'M6 DDP SMI clk|M6 clean MTK diag|M6 SMI diag|MMSYS_CG|DISP_DL_VALID_0|DISP_DL_READY_0|CMDQ_EVENT_DISP_RDMA0_EOF|RDMA0_SOUT|DSI0_SEL|Built-in Screen|VSYNC|flips=|sys.boot_completed|AudioFlinger::RecordThread::readInputParameters_l' <next-capture>/evidence <next-capture>/mtp
+```

@@ -1172,8 +1172,13 @@ int ddp_path_top_clock_on(void)
 		ddp_clk_prepare_enable(MM_VENCPLL);
 	ddp_clk_prepare_enable(DISP_MTCMOS_CLK);
 	ddp_clk_prepare_enable(DISP0_SMI_COMMON);
+	ddp_clk_prepare_enable(DISP0_SMI_COMMON_M4U);
+	ddp_clk_prepare_enable(DISP0_SMI_COMMON_DISPSYS);
 	ddp_clk_prepare_enable(DISP0_SMI_LARB0);
-	DISPMSG("M6 DDP SMI clk: mtcmos/common/larb0 enabled in order\n");
+	ddp_clk_prepare_enable(DISP0_SMI_LARB0_M4U);
+	ddp_clk_prepare_enable(DISP0_SMI_LARB0_DISPSYS);
+	ddp_clk_prepare_enable(DISP0_DISP_OVL0_MOUT);
+	DISPMSG("M6 DDP SMI clk: mtcmos/common+m4u+dispsys/larb0+m4u+dispsys/ovl0_mout enabled in order\n");
 #endif
 	/* enable_clock(MT_CG_DISP0_MUTEX_32K   , "DDP_MUTEX"); */
 	DISPMSG("ddp CG:%x\n", DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
@@ -1195,7 +1200,12 @@ int ddp_path_top_clock_off(void)
 	disable_clock(MT_CG_DISP0_SMI_LARB0, "DDP_LARB0");
 	disable_clock(MT_CG_DISP0_SMI_COMMON, "DDP_SMI");
 #else
+	ddp_clk_disable_unprepare(DISP0_DISP_OVL0_MOUT);
+	ddp_clk_disable_unprepare(DISP0_SMI_LARB0_DISPSYS);
+	ddp_clk_disable_unprepare(DISP0_SMI_LARB0_M4U);
 	ddp_clk_disable_unprepare(DISP0_SMI_LARB0);
+	ddp_clk_disable_unprepare(DISP0_SMI_COMMON_DISPSYS);
+	ddp_clk_disable_unprepare(DISP0_SMI_COMMON_M4U);
 	ddp_clk_disable_unprepare(DISP0_SMI_COMMON);
 	ddp_clk_disable_unprepare(DISP_MTCMOS_CLK);
 	if (disp_helper_get_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK))
@@ -1231,5 +1241,4 @@ int ddp_convert_ovl_input_to_rdma(RDMA_CONFIG_STRUCT *rdma_cfg, OVL_CONFIG_STRUC
 	rdma_cfg->yuv_range = ovl_cfg->yuv_range;
 	return 0;
 }
-
 
