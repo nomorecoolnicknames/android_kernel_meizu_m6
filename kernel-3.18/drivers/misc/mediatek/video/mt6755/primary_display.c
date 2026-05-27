@@ -107,8 +107,8 @@ static bool primary_video_first_config_flushed;
 static bool primary_video_frame_wait_diag_logged;
 static bool primary_video_bl_wait_diag_logged;
 static bool primary_video_trigger_loop_diag_logged;
+static bool primary_video_trigger_loop_clock_hold_applied;
 static bool primary_video_first_cfg_diag_logged;
-static bool primary_video_first_wait_skipped;
 static bool primary_present_fence_timeout_diag_logged;
 static bool primary_m6_direct_dsi_route_applied;
 static unsigned int g_keep;
@@ -986,7 +986,7 @@ int _should_insert_wait_frame_done_token(void)
 	if (primary_display_cmdq_enabled()) {
 		if (primary_display_is_video_mode()) {
 			if (!primary_video_frame_wait_diag_logged) {
-				DISPPR_ERROR("M6 video CMDQ boot-unblock: keep frame-done waits after first config release\n");
+				DISPPR_ERROR("M6 video CMDQ: keep real RDMA0/MUTEX0 frame-done waits; no EOF token seeding\n");
 				primary_video_frame_wait_diag_logged = true;
 			}
 			return 1;
@@ -1122,6 +1122,88 @@ static int _build_path_debug_rdma1_dsi0(void)
 	return ret;
 }
 
+static void primary_m6_dump_trigger_loop_state(const char *tag)
+{
+	unsigned int cg = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0);
+
+	DISPPR_ERROR("M6 trigger dump[%s]: route VALID=0x%x READY=0x%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x MMSYS_CG=0x%x\n",
+		tag,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_COLOR0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DITHER_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
+		cg);
+	DISPPR_ERROR("M6 trigger dump[%s]: MMSYS_CG gated bits larb0=%u ovl0=%u rdma0=%u color=%u dither=%u dsi_engine=%u dsi_digital=%u\n",
+		tag,
+		!!(cg & (1U << 3)), !!(cg & (1U << 6)),
+		!!(cg & (1U << 8)), !!(cg & (1U << 11)),
+		!!(cg & (1U << 15)), !!(cg & (1U << 23)),
+		!!(cg & (1U << 24)));
+	DISPPR_ERROR("M6 trigger dump[%s]: mutex EN=0x%x MOD=0x%x SOF=0x%x INTEN=0x%x INTSTA=0x%x\n",
+		tag,
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTEN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTSTA));
+	DISPPR_ERROR("M6 trigger dump[%s]: rdma0 INTEN=0x%x INTSTA=0x%x GLOBAL=0x%x SIZE=%ux%u MEM_CON=0x%x MEM_START=0x%x IN=%u/%u OUT=%u/%u\n",
+		tag,
+		DISP_REG_GET(DISP_REG_RDMA_INT_ENABLE),
+		DISP_REG_GET(DISP_REG_RDMA_INT_STATUS),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_SIZE_CON_0),
+		DISP_REG_GET(DISP_REG_RDMA_SIZE_CON_1),
+		DISP_REG_GET(DISP_REG_RDMA_MEM_CON),
+		DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT));
+	DISPPR_ERROR("M6 trigger dump[%s]: ovl0 EN=0x%x SRC=0x%x ROI=0x%x L0_CON=0x%x L0_SIZE=0x%x L0_ADDR=0x%x L0_PITCH=0x%x\n",
+		tag,
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_EN),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_ROI_SIZE),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L0_CON),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L0_SRC_SIZE),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L0_ADDR),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L0_PITCH));
+	DISPPR_ERROR("M6 trigger dump[%s]: dsi0 START=0x%x STA=0x%x INTEN=0x%x INTSTA=0x%x MODE=0x%x PS=0x%x PHY_LCCON=0x%x LD0=0x%x\n",
+		tag,
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x000),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x004),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x008),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x00c),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x014),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x01c),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x104),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x108));
+}
+
+static void primary_m6_hold_trigger_loop_clocks(const char *tag)
+{
+	const unsigned int scanout_cg_mask =
+		(1U << 3) | (1U << 6) | (1U << 8) | (1U << 11) | (1U << 15);
+	unsigned int cg;
+
+	if (primary_video_trigger_loop_clock_hold_applied || !pgc || !pgc->dpmgr_handle)
+		return;
+
+	cg = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0);
+	if (!(cg & scanout_cg_mask))
+		return;
+
+	DISPPR_ERROR("M6 trigger clock hold[%s]: path_power_on before real frame wait CG=0x%x mask=0x%x\n",
+		tag, cg, scanout_cg_mask);
+	dpmgr_path_power_on(pgc->dpmgr_handle, CMDQ_DISABLE);
+	primary_video_trigger_loop_clock_hold_applied = true;
+	DISPPR_ERROR("M6 trigger clock hold[%s]: after path_power_on CG=0x%x\n",
+		tag, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
+}
+
 static void _cmdq_build_trigger_loop(void)
 {
 	int ret = 0;
@@ -1139,7 +1221,10 @@ static void _cmdq_build_trigger_loop(void)
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), pgc->cmdq_handle_trigger, 0);
 
 		if (!primary_video_trigger_loop_diag_logged) {
-			DISPPR_ERROR("M6 video CMDQ boot-unblock: trigger loop waits RDMA0_EOF/MUTEX0_STREAM_EOF; first config wait is skipped until real frame done\n");
+			DISPPR_ERROR("M6 video CMDQ: trigger loop waits real RDMA0_EOF/MUTEX0_STREAM_EOF\n");
+			primary_m6_dump_trigger_loop_state("before-clock-hold");
+			primary_m6_hold_trigger_loop_clocks("before-wait");
+			primary_m6_dump_trigger_loop_state("before-wait");
 			primary_video_trigger_loop_diag_logged = true;
 		}
 
@@ -1285,7 +1370,7 @@ void _cmdq_start_trigger_loop(void)
 	int ret = 0;
 	/*cmdqRecDumpCommand(pgc->cmdq_handle_trigger);*/
 	if (primary_display_is_video_mode())
-		DISPPR_ERROR("M6 video CMDQ: start trigger loop; first config path does not pre-wait frame done\n");
+		DISPPR_ERROR("M6 video CMDQ: start trigger loop with real frame-done tokens\n");
 	/* this should be called only once because trigger loop will nevet stop */
 	ret = cmdqRecStartLoop(pgc->cmdq_handle_trigger);
 	if (!primary_display_is_video_mode()) {
@@ -1394,13 +1479,6 @@ static void _cmdq_flush_config_handle_mira(void *handle, int blocking)
 void _cmdq_insert_wait_primary_path_frame_done(void *handle)
 {
 	if (primary_display_is_video_mode()) {
-		if (!primary_video_first_config_flushed) {
-			if (!primary_video_first_wait_skipped) {
-				DISPPR_ERROR("M6 video CMDQ boot-unblock: skip pre-first-config frame-done wait\n");
-				primary_video_first_wait_skipped = true;
-			}
-			return;
-		}
 		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 	} else {
 		cmdqRecWaitNoClear(handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
@@ -1410,13 +1488,6 @@ void _cmdq_insert_wait_primary_path_frame_done(void *handle)
 void _cmdq_insert_wait_frame_done_token_mira(void *handle)
 {
 	if (primary_display_is_video_mode()) {
-		if (!primary_video_first_config_flushed) {
-			if (!primary_video_first_wait_skipped) {
-				DISPPR_ERROR("M6 video CMDQ boot-unblock: skip pre-first-config RDMA0/MUTEX0 frame-done wait\n");
-				primary_video_first_wait_skipped = true;
-			}
-			return;
-		}
 		cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
 		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), handle, 0);
@@ -3069,10 +3140,11 @@ static int _present_fence_release_worker_thread(void *data)
 
 			if (ret <= 0) {
 				if (!primary_present_fence_timeout_diag_logged || (count++ % 60) == 0) {
-					DISPPR_ERROR("M6 display isolation: IF_VSYNC timeout; release present fence idx=%u ret=%d to keep boot moving\n",
+					DISPPR_ERROR("M6 display: IF_VSYNC timeout; hold present fence idx=%u ret=%d until real VSYNC\n",
 						gPresentFenceIndex, ret);
 					primary_present_fence_timeout_diag_logged = true;
 				}
+				continue;
 			}
 			/* dpmgr_wait_event(pgc->dpmgr_handle, DISP_PATH_EVENT_FRAME_DONE); */
 		}
@@ -3206,8 +3278,8 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	primary_video_frame_wait_diag_logged = false;
 	primary_video_bl_wait_diag_logged = false;
 	primary_video_trigger_loop_diag_logged = false;
+	primary_video_trigger_loop_clock_hold_applied = false;
 	primary_video_first_cfg_diag_logged = false;
-	primary_video_first_wait_skipped = false;
 	primary_present_fence_timeout_diag_logged = false;
 
 	dprec_init();
@@ -5577,7 +5649,7 @@ int _set_backlight_by_cmdq(unsigned int level)
 		MMProfileLogEx(ddp_mmp_get_events()->primary_set_bl, MMProfileFlagPulse, 1, 2);
 		cmdqRecReset(cmdq_handle_backlight);
 		if (!primary_video_bl_wait_diag_logged) {
-			DISPPR_ERROR("M6 clean MTK diag: keep RDMA0_EOF wait before backlight command\n");
+			DISPPR_ERROR("M6 video CMDQ: backlight waits real RDMA0_EOF before command\n");
 			primary_video_bl_wait_diag_logged = true;
 		}
 		_cmdq_insert_wait_frame_done_token_mira(cmdq_handle_backlight);

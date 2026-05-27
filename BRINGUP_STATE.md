@@ -623,3 +623,285 @@ print(cap[:len(expected)] == expected)
 PY2
 grep -R -n -E 'M6 DDP SMI clk|M6 clean MTK diag|M6 SMI diag|MMSYS_CG|DISP_DL_VALID_0|DISP_DL_READY_0|CMDQ_EVENT_DISP_RDMA0_EOF|RDMA0_SOUT|DSI0_SEL|Built-in Screen|VSYNC|flips=|sys.boot_completed|AudioFlinger::RecordThread::readInputParameters_l' <next-capture>/evidence <next-capture>/mtp
 ```
+
+## 2026-05-25 LOS15 3b345ff9 closeall combined debug artifact
+
+FACT: The current combined debug artifact was built from `/srv/forge/android/rom-lineage-15.1-meizu_m6-experimental` using the existing output tree `out-m6-71799c1a-closeall`, not a new clean out directory. The final flashable zip is `/srv/forge/android/rom-lineage-15.1-meizu_m6-experimental/out-m6-71799c1a-closeall/target/product/meizu_m6/lineage-15.1-20260525-UNOFFICIAL-meizu_m6.zip` sha256 `7b8bb69383f4415ea028748ffef80cbfc7b6f8cb580cd5873d9cd6fd6db5d8fd`. Export bundle is `/srv/forge/android/export/meizu_m6_artifacts/20260525-los15-3b345ff9-closeall-1650dfcaf3` and `sha256sum -c SHA256SUMS` plus `zip -T` pass.
+
+FACT: Artifact identity files: boot image `boot-3b345ff9-closeall.img` sha256 `a0f4e75736155ef62458ec45e9032164b1dcd311e74459e6d1d9356dfe89a08e`; kernel payload `Image-3b345ff9-closeall.gz-dtb` sha256 `08ab81a0376fa9943af4a6fb628bf21e3d90ceed5cb29c0df2c1a6052cc00dbd`; `System.map-3b345ff9-closeall` sha256 `b6628dd3054df8f5b9d113fc5950035faacdad9ed39372f18b95d64285340c72`; kernel config sha256 `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`; target_files `lineage_meizu_m6-target_files-1650dfcaf3.zip` sha256 `17741e4788fb0b674907c39c8e9dee44d42f853f3bf1f7c0a9c9b221d71227b4`.
+
+FACT: Final OTA updater-script writes nested MTK paths again: `/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/system` for mount/update and `/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot` for boot extraction. `BOOT/RAMDISK/default.prop` has `ro.secure=0`, `ro.debuggable=1`, and `ro.adb.secure=0`. Target-files ramdisk creates `/dev/block/platform/mtk-msdc.0/by-name` as a legacy alias to the nested path without replacing the real nested path. Target-files listing has no device sensors HAL service/impl, no `sensors.mt6750`, no `android.hardware.sensor.*` permission XML, and no soundtrigger service/impl entries; framework soundtrigger libraries remain as platform libraries.
+
+FACT: The previous `71799c1a` capture still did not prove raw flashed boot identity because boot hash read from `/dev/block/mmcblk0p21` returned `Permission denied`. Runtime nonetheless showed the live display frontier: `BootAnimation`, SurfaceFlinger built-in screen `720x1280`, HWC/Mali active, backlight `102`, but `VSYNC disabled`, flips around 6, display IRQs near zero, and repeated `CMDQ_EVENT_DISP_RDMA0_EOF` token 0 with `DISP_DL_VALID_0=0`, `DISP_DL_READY_0=0`, and `MMSYS_CG=0xfe706bfc`.
+
+PATCH HISTORY, DIAGNOSTIC/BOOT-UNBLOCK, 2026-05-25: combined M6 closeall artifact for display-first runtime capture.
+
+Hypothesis: The current source kernel is no longer blocked by a missing fb device or HWC load; it is blocked in the first real primary display frame path where RDMA0/MUTEX0 never reach EOF. The next artifact must avoid fake EOF signaling and log the exact DDP/CMDQ/RDMA/OVL/DSI state before and after the first real wait while unrelated first-boot loops are reduced enough to keep capture quality usable.
+
+Evidence: The `71799c1a` capture facts above; final built kernel strings contain `M6 DDP timeout[...]` and `M6 video CMDQ: keep real RDMA0/MUTEX0 frame-done waits; no EOF token seeding`. Final built kernel strings do not contain the old `skip pre-first-config` boot-unblock marker. The final ROM payload verification facts above prove installer, debug ADB, and sensors/soundtrigger isolation are present in the artifact to be flashed.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` removes first-config frame-done wait skipping and EOF token seeding, holds present fences until real VSYNC, and keeps backlight commands behind real RDMA0 EOF waits. `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` adds early and timeout read-only dumps for route, MMSYS gates, mutex, RDMA0 memory/counters/FIFO, OVL0 layer config/address/size/pitch, SMI/LARB0, and DSI0 core/PHY debug state. `kernel-3.18/arch/arm64/boot/dts/meizu_m6.dts` disables duplicate OF-created I2C clients for gsensor, bq24157, and msensor that were colliding with legacy MTK board registration. `kernel-3.18/drivers/input/touchscreen/mediatek/ft5x0x/ft5x0x_driver.c` and `kernel-3.18/drivers/input/touchscreen/mediatek/mtk_tpd.c` propagate `-EPROBE_DEFER` for `vtouch` instead of continuing after deferred regulator setup. ROM `init.mt6755.rc` restores nested by-name usage and legacy aliases, disables `msensord` first-boot start, and keeps insecure ADB. ROM product/vendor makefiles and the M6 handheld core permissions stop advertising broken sensors/soundtrigger HAL endpoints. ROM `system.prop` no longer publishes `ro.hardware.sensors=mt6750`.
+
+Why each file changed: `primary_display.c` and `ddp_manager.c` are on the proven display frontier and either remove fake progress or add read-only state needed for the next capture. The OVL/RDMA/DSI additions are observation-only and target the current `DISP_DL_VALID_0=0`, `DISP_DL_READY_0=0`, near-zero IRQ frontier. The DTS/I2C/touch edits address capture-proven I2C transfer failures and deferred power setup without stubbing drivers. The ROM init and product edits address the user's proven install-path regression and the first-boot runtime loops that were hiding display/audio progress; they are boot-unblock/isolation changes, not claims that sensors or soundtrigger are fixed.
+
+Expected next marker: The next capture must include a raw boot partition dump or recovery/root hash matching boot sha256 `a0f4e75736155ef62458ec45e9032164b1dcd311e74459e6d1d9356dfe89a08e`. If display advances, `CMDQ_EVENT_DISP_RDMA0_EOF` token-0 waits stop repeating, `rdma0`/`dsi0`/`cmdq` IRQ counts rise, SurfaceFlinger VSYNC enables, flips rise, and the panel becomes visible. If it still stalls, dmesg should contain the new `M6 DDP timeout[...]` dumps showing whether RDMA0 starts, OVL0 produces pixels, mutex config is armed, DSI0 starts, and which MMSYS gates remain set. Runtime should not show sensors/soundtrigger restart loops from removed HAL advertising, and install must not fail on missing non-nested by-name paths.
+
+Rollback condition: Revert the display behavior part if a verified boot hash regresses before ADB/SurfaceFlinger or if real EOF waits disappear from logs. Revert the expanded read-only dump only if it makes logs unusably noisy or causes a register-access fault. Revert the sensors/soundtrigger isolation only after real kernel input/IIO nodes, HAL domains, and service registration are proven. Revert the installer/by-name change only if recovery proves the device lacks the nested `11230000.msdc0/by-name` path, which conflicts with all current runtime captures.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260525-los15-3b345ff9-closeall-1650dfcaf3
+(cd "$ART" && sha256sum -c SHA256SUMS)
+/usr/bin/zip -T "$ART/lineage-15.1-20260525-UNOFFICIAL-meizu_m6.zip"
+unzip -p "$ART/lineage-15.1-20260525-UNOFFICIAL-meizu_m6.zip" META-INF/com/google/android/updater-script | grep -n '11230000.msdc0/by-name'
+unzip -l "$ART/lineage_meizu_m6-target_files-1650dfcaf3.zip" | grep -Ei 'sensors\.mt6750|android\.hardware\.sensors@1\.0-service\.mtk|android\.hardware\.sensors@1\.0-impl\.mtk|android\.hardware\.sensor\.|android\.hardware\.soundtrigger@2\.0-impl|soundtrigger@2\.0-service|sound_trigger' || true
+gzip -cd "$ART/Image-3b345ff9-closeall.gz-dtb" 2>/dev/null | strings | grep -E 'M6 DDP timeout|M6 video CMDQ|M6 DDP SMI clk|ili9881p_hd_dsi_txd'
+# Next capture identity gate:
+python3 - <<'PY2'
+from pathlib import Path
+import hashlib
+cap = Path('<next-capture>/evidence/adb/mtk/partitions/boot-partition-16m.img').read_bytes()
+expected = Path('/srv/forge/android/export/meizu_m6_artifacts/20260525-los15-3b345ff9-closeall-1650dfcaf3/boot-3b345ff9-closeall.img').read_bytes()
+print(hashlib.sha256(cap[:len(expected)]).hexdigest())
+print(cap[:len(expected)] == expected)
+PY2
+grep -R -n -E 'M6 DDP timeout|M6 video CMDQ|CMDQ_EVENT_DISP_RDMA0_EOF|DISP_DL_VALID|DISP_DL_READY|MMSYS_CG|MEM_CON|ovl0 ROI|PHY_LCCON|RDMA0_SOUT|DSI0_SEL|Built-in Screen|VSYNC|flips=|sys.boot_completed|msensord|soundtrigger|i2c.*xfer fail' <next-capture>/evidence <next-capture>/mtp
+```
+
+## 2026-05-25 9196ea7c display prep without rebuild
+
+FACT: The latest ROM debug capture `9196ea7c-7dfc-4768-b470-99dcc1411bdc` verified the current LOS15 boot image and shows SurfaceFlinger/HWC/fb0 alive but physical scanout stalled: `surfaceflinger.txt` reports Built-in Screen `720x1280`, `flips=7`, `powerMode=2`, `isDisplayOn=1`, `VSYNC state: disabled`, and only BootAnimation; `interrupts_focus.txt` has near-zero `mtk_cmdq`, `ovl0`, `rdma0`, and zero `dsi0`; logcat repeats `GED Frame didn't finished in 1000 ms` and `timeline-primary`/`disp-S10000-L0-3` fence waits.
+
+FACT: The user corrected the workflow: do not start with a manual rebuild, and display must be handled. No build was launched for this update.
+
+PATCH HISTORY, DIAGNOSTIC, 2026-05-25: expand M6 display timeout dump and remove pre-frame backlight bypass from the planned source state.
+
+Hypothesis: the current display frontier is below SurfaceFlinger/HWC and above or inside the first real OVL0/RDMA0/DSI0 frame path. The next useful capture must tell whether OVL0 has enabled layers and valid fetch addresses, whether RDMA0 is in memory/direct mode and counting pixels, whether MUTEX0/SOF is armed, whether DSI0 has started/PHY state, and whether SMI/LARB0 is blocking display fetch. A pre-frame direct backlight command is not needed for this question and risks another behavior variable.
+
+Evidence: `9196ea7c` display facts above; prior `71799c1a` facts show the same frontier with `DISP_DL_VALID_0=0`, `DISP_DL_READY_0=0`, and `MMSYS_CG=0xfe706bfc`. Current display guardrail requires hardware-state inspection, not another CMDQ wait/fence/fake-ready patch.
+
+Files changed: `ddp_manager.c` now logs RDMA0 `MEM_CON`, memory start, pitch, target line, FIFO config; OVL0 ROI/datapath and L0-L3 config/size/address/pitch; SMI LARB0 status/MMU/GREQ; and DSI0 PHY/debug registers in the existing first-wait/timeout dump. `primary_display.c` keeps real RDMA0/MUTEX0 waits and present-fence hold, but removes the pre-frame direct-DSI backlight bypass so backlight remains behind real RDMA0 EOF.
+
+Why each file changed: `ddp_manager.c` owns the proven wait-timeout observation point and can read hardware state without mutating registers. `primary_display.c` owned prior fake-ready/bypass behavior; this update keeps the no-fake-EOF stance while avoiding an extra pre-frame DSI command path.
+
+Expected next marker: next verified capture contains `M6 DDP timeout[...]` lines with `MEM_CON`, `MEM_START`, `ovl0 ROI`, `L0/L1/L2/L3`, `LARB0_STA`, and `PHY_LCCON`. The dump should narrow the stall to OVL fetch/layer config, RDMA start/counters/mode, MUTEX/SOF, DSI start/PHY, SMI/LARB, or clock/reset state.
+
+Rollback condition: revert this diagnostic if a verified next artifact regresses before ADB/SurfaceFlinger or if the added read-only register accesses fault. Revisit present-fence hold separately if userspace stops producing useful captures, but do not restore fake fence release as a fix.
+
+Verification commands: `git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c BRINGUP_STATE.md`; after rebuild/capture, grep `M6 DDP timeout|MEM_CON|MEM_START|ovl0 ROI|LARB0_STA|PHY_LCCON|CMDQ_EVENT_DISP_RDMA0_EOF|Built-in Screen|VSYNC|flips=` in the verified capture.
+
+## 2026-05-26 LOS15 018b10cf / debug 1779747393021 identity-display-audio frontier
+
+FACT: Build `018b10cf-7b13-46a5-b032-df2b1176ffee` is M6 recipe `7fad8270-05be-4798-ae73-2ca46b7ede7c`, device `0b13c8c6-d194-431f-a397-f852e3aae7d9`, target `rom-meizu_M6-lineage-15.1-stockkernel-experimental`, status `success/DONE`. ROM zip SHA256 is `a989497d7124dbb9837138279e1549144ee01344b8b36c249f17f285d4be92a2`; debug capture archive `browser-debug-evidence-1779747393021.tar` SHA256 is `8590fe40039b0e2232d16bf8d0530ecf4c71eff2428ca1ad8c6540f485d35ed7`.
+
+FACT: Capture path is `/home/n8n/forge-work/m6-1779747393021/intake`. Runtime identity is Meizu M6: `ro.product.device=meizu_m6`, `ro.product.name=lineage_meizu_m6`, fingerprint `meizu/lineage_meizu_m6/meizu_m6:8.1.0/OPM7.181205.001/ed271c6377:eng/test-keys`, boot mode `normal`, and kernel `Linux version 3.18.140 (root@f90a8e173c9c) ... #22 SMP PREEMPT Mon May 25 17:34:59 UTC 2026`.
+
+FACT: Boot artifact identity is matched by trimmed Android boot image, not by full padded partition. Raw `/dev/block/mmcblk0p21` SHA256 is `da77b5b0018ed03bde00b636f195f56e5f5f0d3e9138a9105717f5c947c0c3bd`; trimmed Android boot SHA256 is `c628110ea0d691ba44b7c5cfb3f7592d23a9cc4ab9ee3aec059bc018e9322166`, matching local `/tmp/m6_out_probe/boot.img` and current ROM out `out/target/product/meizu_m6/boot.img`.
+
+FACT: Display has advanced beyond the earlier no-fb/HWC frontier. `/proc/fb` is `0 mtkfb`; fb0 name is `mtkfb`, mode `U:720x1280p-0`, bpp `32`, virtual `736,3840`, stride `2944`; SurfaceFlinger reports Built-in Screen `720x1280`, `flips=7`, `powerMode=2`, `isDisplayOn=1`, HWC present/enabled, Mali-T860 EGL/GLES, BootAnimation layer, and framebuffer target. VSYNC is still disabled, so display scanout/jank remains a follow-up, but this capture's first crash loop is not missing framebuffer registration.
+
+FACT: Current primary runtime blocker in this capture is the audio speech HAL loop. `logcat_crash.txt` repeatedly shows `/system/vendor/lib/hw/audio.primary.mt6750.so` frames `SpeechParamParser::InitSpeechNetwork()+376`, `SpeechDriverLAD`, `SpeechDriverFactory`, `AudioALSASpeechPhoneCallController`, `AudioALSAHardware`, and `createAudioHardware`, followed by `Fatal signal 11` in `android.hardware.audio@2.0-service` and `Abort message: 'HAL server crashed, need to restart'` in `audioserver`. `/proc/asound/cards` reports `0 [mtsndcard]: mt-snd-card`, so this is not the old missing-ALSA-card frontier.
+
+INFERENCE: The next M6 patch cycle should move from display bring-up to a single audio speech contract bundle: vendor `audio_param`/NVRAM contents and permissions, `/dev/ccci_aud`/modem readiness, audio policy/device XML, and `audio.primary.mt6750.so` dependency/ABI coherence. Do not patch display in the same cycle unless a fresh capture proves display has become the earliest blocker again.
+
+PATCH HISTORY, PRODUCT-FIX, 2026-05-26: Build Station classifier and triage now recognize M6 `SpeechParamParser::InitSpeechNetwork` as `android_audio_vendor_speech_network_crash` and route it to `vendor_blobs`. Tests `tests/test_log_classifier.py tests/test_log_triage.py` pass `132 passed`. This is product routing only; no kernel behavior changed in this state entry.
+
+Expected next marker: next Build Station triage of `1779747393021` or equivalent M6 capture should select `android_audio_vendor_speech_network_crash`, `component=android.audio`, `patch_root=vendor_blobs`; a real audio patch should stop repeated `SpeechParamParser::InitSpeechNetwork` SIGSEGV and either publish audio policy normally or expose the next concrete speech/CCCI/audio_param error.
+
+Rollback condition: revert the classifier/product routing only if a verified M6 capture with matching boot identity lacks the speech-network crash and instead has an earlier kernel display/init/storage blocker; do not restore default-HAL masking as a clean fix.
+
+Verification commands:
+
+```bash
+cd /home/n8n/build-station/apps/api
+uv run pytest tests/test_log_classifier.py tests/test_log_triage.py -q
+uv run python - <<'PY2'
+from pathlib import Path
+from app.services.log_triage import triage_log
+p = Path('/home/n8n/forge-work/m6-1779747393021/intake/evidence/adb/logcat_crash.txt')
+pack = triage_log(p.read_text(errors='ignore'), source_kind='logcat')
+print(pack['frontier'])
+print(pack['issues'][0]['error_type'], pack['issues'][0]['component'], pack['issues'][0]['patch_root'])
+PY2
+grep -n -E 'ro.product.device|ro.product.name|ro.build.fingerprint|ro.bootmode' /home/n8n/forge-work/m6-1779747393021/intake/evidence/adb/getprop.txt
+grep -n -E 'Built-in Screen|powerMode=2|isDisplayOn=1|BootAnimation|VSYNC state|HWC|Mali-T860' /home/n8n/forge-work/m6-1779747393021/intake/evidence/adb/surfaceflinger.txt
+grep -n -E 'SpeechParamParser|SpeechDriverFactory|AudioALSASpeechPhoneCallController|createAudioHardware|HAL server crashed|Fatal signal' /home/n8n/forge-work/m6-1779747393021/intake/evidence/adb/logcat_crash.txt | head -80
+```
+
+## 2026-05-26 fa21056a display clock-hold patch
+
+FACT: Debug run `fa21056a-7024-4d07-a432-ffb5b29cda50` / capture `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/85c22568-0c02-4692-bf4f-f57fc12474a4/browser-debug-evidence-1779788484672.tar` was verified against ROM build `260f8ddf-229b-40c3-8719-37e2d761fbe4`; local, ZIP, and trimmed captured `boot.img` sha256 all match `654a8d90daa52a2a1b99c67f4be3efb7b909c94132aacf7975a95a8094c7990a`.
+
+FACT: The capture reaches Android 8.1 userspace with SurfaceFlinger running and fb0 registered, but the physical display remains black. Dmesg lines around 1401/2015/2366/2836 show direct route registers already set (`OVL0_MOUT=0x1`, `COLOR0_SEL=0x1`, `DITHER_MOUT=0x1`, `RDMA0_SOUT=0x2`, `DSI0_SEL=0x1`) while `DISP_DL_VALID_0=0`, `DISP_DL_READY_0=0`, repeated `CMDQ_EVENT_DISP_RDMA0_EOF` token value is 0, and `MMSYS_CG` is `0xfc706bfc`/`0xfc702bfc` with gated primary scanout bits `larb0=1`, `ovl0=1`, `color=1`, `rdma0=1`.
+
+FACT: The same dumps show RDMA0 enabled but not counting pixels (`GLOBAL=0x101`, `IN=0/1280`, `OUT=0/1280`, `MEM_CON=0`, `MEM_START=0`), OVL0 enabled with layer addresses, mutex0 armed, and DSI0 started. This keeps the frontier below HWC/fences and inside DDP clock/module state, not a new CMDQ wait-token or fake EOF problem.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-26: re-enable primary DDP scanout clocks before the first real video wait.
+
+Hypothesis: The current M6 display path is configured but the primary scanout modules are still clock-gated when the first `FRAME_DONE`/`IF_VSYNC` wait begins. Re-running the normal DDP top-clock and per-module `power_on` sequence once for the primary display path, only when the captured gated bits are present, should let real RDMA0 EOF/VSYNC progress happen without fake token seeding or wait skipping.
+
+Evidence: `fa21056a` dmesg lines around 1401-1411, 2015-2025, 2366-2390, and 2836-2846 show valid route registers, started DSI0, enabled OVL0/RDMA0, repeated RDMA0 EOF waits, and primary scanout CG bits still gated. The display bring-up guardrail says after the direct route is already `OVL0 -> COLOR0 -> DITHER -> RDMA0 -> DSI0`, do not patch waits/fences/CMDQ token seeding again; move to hardware state and clocks.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` adds `dpmgr_m6_hold_primary_video_clocks()` and calls it before the first primary `FRAME_DONE`/`IF_VSYNC` wait; the existing first-wait/timeout dump remains read-only and now reports before/after clock-hold state with `M6 DDP clock hold[...]` markers.
+
+Why each file changed: `ddp_manager.c` owns `dpmgr_wait_event_timeout()` and has access to the active primary display path handle, scenario module list, and existing `module_power_on()`/`ddp_path_top_clock_on()` helpers. The patch uses the normal driver power-on path for modules proven gated by the capture and does not change LCM init, DSI commands, fences, CMDQ waits, or EOF token values.
+
+Expected next marker: next verified build kernel strings contain `M6 DDP clock hold`; next capture shows `M6 DDP clock hold[FRAME_DONE|VSYNC]` before the first timeout with lower/cleared `MMSYS_CG` bits for LARB0/OVL0/COLOR0/RDMA0. If the hypothesis is right, `CMDQ_EVENT_DISP_RDMA0_EOF` token-0 repeats stop or reduce, `rdma0`/`dsi0` IRQ counts rise, `DISP_DL_VALID_0`/`READY_0` become non-zero, SurfaceFlinger VSYNC enables, flips increase, and the panel lights.
+
+Rollback condition: revert this clock-hold patch if a verified next build regresses before ADB/SurfaceFlinger/fb0, if the `M6 DDP clock hold` marker appears but the same CG bits remain gated with identical RDMA0 counters, or if power-on sequencing causes a new DSI/SMI/clock crash before the previous RDMA0 EOF frontier.
+
+Verification commands:
+
+```bash
+# Build/source checks
+cd /srv/forge/android/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c BRINGUP_STATE.md
+grep -n 'M6 DDP clock hold' kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c
+# After ROM/kernel rebuild:
+gzip -cd /srv/forge/android/rom-lineage-15.1-meizu_m6-experimental/out/target/product/meizu_m6/kernel 2>/dev/null | strings | grep 'M6 DDP clock hold' || true
+grep -R -n -E 'M6 DDP clock hold|M6 DDP timeout|MMSYS_CG gated bits|CMDQ_EVENT_DISP_RDMA0_EOF|DISP_DL_VALID|DISP_DL_READY|rdma0 INTEN|dsi0 START|VSYNC|flips=' <next-capture>/evidence <next-capture>/mtp
+```
+
+## 2026-05-26 fa21056a clock-hold rebuild verified
+
+FACT: The M6 ROM rebuild containing the clock-hold kernel patch completed in the previous workspace `/home/n8n/forge-work/rom-workspaces/lineage-lineage-15.1-meizu_m6-885bc4c815`, container `fff7cb3dbfb5` / `codex-m6-prevworkspace-20260526111426`, with build log `/home/n8n/forge-work/rom-m6-prevdir-fa21056a-20260526/build.log` ending in `Package Complete` and `build completed successfully (04:12:21 (hh:mm:ss))`. Build log sha256 is `90daae0abe6ce0bc587ae1fb9ea2ff339182cc590f68edb69063df0c9e900e8f`.
+
+FACT: Flashable ROM is `/home/n8n/forge-work/rom-workspaces/lineage-lineage-15.1-meizu_m6-885bc4c815/out/target/product/meizu_m6/lineage-15.1-20260526-UNOFFICIAL-meizu_m6.zip`, sha256 `68dba98f19adca29447a640782c5d5ab416e8ec4561eb8ac61b4e43472f84ddf`; `/usr/bin/zip -T` passes. `boot.img` sha256 is `9f3b5a4c021bb9f62dc731b749275d07609115e3d03c6b384eaf139ecee07a11`, and the ZIP-embedded `boot.img` sha256 is the same.
+
+FACT: Kernel payload `/home/n8n/forge-work/rom-workspaces/lineage-lineage-15.1-meizu_m6-885bc4c815/out/target/product/meizu_m6/kernel` sha256 is `e4670296680c27a7645ab562ddd9998b0707ea8db27bd1d25427d20009772392`. Matching source-kernel identity files are `/srv/forge/android/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18/out/forge-meizu_m6_defconfig/System.map` sha256 `f739351a28afaac56178a192cfb914d8e1b9757b6654f0113c501c774309b56a` and `.config` sha256 `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+
+FACT: Decompressing the built kernel payload and grepping strings finds the expected marker `M6 DDP clock hold[%s]: re-enable primary scanout clocks CG=0x%x mask=0x%x`, proving the rebuilt artifact contains the clock-hold patch.
+
+Expected next marker: after flashing this exact ROM, the next capture should show `M6 DDP clock hold[FRAME_DONE|VSYNC]` before the first `M6 DDP timeout[...]` dump. If the hypothesis is correct, `MMSYS_CG` should clear at least the primary scanout gated bits, RDMA0/DISPLAY IRQ counters should rise, and the black screen should move to a newer visible log frontier or light the panel.
+
+Verification commands used:
+
+```bash
+/usr/bin/zip -T /home/n8n/forge-work/rom-workspaces/lineage-lineage-15.1-meizu_m6-885bc4c815/out/target/product/meizu_m6/lineage-15.1-20260526-UNOFFICIAL-meizu_m6.zip
+sha256sum /home/n8n/forge-work/rom-workspaces/lineage-lineage-15.1-meizu_m6-885bc4c815/out/target/product/meizu_m6/lineage-15.1-20260526-UNOFFICIAL-meizu_m6.zip /home/n8n/forge-work/rom-workspaces/lineage-lineage-15.1-meizu_m6-885bc4c815/out/target/product/meizu_m6/boot.img /home/n8n/forge-work/rom-workspaces/lineage-lineage-15.1-meizu_m6-885bc4c815/out/target/product/meizu_m6/kernel /srv/forge/android/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18/out/forge-meizu_m6_defconfig/System.map /srv/forge/android/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18/out/forge-meizu_m6_defconfig/.config /home/n8n/forge-work/rom-m6-prevdir-fa21056a-20260526/build.log
+unzip -p /home/n8n/forge-work/rom-workspaces/lineage-lineage-15.1-meizu_m6-885bc4c815/out/target/product/meizu_m6/lineage-15.1-20260526-UNOFFICIAL-meizu_m6.zip boot.img | sha256sum
+gzip -cd /home/n8n/forge-work/rom-workspaces/lineage-lineage-15.1-meizu_m6-885bc4c815/out/target/product/meizu_m6/kernel 2>/dev/null | strings | grep 'M6 DDP clock hold'
+grep -n -E 'Package Complete|build completed successfully|FAILED:|ninja: error|No space left|error:' /home/n8n/forge-work/rom-m6-prevdir-fa21056a-20260526/build.log | tail -30
+```
+
+## 2026-05-27 f8285f8e trigger-loop display evidence gap
+
+FACT: Latest debug run `f8285f8e-0f7d-4cc3-9e32-31ae5ac15f86` captured boot
+partition trim sha256 `9f3b5a4c021bb9f62dc731b749275d07609115e3d03c6b384eaf139ecee07a11`,
+matching the clock-hold ROM boot image from the previous section. The capture
+contains `M6 DDP ufoe route: panel ufoe_enable=0; route RDMA0 directly to DSI0`
+and then `M6 video CMDQ: trigger loop waits real RDMA0_EOF/MUTEX0_STREAM_EOF`,
+but it does not contain `M6 DDP clock hold` or `M6 DDP timeout[...]`.
+
+INFERENCE: The current evidence reaches the trigger-loop wait before the
+`dpmgr_wait_event_timeout()` diagnostic path, so the existing timeout dump is
+too late for this run. The next artifact needs a read-only snapshot at the
+trigger-loop wait site before any new behavior change.
+
+PATCH HISTORY, DIAGNOSTIC, 2026-05-27: add a read-only trigger-loop display
+state dump.
+
+Hypothesis: The source kernel is still stalled at the first video trigger loop,
+but the missing layer data is route/clock/mutex/RDMA/OVL/DSI state at the
+moment the CMDQ trigger loop queues the real RDMA0/MUTEX0 waits.
+
+Evidence: `docs/run_reports/2026-05-27_m6_f8285f8e_display_run_final.json`
+selects `kernel.display.rdma`; the fresh dmesg evidence line is
+`[DISP]ERROR:M6 video CMDQ: trigger loop waits real RDMA0_EOF/MUTEX0_STREAM_EOF`.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`
+adds `primary_m6_dump_trigger_loop_state("before-wait")` under the existing
+one-shot trigger-loop diagnostic guard.
+
+Why each file changed: `primary_display.c` owns `_cmdq_build_trigger_loop()`,
+which is the earliest proven line in the latest capture. The new dump only
+reads registers and does not change DSI commands, clocks, fences, waits, or
+CMDQ event tokens.
+
+Expected next marker: next verified build kernel strings contain
+`M6 trigger dump[%s]`; next capture contains `M6 trigger dump[before-wait]`
+lines for `VALID/READY`, `MMSYS_CG gated bits`, `mutex`, `rdma0`, `ovl0`, and
+`dsi0`, before the RDMA0 EOF wait line.
+
+Rollback condition: revert this diagnostic if the verified next artifact
+regresses before the existing `M6 video CMDQ` marker or if a read-only register
+access faults before ADB/SurfaceFlinger.
+
+Verification commands:
+
+```bash
+grep -n 'M6 trigger dump' kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c
+gzip -cd <rebuilt-kernel> 2>/dev/null | strings | grep 'M6 trigger dump'
+grep -R -n -E 'M6 trigger dump|M6 video CMDQ|CMDQ_EVENT_DISP_RDMA0_EOF|M6 DDP clock hold|M6 DDP timeout' <next-capture>/evidence <next-capture>/mtp
+```
+
+## 2026-05-27 8ed94f7b trigger-loop clock hold
+
+FACT: Debug run `8ed94f7b-b3c9-4f85-a034-5e1e5ee504bd` captured manual boot
+artifact `/home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-dump-manual/boot-mkbootimg.img`
+with sha256 `bf5d9326591d1d9cf3dea93b153aee93b18bbaa60a49942d83a4f7334a3683ff`.
+The runtime identity pack reports `ro.product.device=meizu_m6`; `/proc/fb`
+contains `0 mtkfb`.
+
+FACT: The BOOT-UNBLOCK rebuild produced kernel payload
+`/home/n8n/forge-work/kernel-builds/m6-8ed94f7b-display/out/arch/arm64/boot/Image.gz-dtb`
+with sha256 `91d9b14962052619d7e8b9d4394ae840d0990d68707557060ed8204650561d62`.
+The manual boot image is
+`/home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-manual/boot.img`
+with sha256 `810b58028f7c8d2eb383600677d11dd98a9e426ab0f81720490c3b9112109710`;
+Build Station artifact id is `fb05707b-aace-469a-b784-71d77011dec6`.
+
+FACT: The new trigger-loop dump is present in
+`docs/run_reports/2026-05-27_m6_8ed94f7b_debug_text.txt`: before the real
+RDMA0/MUTEX0 wait, route registers are set, but `READY=0x0` and
+`MMSYS_CG=0xfc706bfc` with `larb0=1 ovl0=1 rdma0=1 color=1`. RDMA0 is enabled
+and counting partially (`IN=662/768 OUT=68/765`), DSI0 is started, and OVL0
+registers are readable. This keeps the frontier inside primary DDP scanout
+clocks/RDMA, not in HWC or userspace.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-27: re-run normal primary DDP path power-on
+immediately before the first video trigger-loop frame wait when scanout clocks
+are still gated.
+
+Hypothesis: The earlier clock-hold in `dpmgr_wait_event_timeout()` runs too
+late for the current boot path. The first CMDQ trigger loop queues real
+RDMA0/MUTEX0 waits while primary scanout clocks are already gated, so the
+frame never completes. Re-running the normal `dpmgr_path_power_on()` sequence
+once at this exact site should ungate the active DDP modules without fake EOF
+tokens, wait skipping, or direct broad CG register writes.
+
+Evidence: `8ed94f7b` lines 3487-3494 show the first trigger-loop wait and the
+before-wait dump: `READY=0x0`, gated `larb0/ovl0/rdma0/color`, RDMA output
+stopping at `68/765`, and DSI0 already started. The generated `.config` has
+`# CONFIG_MTK_CLKMGR is not set`, so this tree uses the CCF `ddp_clk_*` path
+which `dpmgr_path_power_on()` already drives per module.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`
+adds a one-shot `primary_m6_hold_trigger_loop_clocks()` call between the
+before-clock dump and the real RDMA0/MUTEX0 waits.
+
+Why each file changed: `_cmdq_build_trigger_loop()` is the earliest proven
+display blocker in the latest capture. The patch calls existing path power-on
+plumbing for the active primary display path only if the captured scanout CG
+bits are set; it does not change LCM init, DSI commands, CMDQ events, fences,
+or EOF waits.
+
+Expected next marker: next capture shows `M6 trigger clock hold[before-wait]`
+followed by `M6 trigger dump[before-wait]` with lower/cleared
+`MMSYS_CG` bits for LARB0/OVL0/RDMA0/COLOR0. If the hypothesis is right,
+RDMA0 EOF/MUTEX0 stream EOF should progress and the panel should either light
+or advance to a newer display frontier.
+
+Rollback condition: revert this patch if a verified next artifact regresses
+before `M6 video CMDQ`, if the hold marker appears but the same CG bits remain
+gated with identical RDMA counters, or if it causes a new DSI/SMI/clock crash
+before the previous RDMA0 EOF frontier.
+
+Verification commands:
+
+```bash
+grep -n -E 'M6 trigger clock hold|M6 trigger dump' kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c
+gzip -cd <rebuilt-kernel> 2>/dev/null | strings | grep -E 'M6 trigger clock hold|M6 trigger dump'
+grep -R -n -E 'M6 trigger clock hold|M6 trigger dump|MMSYS_CG gated bits|CMDQ_EVENT_DISP_RDMA0_EOF|MUTEX0_STREAM_EOF|rdma0 INTEN|dsi0 START' <next-capture>/evidence <next-capture>/mtp
+```
