@@ -1125,8 +1125,9 @@ static int _build_path_debug_rdma1_dsi0(void)
 static void primary_m6_dump_trigger_loop_state(const char *tag)
 {
 	unsigned int cg = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0);
+	unsigned int cg1 = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1);
 
-	DISPPR_ERROR("M6 trigger dump[%s]: route VALID=0x%x READY=0x%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x MMSYS_CG=0x%x\n",
+	DISPPR_ERROR("M6 trigger dump[%s]: route VALID=0x%x READY=0x%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x MMSYS_CG=0x%x/%x\n",
 		tag,
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
@@ -1135,13 +1136,13 @@ static void primary_m6_dump_trigger_loop_state(const char *tag)
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DITHER_MOUT_EN),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
 		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
-		cg);
+		cg, cg1);
 	DISPPR_ERROR("M6 trigger dump[%s]: MMSYS_CG gated bits larb0=%u ovl0=%u rdma0=%u color=%u dither=%u dsi_engine=%u dsi_digital=%u\n",
 		tag,
-		!!(cg & (1U << 3)), !!(cg & (1U << 6)),
-		!!(cg & (1U << 8)), !!(cg & (1U << 11)),
-		!!(cg & (1U << 15)), !!(cg & (1U << 23)),
-		!!(cg & (1U << 24)));
+		!!(cg & (1U << 1)), !!(cg & (1U << 10)),
+		!!(cg & (1U << 12)), !!(cg & (1U << 15)),
+		!!(cg & (1U << 19)), !!(cg1 & (1U << 0)),
+		!!(cg1 & (1U << 1)));
 	DISPPR_ERROR("M6 trigger dump[%s]: mutex EN=0x%x MOD=0x%x SOF=0x%x INTEN=0x%x INTSTA=0x%x\n",
 		tag,
 		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
@@ -1186,7 +1187,8 @@ static void primary_m6_dump_trigger_loop_state(const char *tag)
 static void primary_m6_hold_trigger_loop_clocks(const char *tag)
 {
 	const unsigned int scanout_cg_mask =
-		(1U << 3) | (1U << 6) | (1U << 8) | (1U << 11) | (1U << 15);
+		(1U << 1) | (1U << 10) | (1U << 12) | (1U << 15) |
+		(1U << 19) | (1U << 25);
 	unsigned int cg;
 
 	if (primary_video_trigger_loop_clock_hold_applied || !pgc || !pgc->dpmgr_handle)

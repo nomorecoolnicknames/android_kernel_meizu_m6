@@ -1700,8 +1700,8 @@ static bool dpmgr_m6_first_video_wait_dumped;
 static bool dpmgr_m6_primary_clock_hold_applied;
 
 #define M6_PRIMARY_SCANOUT_CG_MASK \
-	((1U << 3) | (1U << 6) | (1U << 8) | (1U << 11) | \
-	 (1U << 15) | (1U << 25))
+	((1U << 1) | (1U << 10) | (1U << 12) | (1U << 15) | \
+	 (1U << 19) | (1U << 25))
 
 static void dpmgr_m6_hold_primary_video_clocks(ddp_path_handle handle,
 	const char *event_name)
@@ -1739,8 +1739,9 @@ static void dpmgr_m6_hold_primary_video_clocks(ddp_path_handle handle,
 static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 {
 	unsigned int cg = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0);
+	unsigned int cg1 = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1);
 
-	DISPERR("M6 DDP timeout[%s]: route VALID=0x%x READY=0x%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x SW0_RST=0x%x MMSYS_CG=0x%x LARB0_GREQ=0x%x\n",
+	DISPERR("M6 DDP timeout[%s]: route VALID=0x%x READY=0x%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x SW0_RST=0x%x MMSYS_CG=0x%x/%x LARB0_GREQ=0x%x\n",
 		event_name,
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
@@ -1750,14 +1751,14 @@ static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
 		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
 		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_SW0_RST_B),
-		cg,
+		cg, cg1,
 		DISP_REG_GET(DISP_REG_CONFIG_SMI_LARB0_GREQ));
 	DISPERR("M6 DDP timeout[%s]: MMSYS_CG gated bits smi_common=%u larb0=%u ovl0=%u color=%u dither=%u rdma0=%u dsi_engine=%u dsi_digital=%u\n",
 		event_name,
-		!!(cg & (1U << 0)), !!(cg & (1U << 3)),
-		!!(cg & (1U << 6)), !!(cg & (1U << 11)),
-		!!(cg & (1U << 15)), !!(cg & (1U << 8)),
-		!!(cg & (1U << 23)), !!(cg & (1U << 24)));
+		!!(cg & (1U << 0)), !!(cg & (1U << 1)),
+		!!(cg & (1U << 10)), !!(cg & (1U << 15)),
+		!!(cg & (1U << 19)), !!(cg & (1U << 12)),
+		!!(cg1 & (1U << 0)), !!(cg1 & (1U << 1)));
 	DISPERR("M6 DDP timeout[%s]: mutex INTEN=0x%x INTSTA=0x%x M0_EN=0x%x M0_MOD=0x%x M0_SOF=0x%x\n",
 		event_name,
 		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTEN),

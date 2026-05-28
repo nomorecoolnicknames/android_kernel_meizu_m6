@@ -905,3 +905,89 @@ grep -n -E 'M6 trigger clock hold|M6 trigger dump' kernel-3.18/drivers/misc/medi
 gzip -cd <rebuilt-kernel> 2>/dev/null | strings | grep -E 'M6 trigger clock hold|M6 trigger dump'
 grep -R -n -E 'M6 trigger clock hold|M6 trigger dump|MMSYS_CG gated bits|CMDQ_EVENT_DISP_RDMA0_EOF|MUTEX0_STREAM_EOF|rdma0 INTEN|dsi0 START' <next-capture>/evidence <next-capture>/mtp
 ```
+
+## 2026-05-27 976594e3 trigger-loop clock hold result
+
+FACT: Debug run `976594e3-67e8-472c-8a82-3bfb32ec13e4` captured target Android from manual trigger-clock boot `/home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-manual/boot.img`, sha256 `810b58028f7c8d2eb383600677d11dd98a9e426ab0f81720490c3b9112109710`. The local boot image kernel payload sha256 is `91d9b14962052619d7e8b9d4394ae840d0990d68707557060ed8204650561d62`; runtime `/proc/version` reports `Linux version 3.18.140 ... Wed May 27 17:37:42 CDT 2026`.
+
+FACT: Fresh dmesg has the expected display markers from commit `80489cbc54d`: `M6 video CMDQ: trigger loop waits real RDMA0_EOF/MUTEX0_STREAM_EOF`, `M6 trigger dump[before-clock-hold]`, and `M6 trigger clock hold[before-wait]`. Before the hold, `MMSYS_CG=0xfc706bfc` with `larb0=1 ovl0=1 rdma0=1 color=1`. After `dpmgr_path_power_on()`, `M6 trigger clock hold[before-wait]: after path_power_on CG=0xfc706bfc`; the following dump still reports `larb0=1 ovl0=1 rdma0=1 color=1`.
+
+FACT: The same dump shows the direct route still set (`OVL0_MOUT=0x1`, `COLOR0_SEL=0x1`, `DITHER_MOUT=0x1`, `RDMA0_SOUT=0x2`, `DSI0_SEL=0x1`), `mutex EN=0x1 MOD=0x5f280 SOF=0x41`, RDMA0 enabled (`GLOBAL=0x101`, `SIZE=720x1280`), DSI0 started (`START=0x1`, `MODE=0x3`, `PHY_LCCON=0x1`). The frontier remains below HWC/SurfaceFlinger and inside DDP/clock/SMI/RDMA.
+
+INFERENCE: The trigger-loop `dpmgr_path_power_on()` call did not ungate the primary scanout clocks. The next display patch must not fake EOF, skip waits, seed CMDQ tokens, or repeat the same hold. The next kernel hypothesis should inspect lower CCF/DDP clock enable state and SMI/LARB power-domain state for LARB0/OVL0/COLOR0/RDMA0.
+
+BLOCKER: The same captured boot ramdisk still had stale M6 storage/m2note contamination (`Build Station m2note`, `/fstab.mt6735`, flat `mtk-msdc.0/by-name` paths). A clean ramdisk repack now exists at `/home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-ramdiskfix/boot.img`, sha256 `9300bd7d878e9761b0cc3a56842108423c856ecab6af1d3cd3d7da36b494e10d`, Build Station artifact `d6cb5087-c535-4947-b673-11cd7ee915bb`, with the same kernel payload sha256 `91d9b14962052619d7e8b9d4394ae840d0990d68707557060ed8204650561d62`. Flash and recapture that clean boot before adding another display behavior patch.
+
+Expected next marker: with the clean-ramdisk boot flashed, the next capture should still show `M6 trigger clock hold[before-wait]` if the display frontier is unchanged, but without the m2note/fstab noise. If `MMSYS_CG` remains `0xfc706bfc` and the same gated bits remain after the hold, patch lower CCF/DDP/SMI/LARB clock-domain instrumentation/enable paths.
+
+Verification commands:
+
+```bash
+sha256sum /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-manual/boot.img /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-ramdiskfix/boot.img /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-ramdiskfix/unpack/zImage
+grep -n -E 'M6 trigger clock hold|M6 trigger dump|MMSYS_CG gated bits|RDMA0_EOF|MUTEX0_STREAM_EOF' /home/n8n/build-station/docs/run_reports/2026-05-27_m6_976594e3_debug_text.txt
+grep -R -n -E 'Build Station m2note|fstab\.mt6735|mtk-msdc\.0/by-name/(system|userdata|nvdata|protect1|protect2)|mtk\.msdc\.0/by-name' /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-ramdiskfix/verify/ramdisk
+grep -R -n -E '11230000\.msdc0/by-name/(system|userdata|nvdata|protect1|protect2)' /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-ramdiskfix/verify/ramdisk/init.mt6755.rc /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-ramdiskfix/verify/ramdisk/fstab.mt6755
+```
+
+## 2026-05-28 6652033c CG decode correction
+
+FACT: Debug run `6652033c-31da-45c2-bb7e-d014ca5772f8` uses the manual
+trigger-clock boot family. Runtime `/proc/version` reports
+`Linux version 3.18.140 ... Wed May 27 17:37:42 CDT 2026`; preflight stored
+capture evidence at
+`/home/n8n/build-station/docs/run_reports/preflight_6652033c-31da-45c2-bb7e-d014ca5772f8/display_debug.md`.
+
+FACT: The previous M6 markers decoded `MMSYS_CG=0xfc706bfc` with MT6755
+bit positions from an old table. The actual CCF gate table in
+`drivers/clk/mediatek/clk-mt6755.c` maps LARB0/OVL0/RDMA0/COLOR/DITHER/
+OVL0_MOUT to CG_CON0 bits 1/10/12/15/19/25, and DSI engine/digital to
+CG_CON1 bits 0/1. Under that map `0xfc706bfc/0xffffffc0` has those primary
+scanout clocks ungated.
+
+PATCH HISTORY, PROPER-FIX, 2026-05-28: correct MT6755 display CG bit decode
+and stop the false trigger-loop clock-hold condition.
+
+Hypothesis: The current display frontier is RDMA0 frame-done generation, not
+gated primary clocks. The wrong CG bit map made the debug pipeline and kernel
+markers report `larb0=1 ovl0=1 rdma0=1 color=1` even though the CCF table says
+those gates are clear, which caused repeated clock-hold attempts on the wrong
+blocker.
+
+Evidence: `docs/run_reports/2026-05-28_6652033c_debug_text.txt` lines around
+1631-1649 show `M6 trigger dump`, RDMA0/OVL0/DSI0 started, and the old wrong
+gated-bit labels. Lines around 12370 and later show repeated
+`CMDQ_EVENT_DISP_RDMA0_EOF` token value 0. `clk-mt6755.c` defines the actual
+gate bits: LARB0 bit 1, OVL0 bit 10, RDMA0 bit 12, COLOR bit 15, DITHER bit
+19, OVL0_MOUT bit 25, DSI engine/digital in CG_CON1 bits 0/1.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`
+corrects trigger-loop CG decode, logs CG_CON1, and uses the correct MT6755
+scanout mask for the one-shot hold guard. `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c`
+corrects timeout CG decode, logs CG_CON1, and uses the same corrected mask.
+`BRINGUP_STATE.md` records the evidence and next capture condition.
+
+Why each file changed: both files own the diagnostic markers that misled the
+display pipeline. The mask must match the CCF gate table so the kernel no
+longer treats unrelated set bits in `MMSYS_CG_CON0` as proven display clock
+gates.
+
+Expected next marker: next capture from a rebuilt boot shows `MMSYS_CG=.../...`
+and `MMSYS_CG gated bits larb0=0 ovl0=0 rdma0=0 color=0 dither=0 dsi_engine=0
+dsi_digital=0` if the clock state is unchanged. The remaining blocker should
+stay at real `CMDQ_EVENT_DISP_RDMA0_EOF` / frame-done generation with corrected
+RDMA/OVL/DSI state, not a clock-gate label.
+
+Rollback condition: revert this correction only if a verified next capture
+with matching boot identity proves the corrected bit map contradicts
+`clk-mt6755.c`, or if the new artifact regresses before the existing
+`M6 video CMDQ` trigger-loop marker.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+grep -n -E 'M6 trigger dump|M6 trigger clock hold' kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c
+grep -n -E 'M6 DDP timeout|M6_PRIMARY_SCANOUT_CG_MASK' kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c
+grep -n -E 'MM_DISP0_(SMI_LARB0|DISP_OVL0|DISP_RDMA0|DISP_COLOR|DISP_DITHER|DISP_OVL0_MOUT)|MM_DISP1_DSI' kernel-3.18/drivers/clk/mediatek/clk-mt6755.c
+grep -R -n -E 'M6 trigger dump|MMSYS_CG gated bits|CMDQ_EVENT_DISP_RDMA0_EOF|RDMA0_EOF|M6 DDP timeout' <next-capture>/evidence <next-capture>/mtp
+```
