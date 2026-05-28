@@ -991,3 +991,42 @@ grep -n -E 'M6 DDP timeout|M6_PRIMARY_SCANOUT_CG_MASK' kernel-3.18/drivers/misc/
 grep -n -E 'MM_DISP0_(SMI_LARB0|DISP_OVL0|DISP_RDMA0|DISP_COLOR|DISP_DITHER|DISP_OVL0_MOUT)|MM_DISP1_DSI' kernel-3.18/drivers/clk/mediatek/clk-mt6755.c
 grep -R -n -E 'M6 trigger dump|MMSYS_CG gated bits|CMDQ_EVENT_DISP_RDMA0_EOF|RDMA0_EOF|M6 DDP timeout' <next-capture>/evidence <next-capture>/mtp
 ```
+
+## 2026-05-28 CG decode diagnostic boot artifact
+
+FACT: Manual clean-out kernel build completed at
+`/home/n8n/forge-work/kernel-builds/m6-6652033c-cgfix/out`. The matching
+artifacts are:
+`Image-cgdecode.gz-dtb` sha256
+`a2b7ac8b5bd3af357f18acbb3b0679c049d89bf85614cf973deacc25b7cd5bf6`,
+`System.map.cgdecode` sha256
+`2ce165540536b024d868ef947cfe7eac59944a546796a66ea0cde0113ff3cb3d`,
+and `kernel-cgdecode.config` sha256
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+
+FACT: The rebuilt boot image is
+`/home/n8n/forge-work/artifacts/meizu_m6/20260528-m6-cgdecode-diagnostic/boot.img`,
+sha256 `e19e854ecc81e0277967f054abb609034626936d816dbc08f86d9590faf4e7f4`,
+Build Station artifact `917b63aa-7431-48f7-8f89-d55a7a5ac7aa`. It repacks
+the CG decode kernel with the clean ramdisk base from
+`20260527-m6-trigger-clock-hold-ramdiskfix`. Boot header: size `16777216`,
+page `2048`, board `1552631950`, kernel addr `0x40080000`, ramdisk addr
+`0x45000000`, tags addr `0x44000000`, kernel size `7572285`, ramdisk size
+`1258507`, cmdline `bootopt=64S3,32N2,64N2 androidboot.selinux=permissive
+binder.devices=binder,hwbinder,vndbinder buildvariant=eng`.
+
+Expected next marker: next capture must match boot sha256
+`e19e854ecc81e0277967f054abb609034626936d816dbc08f86d9590faf4e7f4`, show
+`MMSYS_CG=.../...`, and decode the primary scanout gates from the corrected
+MT6755 CCF bit map. If display remains black, continue from RDMA0 EOF/frame
+done state with the corrected `rdma0`/`ovl0`/`dsi0` dumps instead of clock-gate
+labels.
+
+Verification commands:
+
+```bash
+sha256sum -c /home/n8n/forge-work/artifacts/meizu_m6/20260528-m6-cgdecode-diagnostic/SHA256SUMS
+abootimg -i /home/n8n/forge-work/artifacts/meizu_m6/20260528-m6-cgdecode-diagnostic/boot.img
+gzip -cd /home/n8n/forge-work/artifacts/meizu_m6/20260528-m6-cgdecode-diagnostic/Image-cgdecode.gz-dtb 2>/dev/null | strings | grep -E 'M6 trigger dump|M6 DDP timeout|MMSYS_CG=0x%x/%x'
+grep -R -n -E 'MMSYS_CG=|MMSYS_CG gated bits|CMDQ_EVENT_DISP_RDMA0_EOF|RDMA0_EOF|M6 DDP timeout|M6 trigger dump' <next-capture>/evidence <next-capture>/mtp
+```
