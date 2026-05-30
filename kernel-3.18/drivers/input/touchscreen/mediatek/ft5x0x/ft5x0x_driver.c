@@ -627,6 +627,11 @@ static int tpd_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		tpd->reg = regulator_get(&client->dev, "vtouch");
 		if (IS_ERR(tpd->reg)) {
 			retval = PTR_ERR(tpd->reg);
+			if (retval == -EPROBE_DEFER) {
+				TPD_DMESG("vtouch regulator deferred in probe: %d\n", retval);
+				tpd->reg = NULL;
+				return retval;
+			}
 			TPD_DMESG("vtouch regulator unavailable in probe: %d; continue assuming boot rail\n", retval);
 			tpd->reg = NULL;
 		}
@@ -635,6 +640,10 @@ static int tpd_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (tpd->reg) {
 		retval = regulator_enable(tpd->reg);
 		if (retval != 0) {
+			if (retval == -EPROBE_DEFER) {
+				TPD_DMESG("vtouch enable deferred: %d\n", retval);
+				return retval;
+			}
 			TPD_DMESG("Failed to enable reg-vgp6: %d; continue assuming boot rail\n", retval);
 			tpd->reg = NULL;
 		}
@@ -780,6 +789,11 @@ static int tpd_local_init(void)
 	tpd->reg = regulator_get(tpd->tpd_dev, "vtouch");
 	if (IS_ERR(tpd->reg)) {
 		retval = PTR_ERR(tpd->reg);
+		if (retval == -EPROBE_DEFER) {
+			TPD_DMESG("vtouch regulator deferred: %d\n", retval);
+			tpd->reg = NULL;
+			return retval;
+		}
 		TPD_DMESG("vtouch regulator unavailable: %d; continue to i2c probe\n", retval);
 		tpd->reg = NULL;
 	} else {

@@ -929,6 +929,29 @@ grep -R -n -E 'Build Station m2note|fstab\.mt6735|mtk-msdc\.0/by-name/(system|us
 grep -R -n -E '11230000\.msdc0/by-name/(system|userdata|nvdata|protect1|protect2)' /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-ramdiskfix/verify/ramdisk/init.mt6755.rc /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-ramdiskfix/verify/ramdisk/fstab.mt6755
 ```
 
+## 2026-05-28 cgdecode kernel with clean M6 ramdisk
+
+FACT: Artifact directory `/home/n8n/forge-work/artifacts/meizu_m6/20260528-m6-cgdecode-diagnostic/` is not identical to the prior trigger-clock boot. Its `boot.img` sha256 is `e19e854ecc81e0277967f054abb609034626936d816dbc08f86d9590faf4e7f4`; unpacked kernel payload sha256 is `a2b7ac8b5bd3af357f18acbb3b0679c049d89bf85614cf973deacc25b7cd5bf6`, different from trigger-clock `91d9b14962052619d7e8b9d4394ae840d0990d68707557060ed8204650561d62`.
+
+FACT: The cgdecode boot's ramdisk sha256 is `36cb0e637d7fab95afc7c4d941bb5aeef542197c881ea4026b9f9f26c3a33b20`, exactly matching the stale manual trigger-clock ramdisk and not the clean M6 ramdisk `a599580be2c2f0a7c12afa6a160a94e532b9dffaf1e56368593d801881f1e72e`.
+
+FACT: Clean combined display diagnostic boot is `/srv/forge/android/export/meizu_m6_artifacts/20260528-m6-cgdecode-clean-ramdisk/boot.img`, sha256 `db072d18b932c5e76c6f61a18491c46531a5a9ba9db1defa14f782ca6dd3a42d`. Unpadded `boot-mkbootimg.img` sha256 is `7f934825c394cd31770e836a24373766a9ef965979779103baf20f363831b5e4`. It combines cgdecode kernel payload sha256 `a2b7ac8b5bd3af357f18acbb3b0679c049d89bf85614cf973deacc25b7cd5bf6` with clean ramdisk sha256 `a599580be2c2f0a7c12afa6a160a94e532b9dffaf1e56368593d801881f1e72e`.
+
+FACT: Extracted clean combined ramdisk has no `Build Station m2note`, no `fstab.mt6735`, no flat `/dev/block/platform/mtk-msdc.0/by-name/{system,userdata,nvdata,protect1,protect2}`, and no typo `/dev/block/platform/mtk.msdc.0/by-name`; it retains nested `11230000.msdc0/by-name` paths for system/userdata/protect1/protect2/nvdata.
+
+Expected next marker: flash `/srv/forge/android/export/meizu_m6_artifacts/20260528-m6-cgdecode-clean-ramdisk/boot.img`, then capture. Judge display from cgdecode markers only after identity proves boot sha256 `db072d18b932c5e76c6f61a18491c46531a5a9ba9db1defa14f782ca6dd3a42d` or kernel payload sha256 `a2b7ac8b5bd3af357f18acbb3b0679c049d89bf85614cf973deacc25b7cd5bf6`; ramdisk evidence should stay clean of m2note/fstab noise.
+
+Verification commands:
+
+```bash
+sha256sum /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-manual/boot.img /home/n8n/forge-work/artifacts/meizu_m6/20260527-m6-trigger-clock-hold-ramdiskfix/boot.img /home/n8n/forge-work/artifacts/meizu_m6/20260528-m6-cgdecode-diagnostic/boot.img
+abootimg -x /home/n8n/forge-work/artifacts/meizu_m6/20260528-m6-cgdecode-diagnostic/boot.img
+sha256sum zImage initrd.img
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260528-m6-cgdecode-clean-ramdisk/boot.img /srv/forge/android/export/meizu_m6_artifacts/20260528-m6-cgdecode-clean-ramdisk/boot-mkbootimg.img /srv/forge/android/export/meizu_m6_artifacts/20260528-m6-cgdecode-clean-ramdisk/Image-cgdecode.gz-dtb /srv/forge/android/export/meizu_m6_artifacts/20260528-m6-cgdecode-clean-ramdisk/clean-initrd.img
+grep -RIn -E 'Build Station m2note|fstab\.mt6735|mtk-msdc\.0/by-name/(system|userdata|nvdata|protect1|protect2)|mtk\.msdc\.0/by-name' /tmp/m6_cgdecode_clean_verify/ramdisk
+grep -RIn -E '11230000\.msdc0/by-name/(system|userdata|nvdata|protect1|protect2)' /tmp/m6_cgdecode_clean_verify/ramdisk/init.mt6755.rc /tmp/m6_cgdecode_clean_verify/ramdisk/fstab.mt6755
+```
+
 ## 2026-05-28 6652033c CG decode correction
 
 FACT: Debug run `6652033c-31da-45c2-bb7e-d014ca5772f8` uses the manual
@@ -1030,3 +1053,404 @@ abootimg -i /home/n8n/forge-work/artifacts/meizu_m6/20260528-m6-cgdecode-diagnos
 gzip -cd /home/n8n/forge-work/artifacts/meizu_m6/20260528-m6-cgdecode-diagnostic/Image-cgdecode.gz-dtb 2>/dev/null | strings | grep -E 'M6 trigger dump|M6 DDP timeout|MMSYS_CG=0x%x/%x'
 grep -R -n -E 'MMSYS_CG=|MMSYS_CG gated bits|CMDQ_EVENT_DISP_RDMA0_EOF|RDMA0_EOF|M6 DDP timeout|M6 trigger dump' <next-capture>/evidence <next-capture>/mtp
 ```
+
+## 2026-05-30 PQ bypass isolation
+
+PATCH HISTORY, ISOLATION, 2026-05-30: bypass MTK PQ modules while the
+verified M6 display path stalls below framebuffer memory.
+
+Hypothesis: M6 is not failing in SurfaceFlinger or framebuffer writes. The
+active primary DDP mutex includes the PQ tail (`COLOR0`, `CCORR`, `AAL`,
+`GAMMA`, `DITHER`), and fresh dumpreg evidence shows those modules not
+advancing a real 720x1280 frame (`COLOR0` pixel count 0; `CCORR`/`AAL`/
+`GAMMA`/`DITHER` counters at `0x10001`). Relaying PQ through the existing MTK
+PQ bypass path may let the OVL/RDMA/DSI route produce physical scanout, matching
+the neighboring-device symptom where disabling PQ made the image appear.
+
+Evidence: flashed boot identity for the current black-screen artifact is
+sha256 `8067ef307baaac03f3432ecf23b40324a3d81b8ead6e97592dfa6fd4c87f9bf9`
+from `/srv/forge/android/meizu_m6/captures/20260530-m6-after-f8cf9c69-711HEBSR277K5`.
+The framebuffer marker capture
+`/srv/forge/android/meizu_m6/captures/20260530-m6-screenmarkers-f8cf9c69-711HEBSR277K5`
+proves `/dev/graphics/fb0` accepts marker writes and reads back the exact marker
+sha256 `3d35dd022db31a15a06b1126ff3d6a66e6989b74517f56100dcfe715e9dfa52b`,
+while the panel stays physically black. PQ investigation capture
+`/srv/forge/android/meizu_m6/captures/20260530-m6-pq-investigation-f8cf9c69-711HEBSR277K5`
+shows `Option [22][DISP_OPT_BYPASS_PQ] Value [0]`, `M0_MOD=0x1df280`
+(`ovl0`, `rdma0`, `color0`, `ccorr`, `aal`, `gamma`, `dither`, `pwm0`,
+`ovl0_2l`, `ovl1_2l`), and dumpreg counters with PQ blocks stuck at the
+1x1-style frontier instead of 720x1280 progress.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_helper.c`
+sets `DISP_OPT_BYPASS_PQ` to 1 during display helper init. `BRINGUP_STATE.md`
+records the isolation hypothesis, evidence, rollback, and next-capture checks.
+
+Why each file changed: `ddp_manager.c` already calls each PQ module's
+`bypass(module, 1)` path when `DISP_OPT_BYPASS_PQ` is enabled, so this uses the
+stock MTK relay/bypass mechanism instead of patching waits, fences, CMDQ tokens,
+or unrelated DDP routing. The state file is the per-device bring-up journal for
+this kernel tree.
+
+Expected next marker: after flashing the rebuilt boot image, kernel logs should
+show `Set Option 22(DISP_OPT_BYPASS_PQ) from (0) to (1)` and
+`After set Option 22(DISP_OPT_BYPASS_PQ) is (1)`. A useful positive result is
+physical image, rising `rdma0`/`dsi0` IRQ counts, non-zero DDP valid/ready, or
+PQ relay bits visible in dumpreg (`COLOR_CFG_MAIN` relay bit, AAL/GAMMA/DITHER
+relay config) with frame counters advancing beyond the current 1x1 frontier.
+
+Rollback condition: revert this isolation patch if a verified next artifact
+with `DISP_OPT_BYPASS_PQ=1` still has the same physical black screen, the same
+`VALID=0x0 READY=0x0`, the same stagnant `RDMA0 Transfer`/IRQ state, and the
+same 1x1 PQ counter frontier, or if bypassing PQ regresses boot before fb0,
+SurfaceFlinger, or bootanimation are present.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+grep -n 'DISP_OPT_BYPASS_PQ' kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_helper.c
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell dmesg | grep -E 'DISP_OPT_BYPASS_PQ|Set Option 22|RDMA0_EOF|M6 DDP timeout|MMSYS_CG|M0_MOD'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell cat /proc/interrupts | grep -E 'mtk_cmdq|ovl0|rdma0|dsi0|aal'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo dump_reg > /d/mtkfb || echo dump_reg > /sys/kernel/debug/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /d/mtkfb 2>/dev/null || cat /sys/kernel/debug/mtkfb 2>/dev/null' | grep -E 'DISP_OPT_BYPASS_PQ|M0_MOD|COLOR_CFG_MAIN|DISP_AAL_CFG|GAMMA_CFG|DITHER_CFG|RDMA0'
+```
+
+Artifact build note: Build Station API build
+`d4e48bf6-982d-4175-86b7-fd48adab72a7` was started with options file
+`/home/n8n/build-station/docs/run_reports/2026-05-30-m6-pq-bypass-build-options.json`
+but cancelled at `PREPARE_KERNEL` because the root-owned reused
+`out/forge-meizu_m6_defconfig` stalled in `scripts/kconfig/conf` for multiple
+minutes before compilation. The same source state was built in a clean manual
+out-dir with the registered Build Station toolchain:
+`/home/n8n/forge-work/kernel-builds/m6-pq-bypass-20260530/out`.
+
+FACT: clean build output
+`/home/n8n/forge-work/kernel-builds/m6-pq-bypass-20260530/out/arch/arm64/boot/Image.gz-dtb`
+has sha256 `d21d981d18328b03f04b30dc3fa8da24c455134318c678d3c320f6f86ec1a121`.
+Matching `System.map` sha256 is
+`2ce165540536b024d868ef947cfe7eac59944a546796a66ea0cde0113ff3cb3d`; matching
+`.config` sha256 is `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+
+FACT: repacked test boot is
+`/srv/forge/android/export/meizu_m6_artifacts/20260530-m6-pq-bypass-isolation/boot-pq-bypass-mkbootimg-abs.img`,
+sha256 `585e8a710a5b6ee2c96e6d995d2879d9fa63dca8321c9a4f15c9fcdb41c1f739`.
+It reuses the verified current LOS15 boot base
+`/srv/forge/android/meizu_m6/rom-lineage-15.1-meizu_m6-experimental/out/target/product/meizu_m6/boot.img`
+sha256 `8067ef307baaac03f3432ecf23b40324a3d81b8ead6e97592dfa6fd4c87f9bf9` and
+ramdisk sha256 `b897743629941f917796605abb7c20f3cb3ee9c2e60a12faf8d9fb8de0279a81`.
+`abootimg -i` reports page size 2048, board `1552631950`, kernel address
+`0x40080000`, ramdisk address `0x45000000`, tags address `0x44000000`, and the
+same cmdline as the verified f8cf9c69 boot.
+
+## 2026-05-30 repeated display pokes after PQ bypass
+
+PATCH HISTORY, DIAGNOSTIC, 2026-05-30: collect repeated runtime display pokes,
+screen markers, DSI pattern tests, LCM reset/ATA checks, and a clean reboot
+baseline against the PQ-bypass artifact.
+
+Hypothesis: the M6 black screen is no longer best explained by PQ, userspace
+composition, framebuffer memory, or backlight alone. With `DISP_OPT_BYPASS_PQ=1`
+verified in the flashed artifact, the display stack can still compose boot
+animation frames and accept framebuffer writes, but physical panel output stays
+black. The next frontier is LCM/DSI video or panel state: DSI command reads
+return a packet but the 0x2A ATA payload is wrong/zero, and hardware BIST
+patterns remain invisible even with the backlight forced on.
+
+Evidence: the active boot prefix hash matches the local PQ-bypass test image:
+`/srv/forge/android/export/meizu_m6_artifacts/20260530-m6-pq-bypass-isolation/boot-pq-bypass-mkbootimg-abs.img`
+sha256 `585e8a710a5b6ee2c96e6d995d2879d9fa63dca8321c9a4f15c9fcdb41c1f739`;
+`dd if=<boot-partition> bs=8876032 count=1 | sha256sum` returned the same
+hash in the clean reboot capture.
+
+Capture
+`/srv/forge/android/meizu_m6/captures/20260530-141613-m6-repeat-display-pokes-585e8a-711HEBSR277K5`
+forced wake and `lcd-backlight` to 255, ran red/green/blue/white DSI patterns,
+three suspend/resume cycles, pattern off, an fb blank cycle, and a direct fb
+marker write. The user still reported only black. FACT: final SurfaceFlinger
+had the built-in display on (`powerMode=2`, `isDisplayOn=1`) with
+`BootAnimation` present and `flips=590`. FACT: `screencap-final.png` is a valid
+720x1280 PNG (10008 bytes, non-empty extrema), so userspace composition exists.
+FACT: the fb marker was overwritten by the active display stack instead of
+staying static, which means the framebuffer path is not simply dead memory.
+FACT: DSI pattern tests were still physically invisible. FACT: the final DDP
+timeout still shows `primary_rdma0_color0_disp`, `rdma0 GLOBAL=0x101
+SIZE=720x1280`, and `dsi0 START=0x1 MODE=0x1 TXRX=0x1003c PS=0x30870`.
+
+Capture
+`/srv/forge/android/meizu_m6/captures/20260530-142249-m6-lcm-reset-ata-pokes-585e8a-711HEBSR277K5`
+ran `ata`, `lcm0_reset + dsipattern`, `suspend + lcm0_reset + resume`,
+`primary_reset`, `esd_recovery`, and pattern off. FACT: the ATA/DCS read path
+does not hang or hit a read-ready timeout, but the payload is wrong/zero:
+`DSI_RX_STA=0x00000a40`, `DSI_CMDQ_DATA0=0x00043700`,
+`DSI_CMDQ_DATA1=0x002a0604`, `DSI_RX_DATA0=0x3300041c`,
+`DSI_RX_DATA1=0x00000000`, packet type `0x1c`, long packet size `4`. The
+current `ili9881p_hd_dsi_txd` ATA check expects the written 0x2A window bytes,
+so this is evidence of a live-but-wrong panel command state rather than a fixed
+scanout path. FACT: `esd_recovery` is not a fix on this artifact; it increments
+the recovery counter and later saturates CMDQ with `There too many DISP
+(198/200) tasks cannot acquire thread` and repeated
+`CMDQ_EVENT_DISP_RDMA0_EOF`.
+
+Capture
+`/srv/forge/android/meizu_m6/captures/20260530-142713-m6-clean-reboot-after-pokes-585e8a-711HEBSR277K5`
+cleanly rebooted the same artifact after the invasive pokes. FACT:
+`/proc/version` reports the expected May 30 PQ-bypass kernel, boot prefix hash
+matches `585e8a710a5b6ee2c96e6d995d2879d9fa63dca8321c9a4f15c9fcdb41c1f739`,
+and `DISP_OPT_BYPASS_PQ=1` remains active. FACT: immediately after clean boot
+`/sys/class/leds/lcd-backlight/brightness` was 0, but previous captures forced
+255 and still had no visible pixels, so boot-time brightness 0 is not sufficient
+as root cause. FACT: clean boot returned to the same lower display failure
+shape: `M6 trigger dump[before-clock-hold]`, later `VALID=0x0 READY=0x0`,
+`M0_MOD=0x1df280`, `rdma0 GLOBAL=0x101 SIZE=720x1280`,
+`dsi0 START=0x1 STA=0x20`, low display IRQ counts, and SurfaceFlinger showing
+the boot animation display object.
+
+Capture
+`/srv/forge/android/meizu_m6/captures/20260530-144231-m6-more-pokes-585e8a-711HEBSR277K5`
+repeated the runtime test with wake/backlight forced to 255, red/green/blue/
+white/gray DSI BIST patterns, three fb blank/unblank cycles, and three ATA
+reads. FACT: the final `screencap` hung and produced a zero-byte PNG, but the
+post-kill SurfaceFlinger dump still had the built-in 720x1280 display on with
+`BootAnimation`, `powerMode=2`, `isDisplayOn=1`, HWC enabled, and `flips=5`.
+FACT: DSI IRQs changed from `0 0 1 0` to `1 10 7 4` across the pokes, while
+OVL/RDMA IRQ counters did not advance, so DSI commands are reaching the DSI
+block but normal scanout is still stuck. FACT: all three ATA reads had the same
+expected window bytes `0x0,0xb4,0x2,0x1c` and failed with the same DSI RX shape
+seen earlier (`DSI_RX_DATA0=0x3300041c`, `DSI_RX_DATA1=0x00000000`).
+FACT: `mtkfb-post-kill.txt` still reports `LCM Driver=[ili9881p_hd_dsi_txd]`,
+`PathMode:DECOUPLE`, `RDMA0 Transfer=3`, `DISP_OPT_BYPASS_PQ=1`, and timeout
+dumps with `VALID=0x0 READY=0x0`, `rdma0 GLOBAL=0x101 SIZE=720x1280`, and
+`dsi0 START=0x1 MODE=0x1 TXRX=0x1003c PS=0x30870`.
+
+FACT: stock Flyme reverse inputs were captured read-only from the live device
+into `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs`.
+The key hashes are `lk.img`
+sha256 `b32d7ae68c918195632faf730a5fd6fc0136e090c100f4fe6eddfba4c56746bc`,
+`lk2.img` sha256
+`7f2597d35ce8297145d27e51258c5d03d4044bb7085b2ba55e90a8907fa84708`, and
+`logo.img` sha256
+`dc832354260bd18240d8f626aa55bd2ff60879bfb76c32845e76317780967b24`.
+FACT: stock Flyme boot/kernel inputs also exist under
+`/srv/forge/android/meizu_m6/rom-lineage-15.1-meizu_m6-experimental/device/meizu/meizu_m6/prebuilt/stock-7.1.2.0G`.
+LK strings include `ili9881p_hd_dsi_txd`, `ili9881c_hd_dsi_txd`,
+`s6d7aa6_hd720_dsi_vdo_hlt`, `tps65132`, and `videolfb-lcmname`; the stock
+kernel strings also expose `atag,videolfb-lcmname`, `atag,videolfb-islcm_inited`,
+LCM bias/reset GPIO names, and an `nt35695_fhd_dsi_cmd_truly_nt50358_drv`
+string. HYPOTHESIS: the next evidence-backed patch should come from stock
+LK/boot parity for the selected panel, reset/bias sequence, DSI timing, or
+init table; do not guess PLL/porches/panel driver solely from the current
+source file.
+
+Files changed: no kernel behavior changed in this diagnostic entry. This
+`BRINGUP_STATE.md` section records the fresh evidence and rejects the stale
+"PQ-only" path.
+
+Why each file changed: the state file is the per-device bring-up journal for
+the active M6 kernel tree. The captures prove the next patch must instrument or
+fix LCM/DSI/panel state, not add more wait/fence/CMDQ token patches.
+
+Expected next marker: the next diagnostic kernel should print the exact
+`ili9881p_hd_dsi_txd` ATA expected bytes, read bytes, and return value when
+`echo ata > /d/mtkfb` is run. A positive fix later should make at least one of
+these change: visible DSI pattern, visible boot animation, valid 0x2A ATA
+readback, DSI frame-done/IRQ progress, or nonzero scanout counters without the
+current RDMA0 EOF timeout loop.
+
+Rollback condition: do not keep using `esd_recovery` as a recovery step if it
+again saturates CMDQ tasks or prevents fresh display captures. Revert the
+planned ATA logging patch only if it changes panel behavior, blocks fb0/SF
+startup, or makes the 0x2A ATA command hang instead of returning a packet.
+
+Verification commands:
+
+```bash
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'input keyevent KEYCODE_WAKEUP; echo 255 > /sys/class/leds/lcd-backlight/brightness'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; cat /d/mtkfb' | grep -E 'ATA|DSI_RX|DSI_CMDQ|M6_DIAG'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo dsipattern:0xff0000 > /d/mtkfb; sleep 1; echo dsipattern:0xffffff > /d/mtkfb; sleep 1; echo dsipattern:0x0 > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell cat /proc/interrupts | grep -E 'mtk_cmdq|ovl0|rdma0|dsi0|aal'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell dmesg | grep -E 'M6_DIAG|M6 DDP timeout|RDMA0_EOF|primary_rdma0|DSI_RX|CMDQ_EVENT_DISP_RDMA0_EOF'
+```
+
+## 2026-05-30 stock Flyme LCM init parity
+
+PATCH HISTORY, PROPER-FIX, 2026-05-30: restore the active
+`ili9881p_hd_dsi_txd` init table, reset settle, and TPS65132 bias value to
+stock Flyme LK/kernel values.
+
+Hypothesis: the remaining black screen is a panel-init mismatch, not PQ,
+SurfaceFlinger, framebuffer memory, or backlight. The current source driver
+uses a heavily adapted `init_setting[]` that differs from both stock Flyme LK
+and stock Flyme kernel for the same `ili9881p_hd_dsi_txd` driver. Because DSI
+BIST patterns are invisible, ATA reads return a live but wrong 0x2A payload,
+and RDMA0 EOF persists with userspace composition alive, the panel is likely in
+the wrong command/video state before scanout starts.
+
+Evidence: active failing artifact is still PQ-bypass boot
+`/srv/forge/android/export/meizu_m6_artifacts/20260530-m6-pq-bypass-isolation/boot-pq-bypass-mkbootimg-abs.img`
+sha256 `585e8a710a5b6ee2c96e6d995d2879d9fa63dca8321c9a4f15c9fcdb41c1f739`.
+Fresh capture
+`/srv/forge/android/meizu_m6/captures/20260530-144231-m6-more-pokes-585e8a-711HEBSR277K5`
+shows DSI IRQs advancing under command pokes while OVL/RDMA IRQs do not advance,
+three repeated ATA failures with expected bytes `00 b4 02 1c`, and
+`DISP_OPT_BYPASS_PQ=1`. Stock Flyme LK
+`/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/lk.img`
+sha256 `b32d7ae68c918195632faf730a5fd6fc0136e090c100f4fe6eddfba4c56746bc`
+contains the `ili9881p_hd_dsi_txd` LCM driver and a 201-entry init table at LK
+file offset `0x5b2d4`. That table is `14472` bytes and has sha256
+`4fb6a6aaffb188dd2cfda5fba1b4d3eceba3279df8bbf6669d59bfbdb56caa8e`.
+The read-only reverse sidecar found the same table in the stock Flyme kernel at
+decompressed offset `0x1122cf0`; stock `boot.img` sha256 is
+`8c0f2a4886b3b681f8275192e07fd529c62e7f37538e58f81f6466301db99915`, and stock
+kernel sha256 is
+`1d99d0a8dd3ca483192e01589cc567883ccf6af57d825be2db3a9a30a5f8e362`.
+Rebuilt artifact directory:
+`/srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-flyme-lcm-parity/`.
+Boot image `boot-stock-flyme-lcm-parity.img` sha256
+`63072892444f43997a9bf2d57a5ae869486dd434d5b3321edadd8076cdf4f3e8`,
+md5 `f0c3ba5d230cfb504ce64eff363ada9e`, size `8876032`. Kernel payload
+`Image.gz-dtb` sha256
+`0e222fdd97fe403c92ddccc76a2c80aaa4d983652724d019fe131465d0b65de7`,
+md5 `b375a9c7a75fc0d639f1430b59a219f8`. `System.map` sha256
+`51afd81bbac958e8c4cb60daa7f48ef9bd3648a5d42eab1786846c4f18714bab`;
+kernel config sha256
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+keeps the previous source-port init table under `#if 0`, activates the exact
+stock Flyme LK/kernel table, changes TPS65132 register 0/1 bias writes from
+`0x0e` to stock `0x0f`, and changes the reset-high settle from the previous
+120 ms experiment to the stock `1/2/6 ms` reset sequence. `BRINGUP_STATE.md`
+records the evidence and rollback condition.
+
+Why each file changed: the LCM file owns the selected panel command sequence,
+power bias writes, and reset timing. Stock source wins over donor/adapted source
+for panel register programming, so the active table and reset/bias sequence now
+match the hardware baseline. The state file is the per-device bring-up journal
+for this kernel tree.
+
+Expected next marker: after flashing the rebuilt boot image, the panel should
+either show LK/boot animation pixels or at least change the lower-level markers:
+DSI BIST patterns visible, `echo ata > /d/mtkfb` returns the expected
+`00 b4 02 1c` readback, RDMA/DSI frame IRQs increase beyond the current stuck
+counts, or the `VALID=0 READY=0` RDMA0 EOF timeout shape changes.
+
+Rollback condition: revert this patch if a verified rebuilt artifact with the
+stock table still has a physically black screen, still fails ATA with the same
+wrong DSI RX packet, and still shows unchanged OVL/RDMA/DSI counters and RDMA0
+EOF timeout shape. Also revert if the device regresses before fb0,
+SurfaceFlinger, or ADB are available.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c BRINGUP_STATE.md
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-flyme-lcm-parity/boot-stock-flyme-lcm-parity.img /srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-flyme-lcm-parity/Image.gz-dtb /srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-flyme-lcm-parity/System.map /srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-flyme-lcm-parity/config
+python3 - <<'PY'
+from pathlib import Path
+from hashlib import sha256
+p=Path('/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/lk.img')
+d=p.read_bytes()[0x5b2d4:0x5b2d4 + 201*72]
+print(len(d), sha256(d).hexdigest())
+PY
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; cat /d/mtkfb' | grep -E 'ATA|DSI_RX|DSI_CMDQ|ili9881p'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell cat /proc/interrupts | grep -E 'mtk_cmdq|ovl0|rdma0|dsi0|aal'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell dmesg | grep -E 'ili9881p|tps6132|M6 DDP timeout|RDMA0_EOF|DSI_RX'
+```
+
+## 2026-05-30 charger DTS bind fix after stock LCM test
+
+FACT: Flashed stock-LCM-parity boot identity was verified by boot-partition
+prefix hash. Capture
+`/srv/forge/android/meizu_m6/captures/20260530-m6-stock-lcm-postboot-630728-711HEBSR277K5`
+matches local boot image
+`/srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-flyme-lcm-parity/boot-stock-flyme-lcm-parity.img`
+sha256 `63072892444f43997a9bf2d57a5ae869486dd434d5b3321edadd8076cdf4f3e8`.
+
+FACT: Stock Flyme LCM parity did not fix the physical black screen. The same
+capture still shows SurfaceFlinger with a 720x1280 built-in display,
+`BootAnimation`, `powerMode=2`, and `flips=5`, while DDP remains stuck below
+scanout: `CMDQ_EVENT_DISP_RDMA0_EOF` token 0, `M0_MOD=0x1df280`,
+`rdma0 GLOBAL=0x101 SIZE=720x1280`, `dsi0 START=0x1 STA=0x20`, and
+`DISP_OPT_BYPASS_PQ=1`. Runtime marker pokes forced lcd-backlight to 255 and
+ran red/green/blue/white DSI patterns without a reported visible image.
+
+FACT: The same boot is battery-critical. Capture
+`/srv/forge/android/meizu_m6/captures/20260530-m6-charger-live-630728-711HEBSR277K5`
+records `capacity=1`, `status=Not charging`, `usb online=0`, and
+`ac online=0` in `power_supply.txt`. Its `dmesg.txt` repeatedly reports
+`is_chr_det]vbus:4433-4450 chrdet:1`, proving VBUS detection while the Linux
+power-supply state still reports no charging.
+
+FACT: Runtime I2C device `1-006a` is instantiated from the generated
+`swithing_charger@6a` node, not the BQ24157 node: `name=swithing_charger`,
+`modalias=i2c:swithing_charger`, `OF_COMPATIBLE_0=mediatek,swithing_charger`,
+and no driver symlink is present. The built DTB from the active build out-dir
+contains `swithing_charger@6a { compatible = "mediatek,swithing_charger";
+status = "okay"; }` and a second `bq24157@6a` node. The source BQ24157 driver
+is compiled via `drivers/misc/mediatek/power/mt6755/Makefile` and matches
+`ti,bq2415x`, `ti,bq24157`, and `bq24157`, so the current failure is DT binding
+selection, not absence of the driver object.
+
+PATCH HISTORY, PROPER-FIX, 2026-05-30: disable the generated
+`swithing_charger@6a` placeholder and enable the stock BQ24157 node on i2c1.
+
+Hypothesis: the device is not charging because DrvGen/DCT emits a generic
+`mediatek,swithing_charger` child at the real charger address `i2c1-006a`.
+That placeholder wins runtime instantiation and has no bound driver, while the
+real stock/Q-tree BQ24157 node is disabled. Disabling the placeholder overlay
+and enabling `bq24157@6a` should bind `/sys/bus/i2c/drivers/bq2415x` to
+`1-006a` and let the charger driver report USB/AC charging state before the
+1% battery shuts the device down.
+
+Evidence: capture paths and runtime/DTB facts above; donor source trees
+`kernel-meizu_M6-Q-ex2-3.18.119` and `kernel-meizu_M6-N-ex6` both keep
+`bq24157@6a` enabled with the same `ti,bq2415x` properties for this board.
+
+Files changed: `kernel-3.18/arch/arm64/boot/dts/meizu_m6.dts` overrides the
+generated `swithing_charger@6a` node to `disabled` and keeps the stock
+`bq24157@6a` node enabled; `BRINGUP_STATE.md` records the evidence, expected
+marker, and rollback.
+
+Why each file changed: `meizu_m6.dts` includes generated `cust.dtsi` before
+the board overrides, so the board DTS is the narrowest place to override the
+wrong generated node and select the stock charger node without editing
+generated output or changing charger driver code.
+
+Expected next marker: rebuilt DTB should show `swithing_charger@6a` disabled
+and `bq24157@6a` okay. After flashing, `/sys/bus/i2c/devices/1-006a/name`
+should be `bq24157` or `bq2415x`, `/sys/bus/i2c/devices/1-006a/driver` should
+point to `.../drivers/bq2415x`, and `power_supply.txt` should stop reporting
+the contradictory `chrdet:1` plus `Not charging`/`online=0` state.
+
+Rollback condition: revert this DTS override if a verified rebuilt artifact
+still instantiates `swithing_charger@6a`, or if BQ24157 binds but immediately
+fails DT parsing, panics, or regresses USB/ADB before userspace capture.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+dtc -I dtb -O dts /home/n8n/forge-work/kernel-builds/m6-pq-bypass-20260530/out/arch/arm64/boot/dts/meizu_m6.dtb | grep -A5 -B2 -E 'swithing_charger@6a|bq24157@6a'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /sys/bus/i2c/devices/1-006a/name; cat /sys/bus/i2c/devices/1-006a/modalias; readlink /sys/bus/i2c/devices/1-006a/driver || true'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'for p in /sys/class/power_supply/*; do echo ===$p===; cat $p/type 2>/dev/null; cat $p/online 2>/dev/null; cat $p/status 2>/dev/null; cat $p/capacity 2>/dev/null; done'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell dmesg | grep -E 'bq2415|bq24157|swithing_charger|is_chr_det|charger'
+```
+
+Build/flash result: `Image.gz-dtb` rebuilt successfully in
+`/home/n8n/forge-work/kernel-builds/m6-pq-bypass-20260530/out` with sha256
+`e5191b15866aacefb82e928f0365e68f345f60af323354f50c3ada1fd7f620f1`.
+Compiled DTB verification shows `swithing_charger@6a status = "disabled"` and
+`bq24157@6a status = "okay"`. Repacked boot image
+`/srv/forge/android/export/meizu_m6_artifacts/20260530-m6-bq24157-dts-bind-fix/boot-m6-bq24157-dts-bind-fix.img`
+has sha256 `58914607637ad0d0ef93a4dab079c9f4d7b2d310408dd355dab855dfa13d7e82`
+and size `8876032`.
+
+FACT: The boot partition first `8876032` bytes were written and read back as
+sha256 `58914607637ad0d0ef93a4dab079c9f4d7b2d310408dd355dab855dfa13d7e82`.
+After `adb reboot`, the device did not return to ADB within the wait window and
+is absent from `adb devices`, `fastboot devices`, and local `lsusb`. Because the
+pre-flash live capture had `capacity=1` and `status=Not charging`, the next
+required human step is physical charging/reconnecting before judging this boot
+artifact. Do not infer a kernel boot regression from this absence until USB or
+recovery/pstore is visible again.

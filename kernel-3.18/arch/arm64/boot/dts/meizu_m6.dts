@@ -1066,12 +1066,16 @@ hw-dev-detect@0{
 	gsensor@18 {
 		compatible = "mediatek,gsensor2";
 		reg = <0x18>;
-		status = "okay";
+		status = "disabled";
 	};
 	alsps@53 {
 		compatible = "mediatek,alsps";
 		reg = <0x53>;
 		status = "okay";
+	};
+	/* Build Station: DCT emits this placeholder on the BQ24157 address. */
+	swithing_charger@6a {
+		status = "disabled";
 	};
 	/* Build Station: stock hardware profile reports BQ24157 at i2c1-006a. */
 	bq24157@6a {
@@ -1093,7 +1097,7 @@ hw-dev-detect@0{
 	msensor@0c {
 		compatible = "mediatek,msensor2";
 		reg = <0x0c>;
-		status = "okay";
+		status = "disabled";
 	};
 };
 &ext_buck_vmd1 {
