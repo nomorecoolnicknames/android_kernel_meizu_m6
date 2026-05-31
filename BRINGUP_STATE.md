@@ -2359,3 +2359,88 @@ geometry/header, and kernel strings include `M6 DDP smart ovl: keep DECOUPLE
 while PQ bypass RDMA0-DISP is active`, `M6 DDP decouple rdma: CPU apply RDMA
 config without stale wait`, `M6 DDP decouple rdma: CPU RDMA MEM`, `M6 DDP
 decouple route: CPU route`, and `M6 DDP timeout`.
+
+Runtime result: `boot-m6-rdma0-disp-pin-decouple.img` was flashed on serial
+`711HEBSR277K5`; readback
+`/srv/forge/android/meizu_m6/captures/20260531-140843-m6-rdma0-disp-pin-decouple-runtime-df3170-711HEBSR277K5/boot-readback.img`
+matches the local artifact sha256
+`df317057c3137015a9bf33d1907a7d89b00be6d17d2c0a021b6542a2711bd5f6`.
+
+FACT: Fresh runtime capture
+`/srv/forge/android/meizu_m6/captures/20260531-140843-m6-rdma0-disp-pin-decouple-runtime-df3170-711HEBSR277K5`
+reaches Android userspace with SurfaceFlinger running. `live-dumpsys-SurfaceFlinger.txt`
+shows Built-in Screen `720x1280`, `powerMode=2`, `numLayers=1`, and
+`flips=4892`. `live-debugfs-mtkfb.txt` shows `PathMode:DECOUPLE`,
+`DISP_OPT_BYPASS_PQ=1`, `RDMA0 Transfer=5585` at about `61.37fps`, repeated
+`M6 DDP decouple rdma: CPU RDMA MEM=0x100000/0x870`, `0x400000/0x870`, and
+`0x700000/0x870`, and repeated `M6 DDP smart ovl: keep DECOUPLE while PQ bypass
+RDMA0-DISP is active`. The same file shows `DSI_EXT_TE=0`; `live-proc-interrupts.txt`
+shows `dsi0` IRQs still zero.
+
+FACT: Screen marker writes round-tripped through framebuffer and screencap in
+the same capture. The marker raw files and pulled fb0 raw files match their
+recorded sha256 files, and screencaps are non-empty PNGs. This proves userspace
+composition and framebuffer memory writes are real for this artifact; it does
+not prove physical panel visibility.
+
+INFERENCE: The active display frontier moved past PQ, mutex membership, stale
+OVL/PQ waits, and RDMA0 memory scanout scheduling. The remaining display
+frontier is downstream of RDMA memory scanout and inside DSI/PHY/panel video
+acceptance or a power/low-battery interaction, because RDMA0 transfer counts
+rise while DSI0 IRQs remain zero and the user still reports a black physical
+panel.
+
+Read-only DSI dump attempt: capture
+`/srv/forge/android/meizu_m6/captures/20260531-141838-m6-df3170-readonly-ddp-dsi-dump-711HEBSR277K5`
+was started from the same verified artifact. The debugfs `/d/dispsys`
+commands echoed `dump_path:*` / `dump_reg:*` request strings but did not yield a
+usable decoded DSI register dump before the device rebooted. Do not treat this
+as a display conclusion.
+
+FACT: Post-reset capture
+`/srv/forge/android/meizu_m6/captures/20260531-142209-m6-df3170-after-dumpreg15-reset-711HEBSR277K5`
+again read back boot sha256
+`df317057c3137015a9bf33d1907a7d89b00be6d17d2c0a021b6542a2711bd5f6`. Its
+`proc-last_kmsg.txt` proves the reset cause was low battery/DLPT, not a DSI
+dump conclusion: `[DLPT_POWER_OFF_EN] SOC=0 to power off , cnt=4`, battery
+line `AvgVbat 3474`, `bat_vol 3326`, `VChr 4424`, `CHR_Type 1`, `SOC 0:0:0`,
+`healthd: battery l=0 ... st=2 ... chg=u`, `bq2415x_charging: enable charger
+successfully`, and `reboot: Restarting system with command 'DLPT reboot
+system'`.
+
+FACT: After the DLPT reset, the same post-reset capture is not a clean display
+test. `mtkfb.txt` reports `PathMode:DIRECT_LINK`, `RDMA0 Transfer=4`,
+`DISP_OPT_BYPASS_PQ=1`; `dumpsys-SurfaceFlinger.txt` has `flips=0` and
+`numLayers=0`; `interrupts.txt` still shows `dsi0` IRQs zero. Current ADB
+listing after this state update does not show serial `711HEBSR277K5`, only
+`nx549j` and `m681`.
+
+FACT: The active kernel config for this artifact uses the MT6755 power tree
+with `CONFIG_MTK_PMIC_CHIP_MT6353=y`, `CONFIG_MTK_SMART_BATTERY=y`, and
+`CONFIG_MTK_PMIC_CHIP_MT6335` unset. The matching DLPT power-off check is in
+`kernel-3.18/drivers/misc/mediatek/power/mt6755/pmic.c:3321`, not in the
+`mt6335/pmic_throttling_dlpt.c` copy. The charger path is the in-tree
+`bq24157` driver, with DTS node `bq24157@6a` compatible
+`ti,bq2415x`, `ti,bq24157`, and `bq24157`; runtime logs confirm `bq2415x
+1-006a`.
+
+INFERENCE: The immediate blocker for further flash/capture cycles is charging
+stability at SOC 0. A kernel boot-unblock that ignores DLPT poweroff is possible
+only as an explicit power ISOLATION/BOOT-UNBLOCK patch and carries brownout/FS
+risk at `bat_vol` around 3.3V. Prefer the runtime debug knobs first when M6
+returns to ADB: set low-battery/DLPT stop flags, keep USB connected, and wait
+for battery capacity to rise before another display flash cycle.
+
+Safe next verification commands:
+
+```bash
+adb -H 127.0.0.1 -P 15038 devices -l
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'date; for d in /sys/class/power_supply/*; do echo $d; for f in status capacity voltage_now current_now online present health temp; do [ -e "$d/$f" ] && printf "%s=" "$f" && cat "$d/$f"; done; done'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'find /sys /d /proc -name "*dlpt*" -o -name "*low_battery*" 2>/dev/null | sort'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'for f in /sys/devices/platform/*/dlpt_stop /sys/devices/platform/*/low_battery_protect_stop /d/*/dlpt_stop /d/*/low_battery_protect_stop; do [ -e "$f" ] && echo "$f=$(cat "$f" 2>/dev/null)"; done'
+```
+
+Next display action after battery is stable: add a DIAGNOSTIC-only DSI/PHY/panel
+snapshot at the safe DSI start/timeout callsites. Do not patch CMDQ wait tokens
+or expand PQ/mutex bypass again unless a fresh verified capture regresses to
+that earlier frontier.
