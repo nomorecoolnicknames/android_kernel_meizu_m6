@@ -111,6 +111,8 @@ static bool primary_video_trigger_loop_clock_hold_applied;
 static bool primary_video_first_cfg_diag_logged;
 static bool primary_present_fence_timeout_diag_logged;
 static bool primary_m6_direct_dsi_route_applied;
+static unsigned int primary_m6_cpu_rdma_log_count;
+static unsigned int primary_m6_smart_ovl_log_count;
 static unsigned int g_keep;
 static unsigned int g_skip;
 static DISP_POWER_STATE power_stat_backup;
@@ -152,6 +154,13 @@ DECLARE_WAIT_QUEUE_HEAD(decouple_trigger_wq);
 wait_queue_head_t primary_display_present_fence_wq;
 atomic_t primary_display_present_fence_update_event = ATOMIC_INIT(0);
 static unsigned int _need_lfr_check(void);
+
+static bool primary_m6_diag_sample(unsigned int *count)
+{
+	unsigned int n = (*count)++;
+
+	return n < 8 || ((n & 0x3ff) == 0);
+}
 
 /* dvfs */
 static atomic_t dvfs_ovl_req_status = ATOMIC_INIT(OPPI_UNREQ);
@@ -2847,14 +2856,18 @@ static int _decouple_update_rdma_config_nolock(void)
 			RDMA_CONFIG_STRUCT tmpConfig = decouple_rdma_config;
 			bool cpu_rdma =
 				primary_m6_use_cpu_rdma0_disp_switch(dpmgr_get_scenario(pgc->dpmgr_handle));
+			bool m6_log_sample = false;
 
 			cmdqRecReset(cmdq_handle);
-			if (cpu_rdma)
-				DISPERR("M6 DDP decouple rdma: CPU apply RDMA config without stale wait, old MEM=0x%x/0x%x\n",
-					DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR),
-					DISP_REG_GET(DISP_REG_RDMA_MEM_SRC_PITCH));
-			else
+			if (cpu_rdma) {
+				m6_log_sample = primary_m6_diag_sample(&primary_m6_cpu_rdma_log_count);
+				if (m6_log_sample)
+					DISPERR("M6 DDP decouple rdma: CPU apply RDMA config without stale wait, old MEM=0x%x/0x%x\n",
+						DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR),
+						DISP_REG_GET(DISP_REG_RDMA_MEM_SRC_PITCH));
+			} else {
 				_cmdq_insert_wait_frame_done_token_mira(cmdq_handle);
+			}
 			cmdqBackupReadSlot(pgc->rdma_buff_info, 0, (uint32_t *)(&(tmpConfig.address)));
 
 			/*rdma pitch only use bit[15..0], we use bit[31:30] to store secure information*/
@@ -2870,10 +2883,13 @@ static int _decouple_update_rdma_config_nolock(void)
 			_config_rdma_input_data(&tmpConfig, pgc->dpmgr_handle,
 				cpu_rdma ? NULL : cmdq_handle);
 			if (cpu_rdma) {
-				DISPERR("M6 DDP decouple rdma: CPU RDMA MEM=0x%x/0x%x fmt=0x%x fence=%u\n",
-					DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR),
-					DISP_REG_GET(DISP_REG_RDMA_MEM_SRC_PITCH),
-					tmpConfig.inputFormat, interface_fence);
+				if (m6_log_sample) {
+					DISPERR("M6 DDP decouple rdma: CPU RDMA MEM=0x%x/0x%x fmt=0x%x fence=%u\n",
+						DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR),
+						DISP_REG_GET(DISP_REG_RDMA_MEM_SRC_PITCH),
+						tmpConfig.inputFormat, interface_fence);
+					dsi_m6_dump_live("cpu-rdma-live");
+				}
 				_Interface_fence_release_callback(interface_fence > 1 ? interface_fence - 1 : 0);
 			} else {
 				_cmdq_set_config_handle_dirty_mira(cmdq_handle);
@@ -5332,7 +5348,8 @@ static int smart_ovl_try_switch_mode_nolock(void)
 		}
 	} else {
 		if (disp_helper_get_option(DISP_OPT_BYPASS_PQ)) {
-			DISPERR("M6 DDP smart ovl: keep DECOUPLE while PQ bypass RDMA0-DISP is active\n");
+			if (primary_m6_diag_sample(&primary_m6_smart_ovl_log_count))
+				DISPERR("M6 DDP smart ovl: keep DECOUPLE while PQ bypass RDMA0-DISP is active\n");
 			return 0;
 		}
 		bw_th = DC_bw*4;

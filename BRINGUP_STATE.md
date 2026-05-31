@@ -2536,3 +2536,100 @@ adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 wait-for-device
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 DSI snapshot|M6 DDP decouple|M6 DDP smart|dsi0|DSI|MIPITX|DLPT|battery|healthd"; cat /d/mtkfb 2>&1; cat /proc/interrupts | grep -E "dsi|disp|rdma"'
 ```
+
+## 2026-05-31 DSI live snapshot after RDMA progress
+
+PATCH HISTORY, DIAGNOSTIC, 2026-05-31: rate-limit M6 RDMA/PQ log spam and add
+a live DSI snapshot at the CPU RDMA update frontier.
+
+Hypothesis: the read-only DSI snapshot artifact `7504b88f...` did not preserve
+the most useful DSI state in the ring buffer because the M6 CPU RDMA and smart
+OVL diagnostics printed on nearly every frame. Rate-limiting those diagnostics
+and taking a DSI/MIPITX snapshot from the sampled CPU RDMA path should preserve
+the downstream DSI state for the same black-panel runtime without changing the
+display programming sequence.
+
+Evidence: verified flash/readback of
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dsi-snapshot-readonly/boot-m6-dsi-snapshot-readonly.img`
+sha256 `7504b88f18b7ed5510361ba76f602ca3ea780786ca506c0be6054f7d08ca74c4`
+produced capture
+`/srv/forge/android/meizu_m6/captures/20260531-171132-m6-dsi-snapshot-runtime-7504b88f-711HEBSR277K5`.
+That capture booted Android with SurfaceFlinger and bootanimation running,
+`PathMode:DECOUPLE`, `DISP_OPT_BYPASS_PQ=1`, `RDMA0 Transfer=7858`, and
+fb0 marker raw readbacks matching `white`, `bars`, `scan`, and `black`, but
+the physical panel remained black and the preserved dmesg did not contain the
+needed `M6 DSI snapshot` lines. The rebuilt artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dsi-live-snapshot-ratelimit/boot-m6-dsi-live-snapshot-ratelimit.img`
+sha256 `6fbe672c17498d01a9a706df2ed4baa14dabfe3cdf2b554abf7597df55d6e8df`
+was flashed and read back successfully on serial `711HEBSR277K5`; capture
+`/srv/forge/android/meizu_m6/captures/20260531-173320-m6-dsi-live-snapshot-ratelimit-runtime-6fbe672c-711HEBSR277K5`
+shows Android 8.1, SurfaceFlinger running, BootAnimation layer, Built-in
+Screen `720x1280`, `powerMode=2`, `flips=7227`, `PathMode:DECOUPLE`,
+`LCM Driver=[ili9881p_hd_dsi_txd]`, `RDMA0 Transfer=7583`, and
+`DISP_OPT_BYPASS_PQ=1`. The same capture preserves live DSI snapshots with
+`START=0x10001`, `STA=0x20`, `MODE=0x3`, `PS=0x30870`, video timing
+`VSA/VBP/VFP/VACT=0x14/0x18/0x40/0x500`,
+`STATE7=0x2020/Video data period` on sampled frames, and MIPITX lane/PLL state
+`lanes=0x603/0x601/0x601/0x601/0x601` and
+`pll=0x9/0x1/0x46c4ec4e/0x0/0x1/0x20/0x101`. Backlight is not the current
+frontier: live sysfs reports `/sys/class/leds/lcd-backlight/brightness=204`
+and dmesg contains `disp_pwm_set_backlight_cmdq(id=0x1, level_1024=818)` plus
+`backlight is on`. `dsi0` IRQs remain zero, and fb0 marker writes still read
+back correctly while screencap remains black.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h` declares the
+  live M6 DSI snapshot helper for other display files.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c` exposes
+  `dsi_m6_dump_live()` as a read-only wrapper around the existing DSI/MIPITX
+  snapshot code.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` samples
+  the M6 CPU RDMA and smart OVL diagnostic logs and calls the live DSI snapshot
+  only on sampled CPU RDMA updates.
+- `BRINGUP_STATE.md` records this tested diagnostic checkpoint and the next
+  evidence gap.
+
+Why each file changed: `ddp_dsi.*` owns the already-added read-only DSI/MIPITX
+snapshot code; exporting a wrapper lets the current RDMA frontier observe DSI
+state without adding register writes. `primary_display.c` is where the noisy
+per-frame M6 CPU RDMA/PQ logs and the sampled RDMA memory update occur; sampling
+there preserves dmesg capacity and ties the DSI snapshot to frames that really
+advance RDMA memory scanout.
+
+Expected next marker: the next display diagnostic should read panel DCS status
+after LCM init/resume or during the stable black-panel runtime. If DCS reports
+sleep/display-off or command read failure, the frontier moves to panel command
+path/LCM init acceptance. If DCS reports display-on while DSI video state stays
+active, the frontier moves to HS video acceptance/timing or panel-specific TE/
+mode expectations.
+
+Rollback condition: revert this diagnostic if a verified flash regresses before
+root ADB/fb0/SurfaceFlinger, if the rate-limited snapshot still causes log
+pressure or battery/DLPT resets earlier than the prior artifact, or if a later
+proper fix makes the live snapshot obsolete and the tree needs to shed debug
+noise.
+
+Build/artifact result: build directory
+`/home/n8n/forge-work/kernel-builds/m6-dsi-live-snapshot-ratelimit-20260531/out`.
+Artifact directory
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dsi-live-snapshot-ratelimit`;
+`boot-m6-dsi-live-snapshot-ratelimit.img` sha256
+`6fbe672c17498d01a9a706df2ed4baa14dabfe3cdf2b554abf7597df55d6e8df`;
+`Image.gz-dtb` sha256
+`519554f4e9809872ee4f35fcc7648c9e156257533fad27c632df524fa5b0cd73`;
+`System.map` sha256
+`c8fae0517cf9ec6b45234cbc6184be52c96888add2b01eb89280aab4eff79e66`;
+`config` sha256
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`;
+`build.log` sha256
+`e0eec942bb6a9aff42c218b7f03631623168d6b9723f3088567c34019d12340f`.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dsi-live-snapshot-ratelimit/SHA256SUMS
+(gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dsi-live-snapshot-ratelimit/Image.gz-dtb 2>/dev/null || true) | strings | grep -E 'M6 DSI snapshot|cpu-rdma-live|CPU apply RDMA config|CPU RDMA MEM|keep DECOUPLE'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+grep -R -n -E 'M6 DSI snapshot\\[cpu-rdma-live\\]|STATE7=|MIPITX|PathMode:DECOUPLE|RDMA0 Transfer|Built-in Screen|powerMode=2|flips=|backlight is on|disp_pwm_set_backlight|dsi0' /srv/forge/android/meizu_m6/captures/20260531-173320-m6-dsi-live-snapshot-ratelimit-runtime-6fbe672c-711HEBSR277K5
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /sys/class/leds/lcd-backlight/brightness; cat /d/mtkfb 2>&1; cat /proc/interrupts | grep -E "dsi|disp|rdma"; dmesg | grep -E "M6 DSI snapshot|backlight|disp_pwm|ili9881p"'
+```

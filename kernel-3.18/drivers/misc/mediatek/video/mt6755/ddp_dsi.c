@@ -1203,6 +1203,11 @@ static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM modul
 	dsi_m6_dump_snapshot(tag, module, cmdq);
 }
 
+void dsi_m6_dump_live(const char *tag)
+{
+	dsi_m6_dump_snapshot(tag, DISP_MODULE_DSI0, NULL);
+}
+
 unsigned int dsi_phy_get_clk(DISP_MODULE_ENUM module)
 {
 	int i = 0;

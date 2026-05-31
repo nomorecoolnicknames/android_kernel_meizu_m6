@@ -193,6 +193,7 @@ extern "C" {
 				       uint8_t *buffer, uint8_t buffer_size);
 	void *get_dsi_params_handle(uint32_t dsi_idx);
 	void dsi_analysis(DISP_MODULE_ENUM module);
+	void dsi_m6_dump_live(const char *tag);
 	void DSI_LFR_UPDATE(DISP_MODULE_ENUM module, cmdqRecHandle cmdq);
 	void DSI_Set_LFR(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, unsigned int mode,
 			 unsigned int type, unsigned int enable, unsigned int skip_num);
