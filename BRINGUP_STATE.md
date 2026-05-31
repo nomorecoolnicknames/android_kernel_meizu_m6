@@ -1741,3 +1741,147 @@ matching `config` sha256 is
 `sha256sum -c SHA256SUMS` passed, `abootimg -i` preserved the previous boot
 geometry/header, and kernel strings include `M6 DDP mutex isolate` with
 `queued=`.
+
+Runtime result: `boot-m6-rdma-color-mutex-isolation-51200.img` was flashed on
+serial `711HEBSR277K5` and read back as sha256
+`69ea4dc9fc45761ead74c9935bb0af3b7be01da3e321bc36463845a5b45dafce`. Fresh
+capture
+`/srv/forge/android/meizu_m6/captures/20260531-111210-m6-rdma-color51200-runtime-69ea4d-711HEBSR277K5`
+shows root ADB, `surfaceflinger=running`, `service.bootanim.exit=0`, boot mode
+`normal`, kernel compile time `Sun May 31 10:48:16 CDT 2026`, SurfaceFlinger
+`Built-in Screen` `720x1280`, `powerMode=2`, `isDisplayOn=1`, `flips=17`, and
+`VSYNC state: disabled`. The physical panel stayed black. `fb0-after-marker.raw`
+matched the known BGRA marker sha256
+`4a8b635eff9c04bb4b6ceda435c3db3e3045f7200403bc49f6d52b10f1ebf7d5`, but both
+`screencap` files were empty. `/proc/interrupts` showed OVL0 and RDMA0 IRQs
+rising after the marker write, while `dsi0` stayed at zero.
+
+FACT: the active runtime path is no longer a PQ/mutex membership failure.
+`dmesg-before-marker.txt` contains `M6 DDP mutex isolate:
+scenario=primary_rdma0_color0_disp mutex=0 MOD 0x51280 queued=0x51280
+now=0x51280 clear=0x18e000`. In this tree's module map, `0x51280` is
+`OVL0|RDMA0|COLOR0|DITHER|PWM0`; the PQ blocks `CCORR`, `AAL`, and `GAMMA`
+are bits `0x2000`, `0x4000`, and `0x8000` and are absent from the active mask.
+
+REJECTED: expanding PQ/mutex clearing further. The `69ea4d...` artifact proves
+that removing PQ bits from the active RDMA0-COLOR0 mutex path does not recover
+visible scanout, DSI IRQs, VSYNC, or screencap output. Do not remove `COLOR0`,
+`DITHER`, `PWM0`, OVL0, RDMA0, or DSI route state as a PQ follow-up.
+
+FACT: the current timeout frontier is OVL/RDMA/DSI hardware state. The same
+capture logs `PathMode:DECOUPLE`, `RDMA0 Transfer = 3`, `DSI_EXT_TE = 0`,
+`DISP_OPT_BYPASS_PQ=1`, `VALID=0x0`, `RDMA0 IN=0/0 OUT=0/0`, `dsi0 START=0x1
+STA=0x20 INTSTA=0x80000790 MODE=0x3`, and persistent `IRQ: ovl0 frame
+underflow`, `L0 not complete until EOF`, `L3 not complete until EOF`,
+`abnormal SOF`, `hw reset done` flooding. The timeout dump shows OVL0 L0 and
+L3 enabled with `CON=0x27ff`, full-screen `SIZE=0x50002d0`, addresses
+`0x9f707fbf` and `0x9fa8bfff`, and pitches `0x7ff0b80` and `0x7ff0b40`.
+
+INFERENCE: the next useful patch is read-only OVL/RDMA diagnostics at layer
+config time and timeout time, not another PQ bypass. The capture proves
+framebuffer memory can be written, but OVL0 does not complete L0/L3 fetch before
+EOF and RDMA0 does not see frame progress. The diagnostic should record the
+OVL input config that produced the final registers, including layer id, enable,
+format, source/destination rect, pitch, address/MVA, security/cache state, and
+the decoded final OVL/RDMA/DSI registers near each timeout.
+
+Expected next marker: a DIAGNOSTIC boot should still boot to root ADB and print
+bounded `M6 OVL diag` lines for the active L0/L3 config before the first
+underflow or timeout. The capture should make it possible to decide whether the
+bad state is malformed layer configuration, invalid MVA/SMI fetch, or a
+downstream RDMA/DSI acceptance issue.
+
+Rollback condition: if the diagnostic materially changes timing, floods dmesg
+so much that the original timeout lines are lost, or prevents root ADB, revert
+the diagnostic and collect a smaller register-only snapshot.
+
+PATCH HISTORY, DIAGNOSTIC, 2026-05-31: add bounded OVL layer config and timeout
+decode logging.
+
+Hypothesis: the active black-screen frontier is not PQ/mutex membership because
+the readback-verified `69ea4d...` artifact removed PQ bits from the active
+mutex mask while the physical panel stayed black, `dsi0` IRQs stayed at zero,
+VSYNC stayed disabled, and OVL0 continued to report L0/L3 underflow/EOF
+failure. The next evidence gap is whether OVL0 is being programmed with a bad
+layer address, pitch, format, source rectangle, or downstream RDMA/DSI state.
+This patch only records the computed OVL layer configuration and decoded
+timeout registers so the next capture can distinguish malformed layer input
+from SMI/MVA fetch failure or downstream DSI acceptance failure.
+
+Evidence: capture
+`/srv/forge/android/meizu_m6/captures/20260531-111210-m6-rdma-color51200-runtime-69ea4d-711HEBSR277K5`
+is readback-verified against boot sha256
+`69ea4dc9fc45761ead74c9935bb0af3b7be01da3e321bc36463845a5b45dafce`; matching
+`System.map` is
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma-color-mutex-isolation-51200/System.map`
+sha256 `bb2b188e17ba68ec76bf0b5c0d57f2aca2325e74958bc79155b8cf8f44ed3459`.
+The capture logs `M6 DDP mutex isolate:
+scenario=primary_rdma0_color0_disp ... MOD 0x51280 queued=0x51280
+now=0x51280 clear=0x18e000`, `VALID=0x0`, `RDMA0 IN=0/0 OUT=0/0`, `dsi0
+START=0x1 STA=0x20 INTSTA=0x80000790 MODE=0x3`, and repeated `IRQ: ovl0 frame
+underflow`, `L0 not complete until EOF`, `L3 not complete until EOF`, and
+`abnormal SOF`.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c` adds bounded
+  `M6 OVL diag cfg[...]` logging for OVL0 layer config and records the final
+  address expression before programming the existing address register.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` adds
+  read-only OVL0 L0-L3 decode lines to the existing `M6 DDP timeout[...]`
+  dump.
+- `BRINGUP_STATE.md` records this patch, artifact identity, expected marker,
+  rollback condition, and verification commands.
+
+Why each file changed: `ddp_ovl.c` owns the conversion from userspace/HWC layer
+input to OVL0 registers, which is the first point that can explain bad full
+screen L0/L3 fetch state. `ddp_manager.c` owns the proven timeout point and can
+decode the live OVL/RDMA register state without writing hardware. The state
+file is the required checkpoint so the next capture is judged by artifact hash
+and marker lines, not by stale logs.
+
+Expected next marker: after flashing
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl-layer-diag/boot-m6-ovl-layer-diag.img`,
+the boot partition readback should match sha256
+`5bb8b2875edd2385cb40ac50e44aaacfbee4c31e38f3900e94d6c8663e776cf4`.
+Fresh dmesg should include bounded `M6 OVL diag cfg[...]` lines before or near
+the first OVL underflow, plus timeout lines containing `ovl0 L%u decode`. A
+useful result is either a visible image or enough OVL/RDMA state to classify
+the next patch as layer config, MVA/SMI fetch, or downstream DSI video
+acceptance.
+
+Rollback condition: revert this diagnostic if a readback-verified flash of
+`5bb8b287...` regresses before root ADB/fb0/SurfaceFlinger, loses the original
+OVL/RDMA timeout markers due to log flood, or materially changes the failing
+state without producing the bounded `M6 OVL diag cfg` evidence.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl-layer-diag/SHA256SUMS
+(gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl-layer-diag/Image.gz-dtb 2>/dev/null || true) | strings | grep -E 'M6 OVL diag cfg|M6 DDP timeout'
+adb -H 127.0.0.1 -P 15038 devices -l
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl-layer-diag/boot-m6-ovl-layer-diag.img /data/local/tmp/boot.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dd if=/data/local/tmp/boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=1048576; sync'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 wait-for-device
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 OVL diag cfg|ovl0 L[0-3] decode|M6 DDP timeout|IRQ: ovl0 frame underflow|not complete until EOF|abnormal SOF|RDMA0|dsi0"'
+```
+
+Build/artifact result: branch `work/m6-ovl-layer-diag-20260531` built
+successfully in
+`/home/n8n/forge-work/kernel-builds/m6-ovl-layer-diag-20260531/out`.
+Repacked artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl-layer-diag/boot-m6-ovl-layer-diag.img`
+has sha256 `5bb8b2875edd2385cb40ac50e44aaacfbee4c31e38f3900e94d6c8663e776cf4`
+and size `8876032`; `Image.gz-dtb` sha256 is
+`f57c7e4f5e3ec673e6b978a025c5735cbcf27fabc3663e0d15552859260e595c`; the
+matching `System.map` sha256 is
+`7ac771be7630d3167b917a2fefa75f31187a10d431f9f3ecc9747dae69672a04`; the
+matching `config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+`sha256sum -c SHA256SUMS` passed, `abootimg -i` preserved the previous boot
+geometry/header, and kernel strings include `M6 OVL diag cfg` and
+`M6 DDP timeout`.

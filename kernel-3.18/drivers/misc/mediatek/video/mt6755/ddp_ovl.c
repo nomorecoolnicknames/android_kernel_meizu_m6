@@ -279,6 +279,35 @@ int ovl_layer_switch(DISP_MODULE_ENUM module, unsigned layer, unsigned int en, v
 	return 0;
 }
 
+static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
+		unsigned int local_layer,
+		const OVL_CONFIG_STRUCT * const cfg,
+		unsigned int bpp,
+		unsigned int adjusted_src_x,
+		unsigned int adjusted_dst_w,
+		unsigned int byte_offset,
+		unsigned long final_addr,
+		unsigned int con_value)
+{
+	static unsigned int m6_ovl_diag_count;
+	unsigned int idx;
+
+	if (module != DISP_MODULE_OVL0 || m6_ovl_diag_count >= 24)
+		return;
+
+	idx = m6_ovl_diag_count++;
+	DISPERR("M6 OVL diag cfg[%u]: L%u global=%u en=%u source=%u fmt=%s/0x%x bpp=%u sec=%u alpha=%u/%u const=%d key=%u/0x%x con=0x%x\n",
+		idx, local_layer, cfg->layer, cfg->layer_en, cfg->source,
+		unified_color_fmt_name(cfg->fmt), cfg->fmt, bpp, cfg->security,
+		cfg->aen, cfg->alpha, cfg->const_bld, cfg->keyEn, cfg->key,
+		con_value);
+	DISPERR("M6 OVL diag cfg[%u]: addr=0x%lx vaddr=0x%lx final=0x%lx low=0x%lx byte_off=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u pitch=%u adj_src_x=%u adj_dst_w=%u\n",
+		idx, cfg->addr, cfg->vaddr, final_addr, final_addr & 0xfff,
+		byte_offset, cfg->src_x, cfg->src_y, cfg->src_w, cfg->src_h,
+		cfg->dst_x, cfg->dst_y, cfg->dst_w, cfg->dst_h, cfg->src_pitch,
+		adjusted_src_x, adjusted_dst_w);
+}
+
 static int ovl_layer_config(DISP_MODULE_ENUM module,
 		unsigned int layer,
 		unsigned int is_engine_sec,
@@ -294,6 +323,7 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 	unsigned long ovl_base = ovl_base_addr(module);
 	unsigned long layer_offset = ovl_base + layer * OVL_LAYER_OFFSET;
 	unsigned int offset = 0;
+	unsigned long final_addr = 0;
 	enum UNIFIED_COLOR_FMT format = cfg->fmt;
 	unsigned int src_x = cfg->src_x;
 	unsigned int dst_w = cfg->dst_w;
@@ -406,8 +436,12 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 	else
 		offset = src_x * Bpp + cfg->src_y * cfg->src_pitch;
 
+	final_addr = cfg->addr + offset;
+	m6_ovl_diag_log_config(module, layer, cfg, Bpp, src_x, dst_w,
+		offset, final_addr, value);
+
 	if (!is_engine_sec) {
-		DISP_REG_SET(handle, DISP_REG_OVL_L0_ADDR + layer_offset, cfg->addr + offset);
+		DISP_REG_SET(handle, DISP_REG_OVL_L0_ADDR + layer_offset, final_addr);
 	} else {
 		unsigned int size;
 		int m4u_port;

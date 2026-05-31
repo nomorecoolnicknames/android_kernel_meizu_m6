@@ -1702,6 +1702,8 @@ static bool dpmgr_m6_primary_clock_hold_applied;
 #define M6_PRIMARY_SCANOUT_CG_MASK \
 	((1U << 1) | (1U << 10) | (1U << 12) | (1U << 15) | \
 	 (1U << 19) | (1U << 25))
+#define M6_OVL_LAYER_OFFSET 0x20
+#define M6_OVL_RDMA_DEBUG_OFFSET 0x4
 
 static void dpmgr_m6_hold_primary_video_clocks(ddp_path_handle handle,
 	const char *event_name)
@@ -1736,10 +1738,47 @@ static void dpmgr_m6_hold_primary_video_clocks(ddp_path_handle handle,
 		event_name, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 }
 
+static void dpmgr_m6_dump_ovl0_layer_decode(const char *event_name,
+	unsigned int layer)
+{
+	unsigned long layer_off = layer * M6_OVL_LAYER_OFFSET;
+	unsigned long rdma_off = layer * M6_OVL_RDMA_DEBUG_OFFSET;
+	unsigned int src_on = DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON);
+	unsigned int con = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_CON);
+	unsigned int size = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_SRC_SIZE);
+	unsigned int pos = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_OFFSET);
+	unsigned int addr = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_ADDR);
+	unsigned int pitch = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_PITCH);
+	enum UNIFIED_COLOR_FMT fmt;
+
+	fmt = display_fmt_reg_to_unified_fmt(
+		REG_FLD_VAL_GET(L_CON_FLD_CFMT, con),
+		REG_FLD_VAL_GET(L_CON_FLD_BTSW, con),
+		REG_FLD_VAL_GET(L_CON_FLD_RGB_SWAP, con));
+
+	DISPERR("M6 DDP timeout[%s]: ovl0 L%u decode en=%u source=%u fmt=%s/0x%x bpp=%u aen=%u alpha=%u key=%u const=%u xy=%u/%u wh=%u/%u addr=0x%x low=0x%x pitch=%u raw_pitch=0x%x rdma=0x%x gmc=0x%x fifo=0x%x dbg=0x%x\n",
+		event_name, layer, !!(src_on & (1U << layer)),
+		REG_FLD_VAL_GET(L_CON_FLD_LARC, con),
+		unified_color_fmt_name(fmt), fmt, UFMT_GET_Bpp(fmt),
+		REG_FLD_VAL_GET(L_CON_FLD_AEN, con),
+		REG_FLD_VAL_GET(L_CON_FLD_APHA, con),
+		REG_FLD_VAL_GET(L_CON_FLD_SKEN, con),
+		REG_FLD_VAL_GET(L_PITCH_FLD_CONST_BLD, pitch),
+		pos & 0xfff, (pos >> 16) & 0xfff,
+		size & 0xfff, (size >> 16) & 0xfff,
+		addr, addr & 0xfff,
+		REG_FLD_VAL_GET(L_PITCH_FLD_LSP, pitch), pitch,
+		DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_RDMA0_CTRL),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_RDMA0_MEM_GMC_SETTING),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_RDMA0_FIFO_CTRL),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + rdma_off + DISP_REG_OVL_RDMA0_DBG));
+}
+
 static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 {
 	unsigned int cg = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0);
 	unsigned int cg1 = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1);
+	unsigned int layer;
 
 	DISPERR("M6 DDP timeout[%s]: route VALID=0x%x READY=0x%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x SW0_RST=0x%x MMSYS_CG=0x%x/%x LARB0_GREQ=0x%x\n",
 		event_name,
@@ -1816,6 +1855,8 @@ static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L3_SRC_SIZE),
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L3_ADDR),
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L3_PITCH));
+	for (layer = 0; layer < 4; layer++)
+		dpmgr_m6_dump_ovl0_layer_decode(event_name, layer);
 	DISPERR("M6 DDP timeout[%s]: smi LARB0_STA=0x%x LARB0_MMU=0x%x/0x%x/0x%x/0x%x LARB0_GREQ=0x%x\n",
 		event_name,
 		DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0x0),
