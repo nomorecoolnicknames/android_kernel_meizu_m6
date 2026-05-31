@@ -251,6 +251,35 @@ static module_map_t module_mutex_map[DISP_MODULE_NUM] = {
 	{DISP_MODULE_UNKNOWN, -1},
 };
 
+static unsigned int ddp_mutex_module_mask(DISP_MODULE_ENUM module)
+{
+	int bit;
+
+	if (module < 0 || module >= DISP_MODULE_NUM)
+		return 0;
+
+	bit = module_mutex_map[module].bit;
+	if (bit < 0)
+		return 0;
+
+	return 1U << bit;
+}
+
+static int ddp_m6_primary_direct_mutex_isolation(DDP_SCENARIO_ENUM scenario)
+{
+	return scenario == DDP_SCENARIO_PRIMARY_DISP &&
+		disp_helper_get_option(DISP_OPT_BYPASS_PQ);
+}
+
+static unsigned int ddp_m6_primary_direct_mutex_clear_mask(void)
+{
+	return ddp_mutex_module_mask(DISP_MODULE_OVL0_2L) |
+		ddp_mutex_module_mask(DISP_MODULE_OVL1_2L) |
+		ddp_mutex_module_mask(DISP_MODULE_CCORR) |
+		ddp_mutex_module_mask(DISP_MODULE_AAL) |
+		ddp_mutex_module_mask(DISP_MODULE_GAMMA);
+}
+
 /* module can be connect if 1 */
 static module_map_t module_can_connect[DISP_MODULE_NUM] = {
 	{DISP_MODULE_OVL0, 1},
@@ -740,7 +769,8 @@ static int ddp_mutex_set_l(int mutex_id, int *module_list, DDP_MODE ddp_mode, vo
 	return 0;
 }
 
-static void ddp_check_mutex_l(int mutex_id, int *module_list, DDP_MODE ddp_mode)
+static void ddp_check_mutex_l(int mutex_id, int *module_list, DDP_MODE ddp_mode,
+			      unsigned int clear_mask)
 {
 	int i = 0;
 	uint32_t real_value = 0;
@@ -758,6 +788,7 @@ static void ddp_check_mutex_l(int mutex_id, int *module_list, DDP_MODE ddp_mode)
 		if (module_mutex_map[module_list[i]].bit != -1)
 			expect_value |= (1 << module_mutex_map[module_list[i]].bit);
 	}
+	expect_value &= ~clear_mask;
 	if (expect_value != real_value)
 		DISPDMP("error:mutex %d error: expect 0x%x, real 0x%x\n", mutex_id, expect_value,
 			real_value);
@@ -1024,14 +1055,36 @@ void ddp_check_path(DDP_SCENARIO_ENUM scenario)
 
 void ddp_check_mutex(int mutex_id, DDP_SCENARIO_ENUM scenario, DDP_MODE mode)
 {
+	unsigned int clear_mask = 0;
+
 	DISPDBG("check mutex %d on scenario %s\n", mutex_id, ddp_get_scenario_name(scenario));
-	ddp_check_mutex_l(mutex_id, module_list_scenario[scenario], mode);
+	if (ddp_m6_primary_direct_mutex_isolation(scenario))
+		clear_mask = ddp_m6_primary_direct_mutex_clear_mask();
+	ddp_check_mutex_l(mutex_id, module_list_scenario[scenario], mode, clear_mask);
 }
 
 int ddp_mutex_set(int mutex_id, DDP_SCENARIO_ENUM scenario, DDP_MODE mode, void *handle)
 {
-	if (scenario < DDP_SCENARIO_MAX)
-		return ddp_mutex_set_l(mutex_id, module_list_scenario[scenario], mode, handle);
+	int ret;
+	unsigned int clear_mask;
+	unsigned int before;
+
+	if (scenario < DDP_SCENARIO_MAX) {
+		ret = ddp_mutex_set_l(mutex_id, module_list_scenario[scenario], mode, handle);
+		if (ret)
+			return ret;
+
+		if (!ddp_m6_primary_direct_mutex_isolation(scenario))
+			return 0;
+
+		clear_mask = ddp_m6_primary_direct_mutex_clear_mask();
+		before = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id));
+		DISP_REG_MASK(handle, DISP_REG_CONFIG_MUTEX_MOD(mutex_id), 0, clear_mask);
+		DISPMSG("M6 DDP mutex isolate: scenario=%s mutex=%d MOD 0x%x -> 0x%x clear=0x%x\n",
+			ddp_get_scenario_name(scenario), mutex_id, before,
+			DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)), clear_mask);
+		return 0;
+	}
 	DISPERR("Invalid scenario %d when setting mutex\n", scenario);
 	return -1;
 }
@@ -1241,4 +1294,3 @@ int ddp_convert_ovl_input_to_rdma(RDMA_CONFIG_STRUCT *rdma_cfg, OVL_CONFIG_STRUC
 	rdma_cfg->yuv_range = ovl_cfg->yuv_range;
 	return 0;
 }
-

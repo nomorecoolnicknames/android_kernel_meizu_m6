@@ -1540,3 +1540,99 @@ matching `System.map` sha256 is
 `sha256sum -c SHA256SUMS` passed. The image is not flashed yet because
 `711HEBSR277K5` is not currently visible on the ADB tunnel; visible devices are
 nx549j `30785d1a`, m2note `810BBMM22D7S`, and m681 `91HEBNL163XD`.
+
+Runtime result: `boot-m6-stock-lcm-parity-72entry.img` was flashed from
+recovery on serial `711HEBSR277K5` and verified by boot partition readback in
+`/srv/forge/android/meizu_m6/captures/20260531-013053-m6-stock72-preflash-711HEBSR277K5`.
+The runtime capture
+`/srv/forge/android/meizu_m6/captures/20260531-013528-m6-stock72-runtime-7be765-711HEBSR277K5`
+verified boot sha256
+`7be765bd7aa180ace519db0ba4fe6a9c27b6f27b3138364a3ec4fa8246b0e0f2`.
+The panel was still not proven visible: DSI/LCM stock parity is present, but
+`M6 DDP timeout[VSYNC]` persists, route is still direct, `DISP_OPT_BYPASS_PQ=1`,
+`M0_MOD=0x1df280`, `RDMA0 underflow` appears at boot, and the timeout dump
+still shows `OVL SRC=0x9` with L0+L3 enabled. `fb0-before.raw` and
+`fb0-after-marker.raw` matched each other, not the marker raw, because
+SurfaceFlinger/BootAnimation was continuously compositing; this means fb raw
+marker persistence is no longer a reliable standalone success marker in this
+boot state.
+
+PATCH HISTORY, ISOLATION, 2026-05-31: narrow primary display mutex membership
+under the M6 direct-route/PQ-bypass path.
+
+Hypothesis: after stock LCM parity, the earliest remaining display blocker is
+not the LCM table or PQ module programming itself. The active route is already
+`OVL0 -> COLOR0 -> DITHER -> RDMA0 -> DSI0`, clocks are ungated, and
+`DISP_OPT_BYPASS_PQ=1`, but mutex0 still waits on non-routed `OVL0_2L` /
+`OVL1_2L` and bypassed PQ blocks `CCORR` / `AAL` / `GAMMA`. Narrowing only the
+mutex mask, while leaving path lists, clocks, and module power sequencing
+unchanged, should test whether the frame is blocked by over-broad mutex
+membership rather than by the physical DSI stream.
+
+Evidence: runtime capture
+`/srv/forge/android/meizu_m6/captures/20260531-013528-m6-stock72-runtime-7be765-711HEBSR277K5`
+shows verified boot sha256 `7be765...`, LCM driver `ili9881p_hd_dsi_txd`, direct
+route registers (`OVL0_MOUT=0x1 COLOR0_SEL=0x1 DITHER_MOUT=0x1
+RDMA0_SOUT=0x2 DSI0_SEL=0x1`), `DISP_OPT_BYPASS_PQ=1`, ungated scanout clocks,
+`RDMA0 underflow`, `M6 DDP timeout[VSYNC]`, and `mutex ... M0_MOD=0x1df280`.
+The decoded `M0_MOD` includes bits for OVL0, OVL0_2L, OVL1_2L, RDMA0, COLOR0,
+CCORR, AAL, GAMMA, DITHER, and PWM0 even though the active route does not use
+the 2L overlay engines and PQ blocks are explicitly bypassed.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` adds an M6
+  direct-route mutex isolation helper and clears the mutex bits for OVL0_2L,
+  OVL1_2L, CCORR, AAL, and GAMMA only when setting `DDP_SCENARIO_PRIMARY_DISP`
+  while `DISP_OPT_BYPASS_PQ` is enabled. The path list and power/connect
+  sequence are left intact.
+- `BRINGUP_STATE.md` records the stock72 runtime result, this isolation patch,
+  artifact identity, expected marker, rollback condition, and verification
+  commands.
+
+Why each file changed: `ddp_path.c` is where `M0_MOD` is generated from the
+scenario module list. Clearing the mask after the normal mutex setup isolates
+the suspected wait condition without disabling modules globally, removing them
+from path/power sequencing, or changing DSI/LCM. The state file records the
+evidence and next capture contract for rollback.
+
+Expected next marker: after flashing
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-mutex-route-isolation-51280/boot-m6-mutex-route-isolation-51280.img`,
+the boot partition readback should match sha256
+`a9c09d5848640febe04a42d6b2c6acd99ea774df1fab04827ba07b1d79b35517`.
+Early dmesg should include `M6 DDP mutex isolate` and the timeout dump should
+show `M0_MOD=0x51280` instead of `0x1df280`. A successful or useful runtime
+change is visible image, moving RDMA0/frame-done/IRQ counters, disappearance of
+`RDMA0 underflow`/`VSYNC` timeout, or a new earlier DSI/RDMA/OVL marker.
+
+Rollback condition: revert this isolation if the readback-verified artifact
+does not change `M0_MOD`, regresses before ADB/fb0/SurfaceFlinger compared with
+the stock72 baseline, or if `M0_MOD=0x51280` appears but RDMA0 underflow,
+VSYNC timeout, DSI state, and black-screen behavior are unchanged.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-mutex-route-isolation-51280/SHA256SUMS
+adb -H 127.0.0.1 -P 15038 devices -l
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-mutex-route-isolation-51280/boot-m6-mutex-route-isolation-51280.img /data/local/tmp/boot.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dd if=/data/local/tmp/boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=1048576 conv=fsync; sync'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 wait-for-device
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /d/mtkfb 2>&1; dmesg | grep -E "M6 DDP mutex isolate|M0_MOD|RDMA0 underflow|M6 DDP timeout|DISP_OPT_BYPASS_PQ|rdma0|dsi0"'
+```
+
+Build/artifact result: branch `work/m6-mutex-route-isolation-20260531` built
+successfully in
+`/home/n8n/forge-work/kernel-builds/m6-mutex-route-isolation-20260531/out`.
+Repacked artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-mutex-route-isolation-51280/boot-m6-mutex-route-isolation-51280.img`
+has sha256 `a9c09d5848640febe04a42d6b2c6acd99ea774df1fab04827ba07b1d79b35517`
+and size `8876032`; `Image.gz-dtb` sha256 is
+`98982e6c28dd75545302943c2b8ae82ea97754be9d15849d2e9525c0f89d0733`; the
+matching `System.map` sha256 is
+`e300615b7aa47f11edb508e63fc3f094c1021d20f374c5bf5f17f0bdb3f57c33`.
+`sha256sum -c SHA256SUMS` passed and the kernel strings include
+`M6 DDP mutex isolate`.
