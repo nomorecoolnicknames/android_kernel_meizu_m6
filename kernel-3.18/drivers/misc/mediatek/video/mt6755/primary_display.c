@@ -1680,14 +1680,17 @@ static int _DL_switch_to_DC_fast(void)
 
 	MMProfileLogEx(ddp_mmp_get_events()->primary_switch_mode, MMProfileFlagPulse, 1, 0);
 
-	/* 2.reset primary handle */
-	_cmdq_reset_config_handle();
-	_cmdq_handle_clear_dirty(pgc->cmdq_handle_config);
-	_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
-
 	/* 3.modify interface path handle to new scenario(rdma->dsi) */
 	old_scenario = dpmgr_get_scenario(pgc->dpmgr_handle);
 	new_scenario = primary_m6_decouple_display_scenario();
+
+	/* 2.reset primary handle */
+	_cmdq_reset_config_handle();
+	_cmdq_handle_clear_dirty(pgc->cmdq_handle_config);
+	if (new_scenario == DDP_SCENARIO_PRIMARY_RDMA0_DISP)
+		DISPERR("M6 DDP decouple route: skip old frame-done wait before primary_rdma0_disp\n");
+	else
+		_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
 
 	dpmgr_modify_path_power_on_new_modules(pgc->dpmgr_handle, new_scenario, 0);
 
@@ -2030,18 +2033,22 @@ static int DL_switch_to_rdma_mode(cmdqRecHandle handle, int block)
 	int need_flush = 0;
 	struct ddp_io_golden_setting_arg gset_arg;
 
+	old_scenario = dpmgr_get_scenario(pgc->dpmgr_handle);
+	new_scenario = primary_m6_decouple_display_scenario();
+
 	if (!handle) {
 		ret = cmdqRecCreate(CMDQ_SCENARIO_PRIMARY_DISP, &handle);
 		if (ret) {
 			DISPERR("%s:%d, create cmdq handle fail!ret=%d\n", __func__, __LINE__, ret);
 			return -1;
 		}
-		_cmdq_insert_wait_frame_done_token_mira(handle);
+		if (new_scenario == DDP_SCENARIO_PRIMARY_RDMA0_DISP)
+			DISPERR("M6 DDP rdma mode: skip old frame-done wait before primary_rdma0_disp\n");
+		else
+			_cmdq_insert_wait_frame_done_token_mira(handle);
 		need_flush = 1;
 	}
 
-	old_scenario = dpmgr_get_scenario(pgc->dpmgr_handle);
-	new_scenario = primary_m6_decouple_display_scenario();
 	dpmgr_modify_path_power_on_new_modules(pgc->dpmgr_handle, new_scenario, 0);
 	dpmgr_modify_path(pgc->dpmgr_handle, new_scenario, handle,
 			primary_display_is_video_mode() ? DDP_VIDEO_MODE : DDP_CMD_MODE, 0);

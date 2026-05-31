@@ -2020,3 +2020,114 @@ matching `config` sha256 is
 `sha256sum -c SHA256SUMS` passed, `abootimg -i` preserved the previous boot
 geometry/header, and kernel strings include `M6 DDP decouple route`,
 `M6 OVL diag cfg`, and `M6 DDP timeout`.
+
+Runtime result: `boot-m6-rdma0-disp-decpq.img` was flashed on serial
+`711HEBSR277K5` and read back as sha256
+`ee061f6b0896302704406e30f26dde2fbd77f10f6bd0f934623887a620a1e4f7` before
+and after reboot. Fresh capture
+`/srv/forge/android/meizu_m6/captures/20260531-124448-m6-rdma0-disp-decpq-runtime-ee061f-711HEBSR277K5`
+shows root ADB, `surfaceflinger=running`, `init.svc.bootanim=running`,
+`service.bootanim.exit=0`, SurfaceFlinger `Built-in Screen` `720x1280`,
+`powerMode=2`, `isDisplayOn=1`, and `flips=10`. The framebuffer marker was
+written through `/cache` and read back from `/dev/graphics/fb0` as sha256
+`4a8b635eff9c04bb4b6ceda435c3db3e3045f7200403bc49f6d52b10f1ebf7d5`, but
+the physical panel remained black and `screencap` produced an empty file.
+
+FACT: the software scenario changed to `primary_rdma0_disp`, but the hardware
+route and mutex did not. The capture logs `wait VSYNC timeout on scenario
+primary_rdma0_disp` with `M0_MOD=0x51280`, `OVL0_MOUT=0x2`,
+`COLOR0_SEL=0x1`, `DITHER_MOUT=0x1`, `RDMA0_SOUT=0x2`, `DSI0_SEL=0x1`,
+`RDMA0 MEM_START=0x0 IN=0/0 OUT=0/0`, and `dsi0` IRQ count `0`. OVL0/RDMA0
+IRQs increased across the marker write, while DSI0 stayed zero. This means the
+previous patch selected the right scenario in software but did not get the
+route/mutex command stream applied to hardware before the old path stalled.
+
+INFERENCE: the route/mutex update is queued behind the existing
+`_cmdq_insert_wait_frame_done_token_mira()` in the DL-to-DC/RDMA switch path.
+Because the old OVL/COLOR/DITHER path is already stuck and never signals the
+old frame-done token, the CMDQ packet that should change mutex0 to
+`RDMA0|PWM0` and connect `RDMA0 -> DSI0` does not execute. The next patch must
+skip that old frame-done wait only for the already-active M6 PQ-bypass
+`primary_rdma0_disp` route.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-31: skip stale frame-done wait before the
+M6 PQ-bypass RDMA0-DISP route update.
+
+Hypothesis: with `DISP_OPT_BYPASS_PQ=1`, the DL-to-DC and DL-to-RDMA path
+switches choose `DDP_SCENARIO_PRIMARY_RDMA0_DISP`, but they enqueue the
+hardware route/mutex changes after a wait token belonging to the old
+OVL/COLOR/DITHER path. Skipping that old wait token only for
+`primary_rdma0_disp` should let CMDQ apply the existing route/mutex update and
+RDMA memory config, so the next timeout, if any, reflects the true RDMA0-to-DSI
+frontier instead of stale OVL/PQ hardware state.
+
+Evidence: capture
+`/srv/forge/android/meizu_m6/captures/20260531-124448-m6-rdma0-disp-decpq-runtime-ee061f-711HEBSR277K5`
+matches boot sha256
+`ee061f6b0896302704406e30f26dde2fbd77f10f6bd0f934623887a620a1e4f7`; matching
+`System.map` is
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma0-disp-decpq/System.map`
+sha256 `452397c4c39e72f6cb4296af5086e3476a1fc2514e1bd648a9e43e5d27bc7b78`.
+The capture shows the timeout on `primary_rdma0_disp` while route/mutex
+registers still match the old OVL/COLOR/DITHER path and `RDMA0 MEM_START=0`.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` skips
+  `_cmdq_insert_wait_frame_done_token_mira()` in `_DL_switch_to_DC_fast()` and
+  `DL_switch_to_rdma_mode()` only when the selected new scenario is
+  `DDP_SCENARIO_PRIMARY_RDMA0_DISP`, and logs the decision.
+- `BRINGUP_STATE.md` records the verified runtime failure, hypothesis,
+  rollback condition, and next verification route.
+
+Why each file changed: `primary_display.c` owns the exact two switch paths that
+select `primary_rdma0_disp` and queue the route/mutex update behind the old
+frame-done token. The state file is required so the next agent judges the patch
+against the readback-verified `ee061f...` runtime evidence rather than stale
+logs.
+
+Expected next marker: the next boot image should contain `M6 DDP decouple
+route: skip old frame-done wait before primary_rdma0_disp`. A useful positive
+result is visible image, nonzero DSI0 IRQs, VSYNC enabled, RDMA0
+`MEM_START`/IN/OUT progress, or a new DSI/RDMA timeout marker. If VSYNC still
+times out on `primary_rdma0_disp`, mutex0 should no longer be `0x51280`; it
+should be consistent with the RDMA0/PWM0 path, and the route registers should
+no longer describe `OVL0 -> COLOR0 -> DITHER -> RDMA0`.
+
+Rollback condition: revert this patch if a readback-verified flash regresses
+before root ADB/fb0/SurfaceFlinger, if the skip log appears but mutex/route
+remain identical to the `ee061f...` capture, or if the panel remains black
+with zero DSI0 IRQs and no new RDMA memory/counter or downstream DSI evidence.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+sha256sum -c <next-artifact-dir>/SHA256SUMS
+(gzip -cd <next-artifact-dir>/Image.gz-dtb 2>/dev/null || true) | strings | grep -E 'skip old frame-done wait|M6 DDP decouple route|M6 DDP timeout'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push <next-artifact-dir>/boot-*.img /cache/boot.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/cache/boot.img bs=<boot-size> count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dd if=/cache/boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=1048576 conv=fsync; sync'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=<boot-size> count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 wait-for-device
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /d/mtkfb 2>&1; dmesg | grep -E "skip old frame-done wait|primary_rdma0_disp|M0_MOD|M6 DDP timeout|RDMA0 MEM|dsi0|VSYNC|OVL0_MOUT|COLOR0_SEL|DITHER_MOUT|RDMA0_SOUT|DSI0_SEL"'
+```
+
+Build/artifact result: branch `work/m6-rdma0-disp-decpq-20260531` built
+successfully in
+`/home/n8n/forge-work/kernel-builds/m6-rdma0-disp-skipwait-20260531/out`.
+Repacked artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma0-disp-skipwait/boot-m6-rdma0-disp-skipwait.img`
+has sha256 `c28afc0f5beaa5c492cd02629039d37e52f0e4f9f5e223d0626a38398c2d56e2`
+and size `8876032`; `Image.gz-dtb` sha256 is
+`4a3db86924c6b01550bd54fc9c9cc26a128c2398e5d118830d255112f4d82109`; the
+matching `System.map` sha256 is
+`a3e8727de0cdacffafc79ea7154a68f6eeef839e1afc4cd03911c1332b1cdf14`; the
+matching `config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+`sha256sum -c SHA256SUMS` passed, `abootimg -i` preserved the previous boot
+geometry/header, and kernel strings include `M6 DDP decouple route: skip old
+frame-done wait before primary_rdma0_disp`, `M6 DDP rdma mode: skip old
+frame-done wait before primary_rdma0_disp`, `M6 OVL diag cfg`, and
+`M6 DDP timeout`.
