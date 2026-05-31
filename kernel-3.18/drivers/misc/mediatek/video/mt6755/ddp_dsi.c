@@ -1113,6 +1113,96 @@ int MIPITX_IsEnabled(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 	return ret;
 }
 
+static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void *cmdq)
+{
+	uint32_t state6;
+	uint32_t state7;
+	uint32_t state8;
+	uint32_t state9;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL)
+		return;
+
+	state6 = INREG32(DDP_REG_BASE_DSI0 + 0x160);
+	state7 = INREG32(DDP_REG_BASE_DSI0 + 0x164);
+	state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+	state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+
+	DISPERR("M6 DSI snapshot[%s]: cmdq=%p START=0x%x STA=0x%x INTEN=0x%x INTSTA=0x%x MODE=0x%x TXRX=0x%x PS=0x%x\n",
+		tag, cmdq, INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x004),
+		INREG32(DDP_REG_BASE_DSI0 + 0x008),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c));
+	DISPERR("M6 DSI snapshot[%s]: VSA/VBP/VFP/VACT=0x%x/0x%x/0x%x/0x%x HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, INREG32(DDP_REG_BASE_DSI0 + 0x020),
+		INREG32(DDP_REG_BASE_DSI0 + 0x024),
+		INREG32(DDP_REG_BASE_DSI0 + 0x028),
+		INREG32(DDP_REG_BASE_DSI0 + 0x02c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x064));
+	DISPERR("M6 DSI snapshot[%s]: PHY_LCCON=0x%x PHY_LD0CON=0x%x PHY_SYNCON=0x%x TIM=0x%x/0x%x/0x%x/0x%x VM_CMD=0x%x\n",
+		tag, INREG32(DDP_REG_BASE_DSI0 + 0x104),
+		INREG32(DDP_REG_BASE_DSI0 + 0x108),
+		INREG32(DDP_REG_BASE_DSI0 + 0x10c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x110),
+		INREG32(DDP_REG_BASE_DSI0 + 0x114),
+		INREG32(DDP_REG_BASE_DSI0 + 0x118),
+		INREG32(DDP_REG_BASE_DSI0 + 0x11c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130));
+	DISPERR("M6 DSI snapshot[%s]: STATE6=0x%x/%s STATE7=0x%x/%s STATE8=0x%x STATE9=0x%x DBG0-3=0x%x/0x%x/0x%x/0x%x\n",
+		tag, state6, _dsi_cmd_mode_parse_state(state6 & 0xffff),
+		state7, _dsi_vdo_mode_parse_state(state7 & 0xff),
+		state8, state9, INREG32(DDP_REG_BASE_DSI0 + 0x148),
+		INREG32(DDP_REG_BASE_DSI0 + 0x14c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x150),
+		INREG32(DDP_REG_BASE_DSI0 + 0x154));
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	DISPERR("M6 DSI snapshot[%s]: MIPITX lanes=0x%x/0x%x/0x%x/0x%x/0x%x top/bg=0x%x/0x%x pll=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008),
+		INREG32(MIPITX_BASE + 0x00c),
+		INREG32(MIPITX_BASE + 0x010),
+		INREG32(MIPITX_BASE + 0x014),
+		INREG32(MIPITX_BASE + 0x040),
+		INREG32(MIPITX_BASE + 0x044),
+		INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x054),
+		INREG32(MIPITX_BASE + 0x058),
+		INREG32(MIPITX_BASE + 0x05c),
+		INREG32(MIPITX_BASE + 0x060),
+		INREG32(MIPITX_BASE + 0x064),
+		INREG32(MIPITX_BASE + 0x068));
+	DISPERR("M6 DSI snapshot[%s]: MIPITX rgs/gpi/sel/sw/dbg=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, INREG32(MIPITX_BASE + 0x070),
+		INREG32(MIPITX_BASE + 0x074),
+		INREG32(MIPITX_BASE + 0x078),
+		INREG32(MIPITX_BASE + 0x07c),
+		INREG32(MIPITX_BASE + 0x080),
+		INREG32(MIPITX_BASE + 0x084),
+		INREG32(MIPITX_BASE + 0x088),
+		INREG32(MIPITX_BASE + 0x08c),
+		INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094));
+#endif
+}
+
+static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM module,
+					 void *cmdq, unsigned int *count,
+					 unsigned int limit)
+{
+	if (*count >= limit)
+		return;
+
+	(*count)++;
+	dsi_m6_dump_snapshot(tag, module, cmdq);
+}
+
 unsigned int dsi_phy_get_clk(DISP_MODULE_ENUM module)
 {
 	int i = 0;
@@ -1820,9 +1910,14 @@ DSI_STATUS DSI_DisableClk(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 
 DSI_STATUS DSI_Start(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 {
+	static unsigned int dump_count;
+
 	if (module == DISP_MODULE_DSI0) {
+		if (dump_count < 8)
+			dsi_m6_dump_snapshot("start-before", module, cmdq);
 		DSI_OUTREGBIT(cmdq, DSI_START_REG, DSI_REG[0]->DSI_START, DSI_START, 0);
 		DSI_OUTREGBIT(cmdq, DSI_START_REG, DSI_REG[0]->DSI_START, DSI_START, 1);
+		dsi_m6_dump_snapshot_limited("start-after", module, cmdq, &dump_count, 8);
 	}
 
 	return DSI_STATUS_OK;
@@ -2950,6 +3045,7 @@ int ddp_dsi_init(DISP_MODULE_ENUM module, void *cmdq)
 {
 	DSI_STATUS ret = DSI_STATUS_OK;
 	int i = 0;
+	static unsigned int dump_count;
 
 	DISPFUNC();
 	/* DSI_OUTREG32(cmdq, 0xf0000048, 0x80000000); */
@@ -3021,6 +3117,7 @@ int ddp_dsi_init(DISP_MODULE_ENUM module, void *cmdq)
 		data_lane0 = (INREG32(MIPI_TX_REG_BASE + 0x8));/*MIPITX_DSI_DATA_LANE0*/
 		DISPMSG("clk=0x%x,lan3=0x%x,lan2=0x%x,lan1=0x%x,lan0=0x%x\n",
 			clock_lane, data_lane3, data_lane2, data_lane1, data_lane0);
+		dsi_m6_dump_snapshot_limited("init-after", module, cmdq, &dump_count, 2);
 	}
 #endif
 
@@ -3198,6 +3295,7 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 {
 	int i = 0;
 	LCM_DSI_PARAMS *dsi_config = &(config->dispif_config.dsi);
+	static unsigned int dump_count;
 
 	if (!config->dst_dirty) {
 		if (atomic_read(&PMaster_enable) == 0)
@@ -3269,6 +3367,7 @@ force_config:
 
 
 done:
+	dsi_m6_dump_snapshot_limited("config-done", module, cmdq, &dump_count, 4);
 
 	return 0;
 }
@@ -3279,6 +3378,7 @@ int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq)
 	int i = 0;
 	int g_lcm_x = disp_helper_get_option(DISP_OPT_FAKE_LCM_X);
 	int g_lcm_y = disp_helper_get_option(DISP_OPT_FAKE_LCM_Y);
+	static unsigned int dump_count;
 
 	DISPFUNC();
 	if (module == DISP_MODULE_DSI0) {
@@ -3286,6 +3386,7 @@ int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq)
 			     _dsi_context[i].lcm_height);
 		DSI_SetMode(module, cmdq, _dsi_context[i].dsi_params.mode);
 		DSI_clk_HS_mode(module, cmdq, true);
+		dsi_m6_dump_snapshot_limited("start-after-hs", module, cmdq, &dump_count, 4);
 	}
 
 	return 0;

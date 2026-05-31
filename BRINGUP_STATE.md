@@ -2444,3 +2444,95 @@ Next display action after battery is stable: add a DIAGNOSTIC-only DSI/PHY/panel
 snapshot at the safe DSI start/timeout callsites. Do not patch CMDQ wait tokens
 or expand PQ/mutex bypass again unless a fresh verified capture regresses to
 that earlier frontier.
+
+PATCH HISTORY, DIAGNOSTIC, 2026-05-31: add read-only M6 DSI/MIPITX snapshots.
+
+Hypothesis: the verified `df317057...` pin-decouple artifact advanced past PQ,
+mutex membership, stale wait handling, and RDMA memory scanout, but the physical
+panel remains black because the failure is now downstream of RDMA0 scanout in
+DSI/PHY/panel video acceptance. A read-only snapshot at DSI init/config/start
+call sites should show whether DSI0 reaches video mode, HS clock enable,
+valid timing/packet-size programming, and enabled MIPITX PLL/lane state without
+changing display behavior.
+
+Evidence: runtime capture
+`/srv/forge/android/meizu_m6/captures/20260531-140843-m6-rdma0-disp-pin-decouple-runtime-df3170-711HEBSR277K5`
+uses boot readback sha256
+`df317057c3137015a9bf33d1907a7d89b00be6d17d2c0a021b6542a2711bd5f6`.
+`live-debugfs-mtkfb.txt` shows `PathMode:DECOUPLE`, `DISP_OPT_BYPASS_PQ=1`,
+`RDMA0 Transfer=5585`, and repeated `M6 DDP decouple rdma: CPU RDMA MEM=...`.
+`live-dumpsys-SurfaceFlinger.txt` shows Built-in Screen `720x1280`,
+`powerMode=2`, `numLayers=1`, and `flips=4892`; fb markers and screencaps
+round-tripped. `live-proc-interrupts.txt` still shows `dsi0` IRQs zero, and the
+user still reports a black physical panel. Post-reset capture
+`/srv/forge/android/meizu_m6/captures/20260531-142209-m6-df3170-after-dumpreg15-reset-711HEBSR277K5`
+proves the later reset was low-battery/DLPT, so it is not display evidence.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c` adds read-only
+  `M6 DSI snapshot[...]` dumps for DSI core, video timing, PHY timing, state
+  debug, and MIPITX PLL/lane/control registers, rate-limited at init/config/
+  start/trigger paths.
+- `BRINGUP_STATE.md` records the hypothesis, artifact identity, expected next
+  markers, rollback condition, and verification route.
+
+Why each file changed: `ddp_dsi.c` owns the DSI core and MIPITX state that is
+now the earliest unresolved display frontier after the verified RDMA0-DECOUPLE
+runtime result. The patch deliberately uses only `INREG32` and `DISPERR`, with
+no register writes beyond the pre-existing DSI start path. The state file is
+the required durable link from this DIAGNOSTIC patch to the exact verified
+artifact and capture chain.
+
+Expected next marker: the next capture from this artifact should show
+`M6 DSI snapshot[init-after]`, `M6 DSI snapshot[config-done]`,
+`M6 DSI snapshot[start-after-hs]`, and `M6 DSI snapshot[start-before/start-after]`
+lines in dmesg. A useful positive result is a physical image or nonzero `dsi0`
+IRQs. A useful negative result is a stable black-panel boot with snapshot values
+showing which of DSI `START/STA/MODE/TXRX/PS/VM_CMD/STATE_DBG`, `PHY_LCCON`,
+or MIPITX PLL/lane registers failed to enter the expected video/HS state.
+
+Rollback condition: revert this patch if a readback-verified flash regresses
+before root ADB/fb0/SurfaceFlinger, if the log volume destabilizes boot or
+causes DLPT resets earlier than the prior `df317057...` artifact, or if the
+snapshot proves DSI/PHY state is already healthy and the frontier moves to LCM
+DCS/panel power acceptance.
+
+Build/artifact result: branch `work/m6-rdma0-disp-decpq-20260531` built
+successfully in
+`/home/n8n/forge-work/kernel-builds/m6-dsi-snapshot-20260531/out`.
+Repacked artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dsi-snapshot-readonly/boot-m6-dsi-snapshot-readonly.img`
+has sha256 `7504b88f18b7ed5510361ba76f602ca3ea780786ca506c0be6054f7d08ca74c4`
+and size `8876032`. Kernel payload `Image.gz-dtb` sha256 is
+`1a3b5e05ab30aae042b2090e5936975d322d558a1aa09eea09bacb18cada3b32`;
+matching `System.map` sha256 is
+`76bb0c6ea6a3ed1484e23e52bdfe682931f005d40bd14db72ba7318d0559284a`;
+matching `config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`;
+`build-verify.log` sha256 is
+`3e2c975c3ec7c5f9a8a786db0d1e9b7e85c26abc116fac179d8ff9f60157c8a6`.
+`sha256sum -c SHA256SUMS` passed, `abootimg -i` preserved page size `2048`,
+boot name `1552631950`, addresses `0x40080000/0x45000000/0x44000000`, and the
+eng permissive cmdline. Kernel strings include all `M6 DSI snapshot` lines plus
+the prior `M6 DDP decouple rdma` and `M6 DDP smart ovl` markers.
+
+FACT: At artifact creation time, M6 serial `711HEBSR277K5` was not visible via
+`adb -H 127.0.0.1 -P 15038 devices -l`; only `nx549j` and `m681` were visible.
+Do not flash without `-s 711HEBSR277K5`, and wait for battery/ADB stability
+before the next device cycle.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dsi-snapshot-readonly/SHA256SUMS
+(gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dsi-snapshot-readonly/Image.gz-dtb 2>/dev/null || true) | strings | grep -E 'M6 DSI snapshot|M6 DDP smart ovl|M6 DDP decouple rdma'
+adb -H 127.0.0.1 -P 15038 devices -l
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'date; for d in /sys/class/power_supply/*; do echo $d; for f in status capacity voltage_now current_now online present health temp; do [ -e "$d/$f" ] && printf "%s=" "$f" && cat "$d/$f"; done; done'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dsi-snapshot-readonly/boot-m6-dsi-snapshot-readonly.img /cache/boot.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/cache/boot.img bs=8876032 count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dd if=/cache/boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=1048576; sync'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 wait-for-device
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 DSI snapshot|M6 DDP decouple|M6 DDP smart|dsi0|DSI|MIPITX|DLPT|battery|healthd"; cat /d/mtkfb 2>&1; cat /proc/interrupts | grep -E "dsi|disp|rdma"'
+```
