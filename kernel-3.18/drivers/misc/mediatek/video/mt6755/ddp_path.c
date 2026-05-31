@@ -267,8 +267,11 @@ static unsigned int ddp_mutex_module_mask(DISP_MODULE_ENUM module)
 
 static int ddp_m6_primary_direct_mutex_isolation(DDP_SCENARIO_ENUM scenario)
 {
-	return scenario == DDP_SCENARIO_PRIMARY_DISP &&
-		disp_helper_get_option(DISP_OPT_BYPASS_PQ);
+	if (!disp_helper_get_option(DISP_OPT_BYPASS_PQ))
+		return 0;
+
+	return scenario == DDP_SCENARIO_PRIMARY_DISP ||
+		scenario == DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP;
 }
 
 static unsigned int ddp_m6_primary_direct_mutex_clear_mask(void)
@@ -1068,6 +1071,7 @@ int ddp_mutex_set(int mutex_id, DDP_SCENARIO_ENUM scenario, DDP_MODE mode, void 
 	int ret;
 	unsigned int clear_mask;
 	unsigned int before;
+	unsigned int queued;
 
 	if (scenario < DDP_SCENARIO_MAX) {
 		ret = ddp_mutex_set_l(mutex_id, module_list_scenario[scenario], mode, handle);
@@ -1079,9 +1083,10 @@ int ddp_mutex_set(int mutex_id, DDP_SCENARIO_ENUM scenario, DDP_MODE mode, void 
 
 		clear_mask = ddp_m6_primary_direct_mutex_clear_mask();
 		before = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id));
+		queued = before & ~clear_mask;
 		DISP_REG_MASK(handle, DISP_REG_CONFIG_MUTEX_MOD(mutex_id), 0, clear_mask);
-		DISPMSG("M6 DDP mutex isolate: scenario=%s mutex=%d MOD 0x%x -> 0x%x clear=0x%x\n",
-			ddp_get_scenario_name(scenario), mutex_id, before,
+		DISPMSG("M6 DDP mutex isolate: scenario=%s mutex=%d MOD 0x%x queued=0x%x now=0x%x clear=0x%x\n",
+			ddp_get_scenario_name(scenario), mutex_id, before, queued,
 			DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)), clear_mask);
 		return 0;
 	}

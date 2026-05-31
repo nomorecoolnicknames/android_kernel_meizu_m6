@@ -1636,3 +1636,108 @@ matching `System.map` sha256 is
 `e300615b7aa47f11edb508e63fc3f094c1021d20f374c5bf5f17f0bdb3f57c33`.
 `sha256sum -c SHA256SUMS` passed and the kernel strings include
 `M6 DDP mutex isolate`.
+
+Runtime result: `boot-m6-mutex-route-isolation-51280.img` was flashed on serial
+`711HEBSR277K5` and read back as sha256
+`a9c09d5848640febe04a42d6b2c6acd99ea774df1fab04827ba07b1d79b35517`. Fresh
+capture
+`/srv/forge/android/meizu_m6/captures/20260531-083137-m6-mutex51280-runtime-a9c09d-711HEBSR277K5`
+shows root ADB, `surfaceflinger=running`, boot animation exit `0`, boot mode
+`normal`, SurfaceFlinger `Built-in Screen` `720x1280`, `powerMode=2`,
+`isDisplayOn=1`, `flips=7`, and `VSYNC state: disabled`. User-visible result
+remained a black physical panel. `fb0-after-marker.raw` matched the known BGRA
+marker sha256 `4a8b635eff9c04bb4b6ceda435c3db3e3045f7200403bc49f6d52b10f1ebf7d5`,
+so framebuffer writes persist in memory, but `screencap` produced empty files.
+`/proc/interrupts` still had `dsi0` at zero before and after marker writes, and
+dmesg was flooded by `IRQ: ovl0 frame underflow`, `L0 not complete until EOF`,
+`L3 not complete until EOF`, `abnormal SOF`, and `hw reset done`.
+
+FACT: The previous isolation log only proved the `DDP_SCENARIO_PRIMARY_DISP`
+mutex path was filtered. Runtime also switches a handle from `primary_all` to
+`primary_rdma0_color0_disp`, whose module list is `RDMA0`, `COLOR0`, `CCORR`,
+`AAL`, `GAMMA`, `DITHER`, `UFOE`, `PWM0`, `DSI0`. Because the old helper did
+not apply to `DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP`, the active scanout path
+could still keep bypassed PQ modules in its mutex membership after the handle
+switch.
+
+PATCH HISTORY, ISOLATION, 2026-05-31: extend M6 direct-route/PQ mutex isolation
+to the active RDMA0-COLOR0 display scenario.
+
+Hypothesis: PQ is already bypassed as engines (`DISP_OPT_BYPASS_PQ=1`), but
+the active `primary_rdma0_color0_disp` mutex path can still wait on PQ blocks
+(`CCORR`, `AAL`, `GAMMA`) because the previous clear only covered
+`PRIMARY_DISP`. Extending the same narrow mutex clear to
+`PRIMARY_RDMA0_COLOR0_DISP` tests whether the remaining black screen is caused
+by the active scanout path synchronizing on bypassed PQ modules after the route
+switch. The patch also logs the queued value separately from the immediate
+register read because a CMDQ-backed `DISP_REG_MASK(handle, ...)` can make the
+post-write `DISP_REG_GET()` stale.
+
+Evidence: the readback-verified `a9c09d...` capture above still has a black
+panel with SurfaceFlinger ON, framebuffer marker memory persistence, dsi0 IRQ
+count zero, VSYNC disabled, and OVL underflow/abnormal-SOF flooding. The source
+scenario table for `PRIMARY_RDMA0_COLOR0_DISP` still contains `CCORR`, `AAL`,
+and `GAMMA`, while the previous helper only returned true for
+`DDP_SCENARIO_PRIMARY_DISP`.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` applies the M6
+  direct-route/PQ mutex clear to both `DDP_SCENARIO_PRIMARY_DISP` and
+  `DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP`, and logs `queued=`.
+- `BRINGUP_STATE.md` records the verified `a9c09d...` runtime result, this
+  patch, artifact identity, expected marker, rollback condition, and
+  verification commands.
+
+Why each file changed: `ddp_path.c` owns the scenario-to-mutex module mask and
+is the narrowest place to isolate mutex membership without removing modules
+from path lists, power sequencing, or DSI/LCM state. The state file is required
+so the next capture can judge this isolation by artifact hash and log markers.
+
+Expected next marker: after flashing
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma-color-mutex-isolation-51200/boot-m6-rdma-color-mutex-isolation-51200.img`,
+the boot partition readback should match sha256
+`69ea4dc9fc45761ead74c9935bb0af3b7be01da3e321bc36463845a5b45dafce`.
+Early dmesg should include `M6 DDP mutex isolate` for both `primary_disp` and
+`primary_rdma0_color0_disp`; the active RDMA0-COLOR0 path should report
+`queued=0x51200` or a final timeout/debugfs mutex mask consistent with
+`RDMA0|COLOR0|DITHER|UFOE|PWM0|DSI0`. A positive or useful result is visible
+image, rising DSI/RDMA frame progress, VSYNC enabled, reduced OVL underflow
+flooding, or a new earlier DSI/OVL/SMI marker.
+
+Rollback condition: if the readback-verified artifact still has black physical
+panel, `dsi0` IRQ zero, VSYNC disabled, OVL underflow/abnormal-SOF flooding,
+and a correct queued/final mask for `primary_rdma0_color0_disp`, stop blaming
+PQ/mutex membership and pivot to OVL layer fetch/config, SMI/LARB, or DSI video
+acceptance rather than expanding PQ bypass further.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma-color-mutex-isolation-51200/SHA256SUMS
+adb -H 127.0.0.1 -P 15038 devices -l
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma-color-mutex-isolation-51200/boot-m6-rdma-color-mutex-isolation-51200.img /data/local/tmp/boot.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dd if=/data/local/tmp/boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=1048576; sync'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 wait-for-device
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /d/mtkfb 2>&1; dmesg | grep -E "M6 DDP mutex isolate|primary_rdma0_color0_disp|M0_MOD|queued=0x51200|RDMA0 underflow|M6 DDP timeout|DISP_OPT_BYPASS_PQ|ovl0|rdma0|dsi0"'
+```
+
+Build/artifact result: branch `work/m6-rdma-color-mutex-isolation-20260531`
+built successfully in
+`/home/n8n/forge-work/kernel-builds/m6-rdma-color-mutex-isolation-20260531/out`
+using the previous verified `.config` from the `a9c09d...` build to avoid the
+unrelated clean-debug `CONFIG_KGDB_KDB` compile blocker. Repacked artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma-color-mutex-isolation-51200/boot-m6-rdma-color-mutex-isolation-51200.img`
+has sha256 `69ea4dc9fc45761ead74c9935bb0af3b7be01da3e321bc36463845a5b45dafce`
+and size `8876032`; `Image.gz-dtb` sha256 is
+`1d036e8e1574eef7963434e98b75cfff4df24b7bd88101c4b5fff20d0ebd1d79`; the
+matching `System.map` sha256 is
+`bb2b188e17ba68ec76bf0b5c0d57f2aca2325e74958bc79155b8cf8f44ed3459`; the
+matching `config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+`sha256sum -c SHA256SUMS` passed, `abootimg -i` preserved the previous boot
+geometry/header, and kernel strings include `M6 DDP mutex isolate` with
+`queued=`.
