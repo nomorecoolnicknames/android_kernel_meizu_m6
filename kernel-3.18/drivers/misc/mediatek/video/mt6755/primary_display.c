@@ -1659,10 +1659,17 @@ static DDP_SCENARIO_ENUM primary_m6_decouple_display_scenario(void)
 	return DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP;
 }
 
+static bool primary_m6_use_cpu_rdma0_disp_switch(DDP_SCENARIO_ENUM scenario)
+{
+	return scenario == DDP_SCENARIO_PRIMARY_RDMA0_DISP &&
+		disp_helper_get_option(DISP_OPT_BYPASS_PQ);
+}
+
 static int _DL_switch_to_DC_fast(void)
 {
 	int ret = 0;
 	DDP_SCENARIO_ENUM old_scenario, new_scenario;
+	void *switch_handle;
 	RDMA_CONFIG_STRUCT rdma_config = decouple_rdma_config;
 	WDMA_CONFIG_STRUCT wdma_config = decouple_wdma_config;
 
@@ -1683,6 +1690,8 @@ static int _DL_switch_to_DC_fast(void)
 	/* 3.modify interface path handle to new scenario(rdma->dsi) */
 	old_scenario = dpmgr_get_scenario(pgc->dpmgr_handle);
 	new_scenario = primary_m6_decouple_display_scenario();
+	switch_handle = primary_m6_use_cpu_rdma0_disp_switch(new_scenario) ?
+		NULL : pgc->cmdq_handle_config;
 
 	/* 2.reset primary handle */
 	_cmdq_reset_config_handle();
@@ -1694,7 +1703,10 @@ static int _DL_switch_to_DC_fast(void)
 
 	dpmgr_modify_path_power_on_new_modules(pgc->dpmgr_handle, new_scenario, 0);
 
-	dpmgr_modify_path(pgc->dpmgr_handle, new_scenario, pgc->cmdq_handle_config,
+	if (!switch_handle)
+		DISPERR("M6 DDP decouple route: CPU apply primary_rdma0_disp route/mutex\n");
+
+	dpmgr_modify_path(pgc->dpmgr_handle, new_scenario, switch_handle,
 			  primary_display_is_video_mode() ? DDP_VIDEO_MODE : DDP_CMD_MODE, 0);
 
 
@@ -1713,7 +1725,15 @@ static int _DL_switch_to_DC_fast(void)
 	/* no need ioctl because of rdma_dirty */
 	set_is_dc(1);
 
-	ret = dpmgr_path_config(pgc->dpmgr_handle, data_config_dl, pgc->cmdq_handle_config);
+	ret = dpmgr_path_config(pgc->dpmgr_handle, data_config_dl, switch_handle);
+	if (!switch_handle)
+		DISPERR("M6 DDP decouple route: CPU route M0_MOD=0x%x M0_SOF=0x%x RDMA_MEM=0x%x/0x%x RDMA_SOUT=0x%x DSI0_SEL=0x%x\n",
+			DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(dpmgr_path_get_mutex(pgc->dpmgr_handle))),
+			DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(dpmgr_path_get_mutex(pgc->dpmgr_handle))),
+			DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR),
+			DISP_REG_GET(DISP_REG_RDMA_MEM_SRC_PITCH),
+			DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+			DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN));
 
 	screen_logger_add_message("sess_mode", MESSAGE_REPLACE, (char *)session_mode_spy(DISP_SESSION_DECOUPLE_MODE));
 	dynamic_debug_msg_print(mva, rdma_config.width, rdma_config.height, rdma_config.pitch,
@@ -1747,7 +1767,10 @@ static int _DL_switch_to_DC_fast(void)
 	/* 7.reset  cmdq */
 	_cmdq_reset_config_handle();
 	_cmdq_handle_clear_dirty(pgc->cmdq_handle_config);
-	_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
+	if (new_scenario == DDP_SCENARIO_PRIMARY_RDMA0_DISP)
+		DISPERR("M6 DDP decouple route: leave config handle free of stale RDMA0_EOF wait\n");
+	else
+		_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
 
 	/* 9. create ovl2mem path handle */
 	cmdqRecReset(pgc->cmdq_handle_ovl1to2_config);
@@ -2822,9 +2845,15 @@ static int _decouple_update_rdma_config_nolock(void)
 			ret = cmdqRecCreate(CMDQ_SCENARIO_PRIMARY_DISP, &cmdq_handle);
 		if (ret == 0) {
 			RDMA_CONFIG_STRUCT tmpConfig = decouple_rdma_config;
+			bool cpu_first_rdma =
+				primary_m6_use_cpu_rdma0_disp_switch(dpmgr_get_scenario(pgc->dpmgr_handle)) &&
+				DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR) == 0;
 
 			cmdqRecReset(cmdq_handle);
-			_cmdq_insert_wait_frame_done_token_mira(cmdq_handle);
+			if (cpu_first_rdma)
+				DISPERR("M6 DDP decouple rdma: MEM_START=0, CPU apply first RDMA config without stale wait\n");
+			else
+				_cmdq_insert_wait_frame_done_token_mira(cmdq_handle);
 			cmdqBackupReadSlot(pgc->rdma_buff_info, 0, (uint32_t *)(&(tmpConfig.address)));
 
 			/*rdma pitch only use bit[15..0], we use bit[31:30] to store secure information*/
@@ -2837,10 +2866,19 @@ static int _decouple_update_rdma_config_nolock(void)
 			tmpConfig.height = primary_display_get_height();
 			tmpConfig.width = primary_display_get_width();
 			tmpConfig.yuv_range = DISP_YUV_BT601;
-			_config_rdma_input_data(&tmpConfig, pgc->dpmgr_handle, cmdq_handle);
-			_cmdq_set_config_handle_dirty_mira(cmdq_handle);
-			cmdqRecFlushAsyncCallback(cmdq_handle, _Interface_fence_release_callback,
-					interface_fence > 1 ? interface_fence - 1 : 0);
+			_config_rdma_input_data(&tmpConfig, pgc->dpmgr_handle,
+				cpu_first_rdma ? NULL : cmdq_handle);
+			if (cpu_first_rdma) {
+				DISPERR("M6 DDP decouple rdma: CPU RDMA MEM=0x%x/0x%x fmt=0x%x fence=%u\n",
+					DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR),
+					DISP_REG_GET(DISP_REG_RDMA_MEM_SRC_PITCH),
+					tmpConfig.inputFormat, interface_fence);
+				_Interface_fence_release_callback(interface_fence > 1 ? interface_fence - 1 : 0);
+			} else {
+				_cmdq_set_config_handle_dirty_mira(cmdq_handle);
+				cmdqRecFlushAsyncCallback(cmdq_handle, _Interface_fence_release_callback,
+						interface_fence > 1 ? interface_fence - 1 : 0);
+			}
 
 			dprec_mmp_dump_rdma_layer(&tmpConfig, 0);
 			MMProfileLogEx(ddp_mmp_get_events()->primary_rdma_config, MMProfileFlagPulse,
