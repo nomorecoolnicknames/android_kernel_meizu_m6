@@ -1454,3 +1454,89 @@ pre-flash live capture had `capacity=1` and `status=Not charging`, the next
 required human step is physical charging/reconnecting before judging this boot
 artifact. Do not infer a kernel boot regression from this absence until USB or
 recovery/pstore is visible again.
+
+PATCH HISTORY, ISOLATION, 2026-05-30: switch the active ili9881p LCM driver to
+the true stock Flyme command/timing profile extracted from the stock kernel.
+
+Hypothesis: the active source LCM profile is not the stock hardware profile for
+this M6 panel. The current source table had a longer non-stock initialization
+cluster and SYNC_PULSE video timings, while the stock Flyme kernel contains a
+72-entry `ili9881p_hd_dsi_txd` initialization cluster, a 4-entry suspend
+cluster, burst video mode, different porches, 230 MHz PLL, physical size
+68000x121000 um, and an `0xF2 == 0x10` compare-id probe after selecting page 6.
+If the panel stays black because DSI is streaming after an incompatible LCM
+setup, using the stock LCM profile should either make the panel visible or move
+the next capture to a different, more specific DSI/RDMA marker.
+
+Evidence: latest verified live display capture
+`/srv/forge/android/meizu_m6/captures/20260530-183857-m6-live-after-replug-589146-711HEBSR277K5`
+used boot image sha256 prefix `589146...` and still showed a black panel even
+though fb marker writes/readback worked, SurfaceFlinger saw 720x1280, backlight
+was 255, DDP direct route was `OVL0 -> COLOR0 -> DITHER -> RDMA0 -> DSI0`,
+`DISP_OPT_BYPASS_PQ=1`, and the persistent timeout remained
+`CMDQ_EVENT_DISP_RDMA0_EOF`. Stock binary extraction from
+`/tmp/m6_stock_7.1.2.0G_kernel.Image` found the true init table at offset
+`0x11270f8`, size `72*72`, sha256
+`6c9bcff880a3b65c19859b8cf506cf0d750055945d040a982fa9016eb4525a41`; and
+the suspend table at offset `0x1128538`, size `4*72`, sha256
+`4b556fdd2357b10854ce8f81868005459d83f39c4cb9b7559903c2f1d6e7d727`.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+  replaces the source init/suspend command tables with the stock 72-entry and
+  4-entry clusters; changes physical size, DSI mode/timings/PLL, ESD enable,
+  compare-id probe, and C2V switch mode to match the stock profile.
+- `BRINGUP_STATE.md` records the evidence, artifact identity, next marker, and
+  rollback condition.
+
+Why each file changed: the LCM driver owns the panel command table and DSI
+mode/timing contract, so it is the narrowest kernel-side isolation point for
+stock display parity. The state file is updated because this is a bootable
+display isolation checkpoint and must be reusable by the next agent.
+
+Expected next marker: after flashing
+`/srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-lcm-parity-72entry/boot-m6-stock-lcm-parity-72entry.img`,
+the boot partition readback should match sha256
+`7be765bd7aa180ace519db0ba4fe6a9c27b6f27b3138364a3ec4fa8246b0e0f2`.
+If the compare-id path is called, dmesg should include
+`ili9881p_hd_dsi_txd_f2_id=0x00000010`. A successful display result is visible
+boot animation or framebuffer markers on panel. If still black, collect the
+same DDP/DSI/RDMA timeout markers and compare whether the timeout remains
+`CMDQ_EVENT_DISP_RDMA0_EOF`, whether DSI `STA`, RDMA IRQ/frame-done counters,
+or ESD/TE markers changed.
+
+Rollback condition: revert this LCM parity patch if a verified flash regresses
+before fb0/SurfaceFlinger, introduces repeated DCS/ESD panel timeouts, prevents
+ADB capture compared with the `589146...` charger/display baseline, or if
+stock LK/boot reverse evidence proves this is not the stock M6 ili9881p panel
+profile for serial `711HEBSR277K5`.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-lcm-parity-72entry/SHA256SUMS
+adb -H 127.0.0.1 -P 15038 devices -l
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push /srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-lcm-parity-72entry/boot-m6-stock-lcm-parity-72entry.img /data/local/tmp/boot.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'su -c "dd if=/data/local/tmp/boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=1048576 conv=fsync"'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out su -c 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 wait-for-device
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell dmesg | grep -E 'ili9881p_hd_dsi_txd|f2_id|CMDQ_EVENT_DISP_RDMA0_EOF|M6 DDP timeout|dsi0|rdma0'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /proc/interrupts; cat /sys/class/leds/lcd-backlight/brightness 2>/dev/null'
+```
+
+Build/artifact result: branch `work/m6-stock-lcm-parity-20260530` built
+successfully in
+`/home/n8n/forge-work/kernel-builds/m6-stock-lcm-parity-20260530/out`.
+Repacked artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-lcm-parity-72entry/boot-m6-stock-lcm-parity-72entry.img`
+has sha256 `7be765bd7aa180ace519db0ba4fe6a9c27b6f27b3138364a3ec4fa8246b0e0f2`
+and size `8876032`; `Image.gz-dtb` sha256 is
+`90ef931093dc8e01a2068016ab0f966f465802f41b3bfab32d60aefb69a33bfe`; the
+matching `System.map` sha256 is
+`113cf396e1a0bc07d6fa21291d2108f787527d7f1b66b582174e02b71b1601ad`.
+`sha256sum -c SHA256SUMS` passed. The image is not flashed yet because
+`711HEBSR277K5` is not currently visible on the ADB tunnel; visible devices are
+nx549j `30785d1a`, m2note `810BBMM22D7S`, and m681 `91HEBNL163XD`.
