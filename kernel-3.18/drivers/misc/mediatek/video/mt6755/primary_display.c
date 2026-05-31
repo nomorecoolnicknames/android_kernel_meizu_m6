@@ -1643,6 +1643,22 @@ static unsigned int _get_switch_dc_buffer(void)
 
 	return pgc->dc_buf[pgc->dc_buf_id];
 }
+
+static DDP_SCENARIO_ENUM primary_m6_decouple_display_scenario(void)
+{
+	static bool logged;
+
+	if (disp_helper_get_option(DISP_OPT_BYPASS_PQ)) {
+		if (!logged) {
+			DISPERR("M6 DDP decouple route: PQ bypass active, use primary_rdma0_disp\n");
+			logged = true;
+		}
+		return DDP_SCENARIO_PRIMARY_RDMA0_DISP;
+	}
+
+	return DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP;
+}
+
 static int _DL_switch_to_DC_fast(void)
 {
 	int ret = 0;
@@ -1671,7 +1687,7 @@ static int _DL_switch_to_DC_fast(void)
 
 	/* 3.modify interface path handle to new scenario(rdma->dsi) */
 	old_scenario = dpmgr_get_scenario(pgc->dpmgr_handle);
-	new_scenario = DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP;
+	new_scenario = primary_m6_decouple_display_scenario();
 
 	dpmgr_modify_path_power_on_new_modules(pgc->dpmgr_handle, new_scenario, 0);
 
@@ -2025,7 +2041,7 @@ static int DL_switch_to_rdma_mode(cmdqRecHandle handle, int block)
 	}
 
 	old_scenario = dpmgr_get_scenario(pgc->dpmgr_handle);
-	new_scenario = DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP;
+	new_scenario = primary_m6_decouple_display_scenario();
 	dpmgr_modify_path_power_on_new_modules(pgc->dpmgr_handle, new_scenario, 0);
 	dpmgr_modify_path(pgc->dpmgr_handle, new_scenario, handle,
 			primary_display_is_video_mode() ? DDP_VIDEO_MODE : DDP_CMD_MODE, 0);
@@ -3949,6 +3965,7 @@ int primary_display_resume(void)
 		 * BUT session mode may change in primary_display_switch_mode() */
 		ddp_disconnect_path(DDP_SCENARIO_PRIMARY_ALL, NULL);
 		ddp_disconnect_path(DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP, NULL);
+		ddp_disconnect_path(DDP_SCENARIO_PRIMARY_RDMA0_DISP, NULL);
 		DISPDBG("cmd/video mode=%d\n", primary_display_is_video_mode());
 		dpmgr_path_set_video_mode(pgc->dpmgr_handle, primary_display_is_video_mode());
 

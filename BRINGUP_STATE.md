@@ -1885,3 +1885,138 @@ matching `config` sha256 is
 `sha256sum -c SHA256SUMS` passed, `abootimg -i` preserved the previous boot
 geometry/header, and kernel strings include `M6 OVL diag cfg` and
 `M6 DDP timeout`.
+
+Runtime result: `boot-m6-ovl-layer-diag.img` was flashed on serial
+`711HEBSR277K5` and read back as sha256
+`5bb8b2875edd2385cb40ac50e44aaacfbee4c31e38f3900e94d6c8663e776cf4`. Fresh
+capture
+`/srv/forge/android/meizu_m6/captures/20260531-115907-m6-ovl-layerdiag-runtime-5bb8b2-711HEBSR277K5`
+shows root ADB, `surfaceflinger=running`, `service.bootanim.exit=0`, boot mode
+`normal`, SurfaceFlinger `Built-in Screen` `720x1280`, `powerMode=2`,
+`isDisplayOn=1`, and `flips=34`. The framebuffer marker persisted in memory:
+`fb0-after-marker.raw` sha256 is
+`4a8b635eff9c04bb4b6ceda435c3db3e3045f7200403bc49f6d52b10f1ebf7d5`, matching
+the marker source; both `screencap` outputs were empty after the adb screencap
+processes were killed. `/proc/interrupts` showed OVL0 and RDMA0 IRQs rising
+after the marker write while `dsi0` stayed zero.
+
+FACT: the new timeout dump proves the main interface route is still dependent
+on OVL/PQ-class hardware after the system reports `PathMode:DECOUPLE`. The
+capture logs `modify handle ... from primary_all to primary_rdma0_color0_disp`,
+then later times out in `primary_rdma0_color0_disp` with `M0_MOD=0x51280`,
+`OVL0_MOUT=0x2`, `COLOR0_SEL=0x1`, `DITHER_MOUT=0x1`, `RDMA0_SOUT=0x2`, and
+`DSI0_SEL=0x1`. `0x51280` includes `OVL0|RDMA0|COLOR0|DITHER|PWM0`; it no
+longer includes `CCORR|AAL|GAMMA`, but it still makes the interface wait on
+OVL0. The same timeout has `RDMA0 MEM_START=0x0`, `IN=0/0`, `OUT=0/0`, and
+`ovl0 SRC=0x9` with L0/L3 underflow. This is not a clean decoupled
+`RDMA0 -> DSI0` scanout path.
+
+INFERENCE: with `DISP_OPT_BYPASS_PQ=1` on this M6 runtime, the decoupled
+interface path should use the existing `DDP_SCENARIO_PRIMARY_RDMA0_DISP`
+instead of `DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP`. That removes
+`COLOR0/DITHER/PQ` and OVL0 from the display mutex and lets the OVL path remain
+only in the separate OVL-to-WDMA producer path. This is narrower than deleting
+drivers or globally disabling engines because it changes only the scenario
+chosen during the DL-to-DC/RDMA switch when PQ bypass is already active.
+
+Expected next marker: a readback-verified boot of the next artifact should log
+`M6 DDP decouple route: PQ bypass active, use primary_rdma0_disp`, then
+`modify handle ... to primary_rdma0_disp`. If a VSYNC timeout remains, it should
+say `primary_rdma0_disp`; mutex0 should no longer include OVL0/COLOR0/DITHER
+(`M0_MOD` should be consistent with `RDMA0|PWM0`, normally `0x40200`), and
+`RDMA0 MEM_START` should be nonzero with RDMA input/output counters either
+moving or exposing a new downstream DSI marker.
+
+Rollback condition: revert the next patch if the readback-verified artifact
+regresses before root ADB/SurfaceFlinger/fb0, does not switch the handle to
+`primary_rdma0_disp`, or switches to `primary_rdma0_disp` but still has black
+panel, zero `dsi0` IRQs, no RDMA memory address/counter progress, and no new
+lower-level DSI/RDMA marker compared with the `5bb8b287...` capture.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-31: use RDMA0-DISP for M6 decouple when
+PQ bypass is active.
+
+Hypothesis: the latest readback-verified diagnostic capture shows that the
+decoupled display handle is named `primary_rdma0_color0_disp`, but the final
+hardware state still couples interface scanout to OVL0/COLOR0/DITHER and
+OVL0 L0/L3 underflow. Because this tree already sets `DISP_OPT_BYPASS_PQ=1`,
+the direct RDMA interface path should use the existing
+`DDP_SCENARIO_PRIMARY_RDMA0_DISP` instead of the COLOR/PQ scenario. That should
+remove OVL0 and post-processing blocks from the display mutex and allow RDMA0
+to scan out the decouple memory buffer directly to DSI0.
+
+Evidence: capture
+`/srv/forge/android/meizu_m6/captures/20260531-115907-m6-ovl-layerdiag-runtime-5bb8b2-711HEBSR277K5`
+matches boot sha256
+`5bb8b2875edd2385cb40ac50e44aaacfbee4c31e38f3900e94d6c8663e776cf4`; matching
+`System.map` is
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl-layer-diag/System.map`
+sha256 `7ac771be7630d3167b917a2fefa75f31187a10d431f9f3ecc9747dae69672a04`.
+The capture shows `PathMode:DECOUPLE`, `modify handle ... from primary_all to
+primary_rdma0_color0_disp`, timeout `M0_MOD=0x51280`, route
+`OVL0_MOUT=0x2 COLOR0_SEL=0x1 DITHER_MOUT=0x1 RDMA0_SOUT=0x2 DSI0_SEL=0x1`,
+`RDMA0 MEM_START=0x0 IN=0/0 OUT=0/0`, and `ovl0 SRC=0x9` with L0/L3 enabled
+and underflowing.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` adds a
+  small M6 scenario selector for decouple/RDMA mode, uses
+  `DDP_SCENARIO_PRIMARY_RDMA0_DISP` when `DISP_OPT_BYPASS_PQ` is active, and
+  disconnects that scenario on resume alongside the existing RDMA0-COLOR path.
+- `BRINGUP_STATE.md` records the diagnostic runtime result, this patch,
+  artifact identity, expected marker, rollback condition, and verification
+  commands.
+
+Why each file changed: `primary_display.c` owns the DL-to-DC and DL-to-RDMA
+scenario switch that produced the proven bad `primary_rdma0_color0_disp`
+runtime state. Selecting an existing RDMA0-only scenario is the narrowest
+change that removes PQ/COLOR/DITHER and OVL0 from the display-side mutex
+without disabling OVL2MEM, DSI, LCM, clocks, or userspace composition.
+
+Expected next marker: after flashing
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma0-disp-decpq/boot-m6-rdma0-disp-decpq.img`,
+the boot partition readback should match sha256
+`ee061f6b0896302704406e30f26dde2fbd77f10f6bd0f934623887a620a1e4f7`.
+Fresh dmesg/debugfs should include `M6 DDP decouple route: PQ bypass active,
+use primary_rdma0_disp` and `modify handle ... to primary_rdma0_disp`. A useful
+positive result is visible image, nonzero DSI IRQs, VSYNC enabled, RDMA0
+memory address/counter progress, or a new lower-level DSI/RDMA marker. If
+timeout remains, `M0_MOD` should be consistent with `RDMA0|PWM0` rather than
+`OVL0|RDMA0|COLOR0|DITHER|PWM0`.
+
+Rollback condition: revert this patch if a readback-verified flash of
+`ee061f6b...` regresses before root ADB/fb0/SurfaceFlinger, fails to switch to
+`primary_rdma0_disp`, or switches there but still shows black panel, zero DSI
+IRQs, no RDMA memory/counter progress, and no new downstream evidence.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma0-disp-decpq/SHA256SUMS
+(gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma0-disp-decpq/Image.gz-dtb 2>/dev/null || true) | strings | grep -E 'M6 DDP decouple route|M6 DDP timeout|M6 OVL diag cfg'
+adb -H 127.0.0.1 -P 15038 devices -l
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma0-disp-decpq/boot-m6-rdma0-disp-decpq.img /data/local/tmp/boot.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dd if=/data/local/tmp/boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=1048576; sync'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 wait-for-device
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /d/mtkfb 2>&1; dmesg | grep -E "M6 DDP decouple route|primary_rdma0_disp|primary_rdma0_color0_disp|M0_MOD|M6 DDP timeout|RDMA0|dsi0|ovl0|VSYNC"'
+```
+
+Build/artifact result: branch `work/m6-rdma0-disp-decpq-20260531` built
+successfully in
+`/home/n8n/forge-work/kernel-builds/m6-rdma0-disp-decpq-20260531/out`.
+Repacked artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma0-disp-decpq/boot-m6-rdma0-disp-decpq.img`
+has sha256 `ee061f6b0896302704406e30f26dde2fbd77f10f6bd0f934623887a620a1e4f7`
+and size `8876032`; `Image.gz-dtb` sha256 is
+`a4fe4daef29dbc9970ccfb34772d0fd9abb58e90f34cba8e048b6965deeaf8ed`; the
+matching `System.map` sha256 is
+`452397c4c39e72f6cb4296af5086e3476a1fc2514e1bd648a9e43e5d27bc7b78`; the
+matching `config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+`sha256sum -c SHA256SUMS` passed, `abootimg -i` preserved the previous boot
+geometry/header, and kernel strings include `M6 DDP decouple route`,
+`M6 OVL diag cfg`, and `M6 DDP timeout`.
