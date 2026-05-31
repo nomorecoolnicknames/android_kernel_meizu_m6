@@ -2244,3 +2244,118 @@ geometry/header, and kernel strings include `M6 DDP decouple route: CPU apply
 primary_rdma0_disp route/mutex`, `M6 DDP decouple route: CPU route`,
 `M6 DDP decouple rdma: MEM_START=0, CPU apply first RDMA config without stale
 wait`, `M6 DDP decouple rdma: CPU RDMA MEM`, and `M6 DDP timeout`.
+
+Runtime result: `boot-m6-rdma0-disp-cpuroute.img` was flashed on serial
+`711HEBSR277K5` only after the raw boot readback matched sha256
+`37ecde8c1a4abdfb4506106fa058c3ee7287562b5f17779518193f3daa43c9e8`.
+Fresh capture
+`/srv/forge/android/meizu_m6/captures/20260531-134313-m6-rdma0-disp-cpuroute-runtime-37ecde-711HEBSR277K5`
+matches that boot hash and was produced by kernel
+`Linux version 3.18.140 ... #1 SMP PREEMPT Sun May 31 13:30:04 CDT 2026`.
+Android reached root ADB, SurfaceFlinger, bootanimation, display state `ON`,
+`powerMode=2`, `isDisplayOn=1`, and SurfaceFlinger `flips=61`. Backlight was
+raised from `102` to `255`. The three framebuffer markers
+`marker-rgb-stripes.raw`, `marker-checker.raw`, and `marker-white.raw` all
+read back from `/dev/graphics/fb0` with matching sha256 values, and
+`screencap` produced 720x1280 PNGs. The physical panel still stayed black.
+
+FACT: the CPU route patch executed and advanced one register snapshot, but the
+system later reverted to the old direct-link path. `dmesg-after-markers.txt`
+shows `M6 DDP decouple route: CPU apply primary_rdma0_disp route/mutex` and
+`CPU route M0_MOD=0x40200 M0_SOF=0x41 RDMA_MEM=0x400000/0x870
+RDMA_SOUT=0x2 DSI0_SEL=0x1` at `356.256s`. It does not show the
+`M6 DDP decouple rdma: CPU RDMA MEM` marker. At `398.095s` the display stack
+logs `primary display will switch from DECOUPLE to DIRECT_LINK`, then
+`modify handle ... from primary_rdma0_disp to primary_disp`; final timeout
+snapshots are back to `M0_MOD=0x51280`, `RDMA0 MEM_START=0`, and DSI0 IRQs
+remain zero even though OVL0/RDMA0 IRQ counts rise across marker writes.
+
+INFERENCE: the previous patch proved CPU route writes can reach hardware, but
+the `MEM_START == 0` guard suppressed the CPU RDMA update after route config
+had already written a placeholder RDMA address. Then `smart_ovl` switched the
+session back to DIRECT_LINK, recreating the stale OVL/COLOR/DITHER path. The
+next minimal test should keep the active PQ-bypass experiment in DECOUPLE and
+CPU-apply each RDMA config while `primary_rdma0_disp` remains selected.
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-05-31: pin the M6 PQ-bypass decouple route
+and CPU-apply every RDMA update.
+
+Hypothesis: with `DISP_OPT_BYPASS_PQ=1`, the selected experiment is
+`primary_rdma0_disp`, but the direct-link smart-OVL fallback restores the
+broken PQ/OVL route before scanout can prove the RDMA0-to-DSI frontier. Also,
+the first CPU route config makes `RDMA_MEM` nonzero before
+`_decouple_update_rdma_config_nolock()`, so the previous `MEM_START == 0`
+condition prevents the CPU RDMA config from running. Keeping DECOUPLE pinned
+for PQ-bypass and CPU-applying every RDMA update should produce persistent
+`M0_MOD=0x40200`, visible `CPU RDMA MEM`, and either an image or a lower
+DSI/RDMA failure marker.
+
+Evidence: capture and hashes in the runtime result above. Decisive markers are
+the CPU route line with `M0_MOD=0x40200`, absence of `CPU RDMA MEM`, the later
+`DECOUPLE to DIRECT_LINK` switch, final `M0_MOD=0x51280`, final
+`RDMA0 MEM_START=0`, and DSI0 IRQ counts staying zero across all three
+framebuffer marker writes.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` removes
+  the `MEM_START == 0` gate from the M6 PQ-bypass RDMA CPU path, so every
+  selected `primary_rdma0_disp` RDMA update avoids the stale frame-done wait
+  and logs `CPU RDMA MEM`; it also blocks `smart_ovl` from switching back to
+  DIRECT_LINK while `DISP_OPT_BYPASS_PQ` is active.
+- `BRINGUP_STATE.md` records the readback-verified `37ecde...` runtime result,
+  the new hypothesis, rollback condition, and verification route.
+
+Why each file changed: `primary_display.c` owns both decisions proven by the
+fresh capture: whether the decouple RDMA update uses CMDQ or CPU transport,
+and whether smart OVL reverts the experiment to direct-link. The state file is
+the required durable link from this patch to the exact capture and artifact
+identity.
+
+Expected next marker: the next boot image should contain `M6 DDP smart ovl:
+keep DECOUPLE while PQ bypass RDMA0-DISP is active`, `M6 DDP decouple rdma:
+CPU apply RDMA config without stale wait`, and `M6 DDP decouple rdma: CPU RDMA
+MEM`. A useful positive result is physical image, nonzero DSI0 IRQs,
+persistent `PathMode:DECOUPLE`, persistent `M0_MOD=0x40200`, nonzero RDMA0
+MEM/IN/OUT progress, or a new DSI/RDMA timeout marker after the CPU RDMA log.
+
+Rollback condition: revert this patch if a readback-verified flash regresses
+before root ADB/fb0/SurfaceFlinger, if keeping DECOUPLE causes a bootloop or
+stuck adbd, if `CPU RDMA MEM` appears but the next timeout still immediately
+returns to `M0_MOD=0x51280`, or if the panel remains black with no new RDMA/DSI
+marker beyond the `37ecde...` capture.
+
+Verification commands:
+
+```bash
+sha256sum -c <next-artifact-dir>/SHA256SUMS
+(gzip -cd <next-artifact-dir>/Image.gz-dtb 2>/dev/null || true) | strings | grep -E 'keep DECOUPLE|CPU apply RDMA config|CPU RDMA MEM|CPU route|M6 DDP timeout'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push <next-artifact-dir>/boot-*.img /cache/boot.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/cache/boot.img bs=<boot-size> count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dd if=/cache/boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=1048576; sync'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=<boot-size> count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 wait-for-device
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /d/mtkfb 2>&1; dmesg | grep -E "keep DECOUPLE|CPU apply RDMA config|CPU RDMA MEM|CPU route|primary_rdma0_disp|M0_MOD|RDMA0 MEM|dsi0|VSYNC|DIRECT_LINK"'
+```
+
+Build/artifact result: branch `work/m6-rdma0-disp-decpq-20260531` built
+successfully in
+`/home/n8n/forge-work/kernel-builds/m6-rdma0-disp-pin-decouple-20260531/out`.
+Build log is
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma0-disp-pin-decouple/build.log`
+sha256 `48c15423b49ceedf414fb5c4a7b5b032876bc6dd44f5b0def02ed4e429abab46`.
+Repacked artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-rdma0-disp-pin-decouple/boot-m6-rdma0-disp-pin-decouple.img`
+has sha256 `df317057c3137015a9bf33d1907a7d89b00be6d17d2c0a021b6542a2711bd5f6`
+and size `8876032`; `Image.gz-dtb` sha256 is
+`0c7144ab488e95ad5646f4c5f526ffe2a617717111310af39af2e28ba614a3ce`; the
+matching `System.map` sha256 is
+`3eeed87d0b6fed021d4cde1b85e10be7aea82751569d54850dd2cc928d63ea46`; the
+matching `config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+`sha256sum -c SHA256SUMS` passed, `abootimg -i` preserved the previous boot
+geometry/header, and kernel strings include `M6 DDP smart ovl: keep DECOUPLE
+while PQ bypass RDMA0-DISP is active`, `M6 DDP decouple rdma: CPU apply RDMA
+config without stale wait`, `M6 DDP decouple rdma: CPU RDMA MEM`, `M6 DDP
+decouple route: CPU route`, and `M6 DDP timeout`.

@@ -2845,13 +2845,14 @@ static int _decouple_update_rdma_config_nolock(void)
 			ret = cmdqRecCreate(CMDQ_SCENARIO_PRIMARY_DISP, &cmdq_handle);
 		if (ret == 0) {
 			RDMA_CONFIG_STRUCT tmpConfig = decouple_rdma_config;
-			bool cpu_first_rdma =
-				primary_m6_use_cpu_rdma0_disp_switch(dpmgr_get_scenario(pgc->dpmgr_handle)) &&
-				DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR) == 0;
+			bool cpu_rdma =
+				primary_m6_use_cpu_rdma0_disp_switch(dpmgr_get_scenario(pgc->dpmgr_handle));
 
 			cmdqRecReset(cmdq_handle);
-			if (cpu_first_rdma)
-				DISPERR("M6 DDP decouple rdma: MEM_START=0, CPU apply first RDMA config without stale wait\n");
+			if (cpu_rdma)
+				DISPERR("M6 DDP decouple rdma: CPU apply RDMA config without stale wait, old MEM=0x%x/0x%x\n",
+					DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR),
+					DISP_REG_GET(DISP_REG_RDMA_MEM_SRC_PITCH));
 			else
 				_cmdq_insert_wait_frame_done_token_mira(cmdq_handle);
 			cmdqBackupReadSlot(pgc->rdma_buff_info, 0, (uint32_t *)(&(tmpConfig.address)));
@@ -2867,8 +2868,8 @@ static int _decouple_update_rdma_config_nolock(void)
 			tmpConfig.width = primary_display_get_width();
 			tmpConfig.yuv_range = DISP_YUV_BT601;
 			_config_rdma_input_data(&tmpConfig, pgc->dpmgr_handle,
-				cpu_first_rdma ? NULL : cmdq_handle);
-			if (cpu_first_rdma) {
+				cpu_rdma ? NULL : cmdq_handle);
+			if (cpu_rdma) {
 				DISPERR("M6 DDP decouple rdma: CPU RDMA MEM=0x%x/0x%x fmt=0x%x fence=%u\n",
 					DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR),
 					DISP_REG_GET(DISP_REG_RDMA_MEM_SRC_PITCH),
@@ -5330,6 +5331,10 @@ static int smart_ovl_try_switch_mode_nolock(void)
 			do_primary_display_switch_mode(DISP_SESSION_DECOUPLE_MODE, pgc->session_id, 0, NULL, 0);
 		}
 	} else {
+		if (disp_helper_get_option(DISP_OPT_BYPASS_PQ)) {
+			DISPERR("M6 DDP smart ovl: keep DECOUPLE while PQ bypass RDMA0-DISP is active\n");
+			return 0;
+		}
 		bw_th = DC_bw*4;
 		do_div(bw_th, 5);
 		if (DL_bw < bw_th) {
