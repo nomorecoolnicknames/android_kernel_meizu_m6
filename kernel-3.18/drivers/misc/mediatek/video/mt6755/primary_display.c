@@ -3517,12 +3517,19 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 
 	data_config->fps = lcm_fps;
 	data_config->dst_dirty = 1;
+
+	if (lcm_param->type == LCM_TYPE_DSI)
+		dsi_m6_dump_dcs_status("primary-before-path-config");
+
 	ret = dpmgr_path_config(pgc->dpmgr_handle, data_config, pgc->cmdq_handle_config);
 
 	memset(&gset_arg, 0, sizeof(gset_arg));
 	gset_arg.dst_mod_type = dpmgr_path_get_dst_module_type(pgc->dpmgr_handle);
 	gset_arg.is_decouple_mode = 0;
 	dpmgr_path_ioctl(pgc->dpmgr_handle, pgc->cmdq_handle_config, DDP_OVL_GOLDEN_SETTING, &gset_arg);
+
+	if (lcm_param->type == LCM_TYPE_DSI)
+		dsi_m6_dump_dcs_status("primary-after-path-config");
 
 	dpmgr_path_start(pgc->dpmgr_handle, use_cmdq);
 

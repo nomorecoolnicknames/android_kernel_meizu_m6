@@ -1208,6 +1208,143 @@ void dsi_m6_dump_live(const char *tag)
 	dsi_m6_dump_snapshot(tag, DISP_MODULE_DSI0, NULL);
 }
 
+static uint32_t dsi_m6_dcs_read_noreset(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)
+{
+	uint32_t recv_data_cnt = 0;
+	unsigned char packet_type;
+	DSI_RX_DATA_REG read_data0 = {0};
+	DSI_RX_DATA_REG read_data1 = {0};
+	DSI_RX_DATA_REG read_data2 = {0};
+	DSI_RX_DATA_REG read_data3 = {0};
+	DSI_T0_INS t0 = {0};
+	DSI_T0_INS t1 = {0};
+	long ret;
+	static const long WAIT_TIMEOUT = HZ / 2;
+
+	if (buffer == NULL || buffer_size == 0) {
+		DISPERR("M6 DCS status: skip cmd=0x%x invalid buffer=%p size=%u\n",
+			cmd, buffer, buffer_size);
+		return 0;
+	}
+
+	memset(buffer, 0, buffer_size);
+
+	if (DSI_REG[0]->DSI_MODE_CTRL.MODE) {
+		DISPERR("M6 DCS status: skip cmd=0x%x video-mode=%u START=0x%x STA=0x%x INTSTA=0x%x\n",
+			cmd, DSI_REG[0]->DSI_MODE_CTRL.MODE,
+			AS_UINT32(&DSI_REG[0]->DSI_START),
+			AS_UINT32(&DSI_REG[0]->DSI_TRIG_STA),
+			AS_UINT32(&DSI_REG[0]->DSI_INTSTA));
+		return 0;
+	}
+
+	DSI_WaitForNotBusy(DISP_MODULE_DSI0, NULL);
+
+	DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, RD_RDY, 1);
+	DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, CMD_DONE, 1);
+
+	if (DSI_REG[0]->DSI_INTSTA.RD_RDY || DSI_REG[0]->DSI_INTSTA.CMD_DONE) {
+		DSI_OUTREGBIT(NULL, DSI_INT_STATUS_REG, DSI_REG[0]->DSI_INTSTA, RD_RDY, 0);
+		DSI_OUTREGBIT(NULL, DSI_INT_STATUS_REG, DSI_REG[0]->DSI_INTSTA, CMD_DONE, 0);
+	}
+
+	t1.CONFG = 0x00;
+	t1.Data_ID = 0x37;
+	t1.Data0 = buffer_size <= 10 ? buffer_size : 10;
+	t1.Data1 = 0;
+
+	t0.CONFG = 0x04;
+	t0.Data_ID = (cmd < 0xB0) ? DSI_DCS_READ_PACKET_ID : DSI_GERNERIC_READ_LONG_PACKET_ID;
+	t0.Data0 = cmd;
+	t0.Data1 = 0;
+
+	waitRDDone = false;
+	DSI_OUTREG32(NULL, &DSI_CMDQ_REG[0]->data[0], AS_UINT32(&t1));
+	DSI_OUTREG32(NULL, &DSI_CMDQ_REG[0]->data[1], AS_UINT32(&t0));
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_CMDQ_SIZE, 2);
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_START, 0);
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_START, 1);
+
+	ret = wait_event_interruptible_timeout(_dsi_dcs_read_wait_queue[0],
+					       waitRDDone, WAIT_TIMEOUT);
+	waitRDDone = false;
+	if (ret <= 0) {
+		DISPERR("M6 DCS status: cmd=0x%x noreset-timeout ret=%ld START=0x%x STA=0x%x INTSTA=0x%x RX0=0x%x\n",
+			cmd, ret, AS_UINT32(&DSI_REG[0]->DSI_START),
+			AS_UINT32(&DSI_REG[0]->DSI_TRIG_STA),
+			AS_UINT32(&DSI_REG[0]->DSI_INTSTA),
+			AS_UINT32(&DSI_REG[0]->DSI_RX_DATA0));
+		DSI_OUTREGBIT(NULL, DSI_RACK_REG, DSI_REG[0]->DSI_RACK, DSI_RACK, 1);
+		DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, RD_RDY, 0);
+		DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, CMD_DONE, 0);
+		return 0;
+	}
+
+	DSI_OUTREGBIT(NULL, DSI_RACK_REG, DSI_REG[0]->DSI_RACK, DSI_RACK, 1);
+	DSI_OUTREGBIT(NULL, DSI_INT_STATUS_REG, DSI_REG[0]->DSI_INTSTA, RD_RDY, 0);
+	DSI_OUTREGBIT(NULL, DSI_INT_STATUS_REG, DSI_REG[0]->DSI_INTSTA, CMD_DONE, 0);
+	DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, RD_RDY, 0);
+	DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, CMD_DONE, 0);
+
+	AS_UINT32(&read_data0) = INREG32(&DSI_REG[0]->DSI_RX_DATA0);
+	AS_UINT32(&read_data1) = INREG32(&DSI_REG[0]->DSI_RX_DATA1);
+	AS_UINT32(&read_data2) = INREG32(&DSI_REG[0]->DSI_RX_DATA2);
+	AS_UINT32(&read_data3) = INREG32(&DSI_REG[0]->DSI_RX_DATA3);
+
+	packet_type = read_data0.byte0;
+	if (packet_type == 0x1A || packet_type == 0x1C) {
+		recv_data_cnt = read_data0.byte1 + read_data0.byte2 * 16;
+		if (recv_data_cnt > 10)
+			recv_data_cnt = 10;
+		if (recv_data_cnt > buffer_size)
+			recv_data_cnt = buffer_size;
+		if (recv_data_cnt <= 4) {
+			memcpy(buffer, &read_data1, recv_data_cnt);
+		} else if (recv_data_cnt <= 8) {
+			memcpy(buffer, &read_data1, 4);
+			memcpy(buffer + 4, &read_data2, recv_data_cnt - 4);
+		} else {
+			memcpy(buffer, &read_data1, 4);
+			memcpy(buffer + 4, &read_data2, 4);
+			memcpy(buffer + 8, &read_data3, recv_data_cnt - 8);
+		}
+	} else if (packet_type == 0x11 || packet_type == 0x21) {
+		recv_data_cnt = buffer_size < 1 ? buffer_size : 1;
+		memcpy(buffer, &read_data0.byte1, recv_data_cnt);
+	} else if (packet_type == 0x12 || packet_type == 0x22) {
+		recv_data_cnt = buffer_size < 2 ? buffer_size : 2;
+		memcpy(buffer, &read_data0.byte1, recv_data_cnt);
+	}
+
+	DISPERR("M6 DCS status: cmd=0x%x ret=%u pkt=0x%x data=%02x %02x %02x %02x RX=0x%x/0x%x/0x%x/0x%x\n",
+		cmd, recv_data_cnt, packet_type,
+		buffer_size > 0 ? buffer[0] : 0,
+		buffer_size > 1 ? buffer[1] : 0,
+		buffer_size > 2 ? buffer[2] : 0,
+		buffer_size > 3 ? buffer[3] : 0,
+		AS_UINT32(&read_data0), AS_UINT32(&read_data1),
+		AS_UINT32(&read_data2), AS_UINT32(&read_data3));
+
+	return recv_data_cnt;
+}
+
+void dsi_m6_dump_dcs_status(const char *tag)
+{
+	static int dump_count;
+	uint8_t buffer[4];
+	uint8_t cmds[] = {0x0A, 0x0B, 0x0C, 0x0D, 0xDA, 0xDB, 0xDC};
+	int i;
+
+	if (dump_count >= 2)
+		return;
+	dump_count++;
+
+	DISPERR("M6 DCS status[%s]: begin\n", tag ? tag : "null");
+	for (i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++)
+		dsi_m6_dcs_read_noreset(cmds[i], buffer, sizeof(buffer));
+	dsi_m6_dump_snapshot("dcs-status-after", DISP_MODULE_DSI0, NULL);
+}
+
 unsigned int dsi_phy_get_clk(DISP_MODULE_ENUM module)
 {
 	int i = 0;

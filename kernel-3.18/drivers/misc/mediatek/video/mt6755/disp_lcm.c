@@ -17,6 +17,7 @@
 #include "lcm_drv.h"
 #include "disp_drv_platform.h"
 #include "ddp_manager.h"
+#include "ddp_dsi.h"
 #include "disp_lcm.h"
 #ifdef CONFIG_LOG_JANK
 #include <huawei_platform/log/log_jank.h>
@@ -412,19 +413,9 @@ int disp_lcm_init(disp_lcm_handle *plcm, int force)
 			DISPERR("FATAL ERROR, lcm_drv->init is null\n");
 			return -1;
 		}
-#if 0
 		if (LCM_TYPE_DSI == plcm->params->type) {
-			int ret = 0;
-			char buffer = 0;
-
-			ret = DSI_dcs_read_lcm_reg_v2(DISP_MODULE_DSI0, NULL, 0x0A, &buffer, 1);
-			if (ret == 0)
-				pr_debug("lcm is not connected\n");
-			else
-				pr_debug("lcm is connected\n");
-
+			dsi_m6_dump_dcs_status("disp-lcm-init");
 		}
-#endif
 		/* ddp_dsi_start(DISP_MODULE_DSI0, NULL); */
 		/* DSI_BIST_Pattern_Test(DISP_MODULE_DSI0,NULL,true, 0x00ffff00); */
 		return 0;

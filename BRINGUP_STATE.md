@@ -2633,3 +2633,100 @@ adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/m
 grep -R -n -E 'M6 DSI snapshot\\[cpu-rdma-live\\]|STATE7=|MIPITX|PathMode:DECOUPLE|RDMA0 Transfer|Built-in Screen|powerMode=2|flips=|backlight is on|disp_pwm_set_backlight|dsi0' /srv/forge/android/meizu_m6/captures/20260531-173320-m6-dsi-live-snapshot-ratelimit-runtime-6fbe672c-711HEBSR277K5
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /sys/class/leds/lcd-backlight/brightness; cat /d/mtkfb 2>&1; cat /proc/interrupts | grep -E "dsi|disp|rdma"; dmesg | grep -E "M6 DSI snapshot|backlight|disp_pwm|ili9881p"'
 ```
+
+## 2026-05-31 DCS status window probe
+
+PATCH HISTORY, DIAGNOSTIC, 2026-05-31: add a no-reset DCS status probe around
+the first primary path configuration window and record the M681 format/PQ lesson
+against the current M6 evidence.
+
+Hypothesis: after the verified RDMA0 decouple/PQ bypass and live DSI snapshot
+artifacts, the unresolved physical black-panel frontier could still be either
+panel-side DCS state or an earlier OVL/RDMA input handoff problem. A safe DCS
+status probe must first prove whether the primary-display init path ever offers
+a command-mode window. If both hooks are already in DSI video mode, the probe
+must skip reads without resetting DSI and the next diagnostic should move toward
+the OVL/RDMA layer configuration path instead of repeating DSI/PQ loops.
+
+Evidence: artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dcs-status-pathwindow/boot-m6-dcs-status-pathwindow.img`
+was flashed to serial `711HEBSR277K5`; local boot image and device boot
+readback both have sha256
+`74a60198455d778c15804c9499e41c70392c5ce695b916f64ef52223c48cbe17`.
+Matching payload identities are `Image.gz-dtb`
+`13bd94bab5921e10e7f3bc01bf07bd39b8b7748a38920380ad3932918cf76e6e`,
+`System.map`
+`791ecd3d331e98e75da1d5c18bbf4e375a72f73fb2cc92f55d26e76bde719461`, and
+`config` `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+Fresh capture path:
+`/srv/forge/android/meizu_m6/captures/20260531-185548-m6-dcs-status-pathwindow-runtime-74a60198-711HEBSR277K5`.
+The latest `/cache/bootdiag` run inside that capture,
+`cache-bootdiag/run-20260601-095001-319/cmd/dmesg.txt`, shows
+`M6 DCS status[primary-before-path-config]: begin` followed by every requested
+DCS command being skipped with `video-mode=3 START=0x1 STA=0x440
+INTSTA=0x80000790`; it then shows the same skip result for
+`M6 DCS status[primary-after-path-config]: begin`. Therefore this diagnostic did
+not issue a DCS read and did not call `DSI_Reset`. The same verified capture
+keeps SurfaceFlinger/bootanimation alive (`Built-in Screen` 720x1280,
+`powerMode=2`, flips advancing, BootAnimation layer), has a valid 720x1280
+`screen/screencap.png`, and reports backlight sysfs brightness `102/255`, but
+physical output is still treated as black unless the user reports otherwise.
+The active display failure remains in DDP runtime evidence:
+`present_fence_w` VSYNC timeouts, OVL underflows/abnormal SOF, RDMA0 active, DSI
+in video mode, and OVL0 L0/L3 programmed as BGRA8888 at addresses
+`0x9f707fbf` / `0x9fa8bfff`.
+
+M681 carry-forward check: the report
+`/srv/forge/android/m681/docs/run_reports/2026-05-31_m681_display_route_state_matrix_audit.md`
+records that the later proven M681 physical-display fix was not PQ and not TXD
+readback, but a high-level display format handoff where
+`DISP_FORMAT_PRGBA8888` (`0x1304`) reached the kernel mapper. For this M6 tree,
+`kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_color_format.c` already
+maps `DISP_FORMAT_PRGBA8888` to `UFMT_PRGBA8888`, and the fresh M6 capture has
+no `Invalid color format` or `0x1304` marker. INFERENCE: M681 still warns us
+not to over-focus on DSI/PQ, but the exact M681 `0x1304` missing-map failure is
+not the current M6 blocker.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h` declares
+  `dsi_m6_dump_dcs_status()` for the primary and LCM display code.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c` adds the
+  no-reset DCS status reader and video-mode skip logging for DCS commands
+  `0x0a`, `0x0b`, `0x0c`, `0x0d`, `0xda`, `0xdb`, and `0xdc`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_lcm.c` calls the probe
+  from LCM init if that DSI init path executes.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` calls the
+  probe before and after the first primary path config/start window.
+- `BRINGUP_STATE.md` records the verified artifact, capture, conclusion, M681
+  comparison, and next diagnostic route.
+
+Why each file changed: `ddp_dsi.c` owns DSI command packets and is the only
+right place to add a DCS reader that can check command/video mode before
+touching registers. `ddp_dsi.h` is needed to expose the read-only diagnostic to
+nearby display stages. `disp_lcm.c` and `primary_display.c` are the two narrow
+places that can prove whether a command-mode DCS window exists during LCM init
+or first primary path setup. The state file is required to bind the tested
+diagnostic to exact artifact and capture evidence.
+
+Expected next marker: the next diagnostic should log the userspace-to-kernel
+OVL input handoff before OVL register programming: session/layer id, enable,
+format, pitch, source crop, destination rectangle, ion/acquire fence fields,
+MVA/address/offset, and the resulting `OVL_CONFIG_STRUCT`. A useful positive
+result is proving that HWC/userspace already passes a bad MVA, offset, pitch, or
+layer enable pattern. A useful negative result is proving the input config is
+normal before OVL programming, moving the frontier to OVL register packing,
+mutex/module route, or SMI/MMU behavior.
+
+Rollback condition: revert this diagnostic if a verified flash regresses before
+root ADB/fb0/SurfaceFlinger, if the new DCS probe causes DSI reset or command
+timeout side effects, or if a later controlled command-mode DCS probe replaces
+this safer skipped-read window. Do not treat this patch as a display fix.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-dcs-status-pathwindow/SHA256SUMS
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+grep -R -n -E 'M6 DCS status|dcs-status-after|M6 DSI snapshot\\[start-after-hs\\]|M6 DDP timeout\\[VSYNC\\]|Built-in Screen|BootAnimation|brightness|Invalid color format|0x1304' /srv/forge/android/meizu_m6/captures/20260531-185548-m6-dcs-status-pathwindow-runtime-74a60198-711HEBSR277K5
+grep -R -n -E 'DISP_FORMAT_PRGBA8888|UFMT_PRGBA8888|Invalid color format|0x1304' kernel-3.18/drivers/misc/mediatek/video/mt6755 /srv/forge/android/meizu_m6/captures/20260531-185548-m6-dcs-status-pathwindow-runtime-74a60198-711HEBSR277K5
+```
