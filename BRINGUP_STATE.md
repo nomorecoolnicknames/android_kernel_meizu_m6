@@ -2730,3 +2730,194 @@ adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/m
 grep -R -n -E 'M6 DCS status|dcs-status-after|M6 DSI snapshot\\[start-after-hs\\]|M6 DDP timeout\\[VSYNC\\]|Built-in Screen|BootAnimation|brightness|Invalid color format|0x1304' /srv/forge/android/meizu_m6/captures/20260531-185548-m6-dcs-status-pathwindow-runtime-74a60198-711HEBSR277K5
 grep -R -n -E 'DISP_FORMAT_PRGBA8888|UFMT_PRGBA8888|Invalid color format|0x1304' kernel-3.18/drivers/misc/mediatek/video/mt6755 /srv/forge/android/meizu_m6/captures/20260531-185548-m6-dcs-status-pathwindow-runtime-74a60198-711HEBSR277K5
 ```
+
+## 2026-06-01 OVL0_2L mutex membership probe
+
+PATCH HISTORY, ISOLATION/DIAGNOSTIC, 2026-06-01: keep the active
+`OVL0_2L` bit in mutex0 while preserving the current M6 PQ-bypass direct route,
+and add bounded primary input / OVL handoff logging across the userspace-to-DDP
+frontier.
+
+Hypothesis: the previous M6 PQ-bypass mutex isolation removed too much from
+mutex0. Fresh OVL evidence showed the first primary layer was programmed on
+`OVL0_2L`, so clearing `OVL0_2L` from mutex0 could make the display path wait on
+`OVL0/RDMA0/DSI0` while the real active layer was outside the mutex. Keeping
+`OVL0_2L` in mutex0 should close that exact mismatch. If the physical display
+remains black, the next proven blocker is no longer "active OVL layer absent
+from mutex" but a route/handoff mismatch between the active `OVL0_2L` layer and
+the routed `OVL0 -> OVL0_VIRTUAL -> COLOR0 -> DITHER -> RDMA0 -> DSI0` path.
+
+Evidence: artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl0-2l-mutex/boot-m6-ovl0-2l-mutex.img`
+was flashed to serial `711HEBSR277K5`; local artifact and device boot readback
+both have sha256
+`47b5df7f847b03ff22a409d7e97474d14817993a588b591996a61dafc52f9753`.
+Matching payload identities are `Image.gz-dtb`
+`9971baa16b54f339ca30273f7cb9d1aa0a12c97b24057e11f0d1a30f2cd71d34`,
+`System.map`
+`251523311790f144f3e813f93ad2e5cee604a4f3260bb170ecd283c01dc7724d`,
+`config` `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`,
+and `initrd.img`
+`b897743629941f917796605abb7c20f3cb3ee9c2e60a12faf8d9fb8de0279a81`.
+Fresh capture path:
+`/srv/forge/android/meizu_m6/captures/20260601-010700-m6-ovl0-2l-mutex-runtime-47b5df7f-711HEBSR277K5`.
+The latest fresh bootdiag run in that capture is
+`cache-bootdiag/run-20260601-110422-317`, manifest dated
+`Mon Jun 1 11:04:23 GMT 2026`, cmdline serial `711HEBSR277K5`.
+
+The kernel log proves normal userspace input into display: logcat kernel lines
+3313-3314 show primary layer 0 enabled from `OverlayEngine_0` with
+`fmt=PBGRA/0x1404`, `phy=0xa00000`, `pitch_px=736`, `720x1280`. Lines
+3341-3342 show the handoff to `OVL_CONFIG_STRUCT` as
+`ovl_fmt=PBGRA8888/0xc00c2d`, `addr=0xa00000`, `pitch_bytes=2944`. Lines
+3357-3358 prove the active hardware programming is now
+`M6 OVL diag cfg[1]: mod=OVL0_2L L0 global=0 en=1 ... addr=0xa00000`.
+Lines 3362-3366 prove the mutex change applied:
+`M0_MOD=0xd1280` includes `OVL0_2L`, but the frame still times out with
+`route VALID=0x0 READY=0x4000930a`, `rdma0 ... IN=0/0 OUT=0/0`, and
+`MEM_CON=0x0 MEM_START=0x0`. Lines 3367-3373 still show routed `OVL0` contains
+stale/garbage-looking BGRA8888 L0/L3 addresses `0x9f707fbf` and `0x9fa8bfff`.
+Lines 3375-3376 show DSI remains in video mode and alive
+(`MODE=0x3`, `TXRX=0x1003c`, `PS=0x30870`). SurfaceFlinger remains logically
+alive: `adb/surfaceflinger.txt:43-44` reports a 720x1280 built-in display,
+`flips=5118`, `powerMode=2`, and BootAnimation is the active layer. Screencap
+is still a valid 720x1280 PNG. The physical LCD remains treated as black unless
+the user reports otherwise.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtk_disp_mgr.c` adds bounded
+  primary `disp_input_config` logging before display config preprocessing hands
+  buffers to primary display.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` adds
+  bounded logging of the converted `OVL_CONFIG_STRUCT` immediately before
+  `dpmgr_path_config()`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c` widens the OVL
+  layer-config diagnostic to identify which OVL module receives each active
+  layer.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` keeps
+  `OVL0_2L` in the M6 PQ-bypass mutex while still clearing inactive `OVL1_2L`
+  and PQ modules `CCORR/AAL/GAMMA`.
+- `BRINGUP_STATE.md` records the artifact, capture, conclusion, and next
+  rollback/verification contract.
+
+Why each file changed: `mtk_disp_mgr.c` owns the userspace/session input layer
+before it is converted, so it is the narrowest place to prove whether Android
+hands a sane buffer, format, pitch, and rectangle into the display driver.
+`primary_display.c` owns the conversion from `disp_input_config` to
+`OVL_CONFIG_STRUCT`, so it proves whether a sane input turns into a sane OVL
+handoff. `ddp_ovl.c` owns final OVL register programming, so adding the module
+name is required to distinguish routed `OVL0` from active `OVL0_2L`.
+`ddp_path.c` owns mutex membership and is the only file needed to test the
+specific evidence-backed mismatch: active `OVL0_2L` layer versus a clear mask
+that previously removed `OVL0_2L`.
+
+Expected next marker: a follow-up route/layer patch should make the first
+active primary layer land on routed `OVL0` or otherwise connect the active OVL
+engine into the path. A useful positive marker is `M6 OVL diag cfg` for the
+enabled layer on `mod=OVL0`, with mutex/path timeout no longer showing
+`rdma0 IN=0/0 OUT=0/0` at the first userspace frame. A useful negative marker is
+unchanged `OVL0_2L` activity with `RDMA0 IN/OUT=0/0`, which keeps the frontier
+at route/module connection rather than panel DCS, PQ format mapping, or DSI
+timing.
+
+Rollback condition: revert this checkpoint if a verified flash regresses before
+root ADB, SurfaceFlinger, or the first primary frame, or if a later stock-route
+patch proves `OVL0_2L` must be excluded from mutex0 because it is intentionally
+inactive in the final route. Do not treat this patch as a physical display fix:
+it closes one mutex-membership hypothesis and exposes the next route/handoff
+blocker.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl0-2l-mutex/SHA256SUMS
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+grep -R -n -E 'M6 OVL input|M6 OVL handoff|M6 OVL diag cfg|M6 DDP timeout\[VSYNC\]|M0_MOD=0xd1280|rdma0 .*IN=0/0 OUT=0/0|Built-in Screen|BootAnimation|Invalid color format|0x1304' /srv/forge/android/meizu_m6/captures/20260601-010700-m6-ovl0-2l-mutex-runtime-47b5df7f-711HEBSR277K5
+grep -R -n -E 'module_list_scenario|module_can_connect|OVL0_2L|OVL0_VIRTUAL|ddp_m6_primary_direct_mutex_clear_mask' kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c
+```
+
+## 2026-06-01 OVL0_2L mutex and handoff proof
+
+PATCH HISTORY, DIAGNOSTIC / ISOLATION, 2026-06-01: log the primary userspace
+input-to-OVL handoff, log the actual OVL module receiving the layer, and stop
+clearing `OVL0_2L` from the primary display mutex while PQ bypass is active.
+
+Hypothesis: the prior DCS-window artifact proved DSI was already in video mode
+and did not expose a safe command read window. The next earliest display
+failure could be in the OVL/RDMA handoff. Because the primary route list starts
+with `OVL0_2L` but the path connection tables route scanout from `OVL0` through
+`OVL1_2L/OVL0_VIRTUAL` toward COLOR/DITHER/RDMA0/DSI0, the active layer might
+be programmed into an OVL module that was either missing from mutex or not
+connected to RDMA. This checkpoint tests the mutex half of that hypothesis and
+records enough handoff evidence to decide the next route patch.
+
+Evidence: artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl0-2l-mutex/boot-m6-ovl0-2l-mutex.img`
+was flashed to serial `711HEBSR277K5`; local boot image and boot partition
+readback both have sha256
+`47b5df7f847b03ff22a409d7e97474d14817993a588b591996a61dafc52f9753`.
+Matching payload identities are `Image.gz-dtb`
+`9971baa16b54f339ca30273f7cb9d1aa0a12c97b24057e11f0d1a30f2cd71d34`,
+`System.map`
+`251523311790f144f3e813f93ad2e5cee604a4f3260bb170ecd283c01dc7724d`,
+and config `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+Fresh capture path:
+`/srv/forge/android/meizu_m6/captures/20260601-010700-m6-ovl0-2l-mutex-runtime-47b5df7f-711HEBSR277K5`.
+Its latest bootdiag run
+`cache-bootdiag/run-20260601-110422-317/cmd/logcat_kernel.txt` shows the active
+layer programmed as `M6 OVL diag cfg[1]: mod=OVL0_2L L0 global=0 en=1
+source=0 fmt=PBGRA8888/0xc00c2d ... addr=0xa00000 ... dst_xywh=0/0/720/1280
+pitch=2944`. The same first timeout shows `M0_MOD=0xd1280`, proving the mutex
+now contains `OVL0_2L` in addition to the previous primary route modules.
+However the panel is still treated as black, `route VALID=0x0`, `RDMA0
+IN=0/0 OUT=0/0`, and RDMA memory mode is not active at that first marker. The
+same marker shows OVL0 still has stale-looking enabled layers at unaligned
+addresses `0x9f707fbf` and `0x9fa8bfff`, while the clean current layer is on
+`OVL0_2L`. Therefore the mutex omission is closed as a necessary but
+insufficient fix; the next earliest evidence-backed blocker is layer placement
+versus the connected route.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtk_disp_mgr.c` logs primary
+  `disp_input_config` fields after input preprocessing.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` logs the
+  converted `OVL_CONFIG_STRUCT` just before `dpmgr_path_config()`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c` logs which OVL
+  hardware module receives each enabled layer.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` keeps
+  `OVL0_2L` in mutex while still clearing inactive `OVL1_2L` and PQ modules
+  `CCORR/AAL/GAMMA` under `DISP_OPT_BYPASS_PQ`.
+- `BRINGUP_STATE.md` records the verified artifact, capture, conclusion, and
+  next route hypothesis.
+
+Why each file changed: `mtk_disp_mgr.c` is the point where userspace primary
+layer configs are normalized and MVA/offset/pitch evidence appears.
+`primary_display.c` owns the conversion from `disp_input_config` to
+`OVL_CONFIG_STRUCT`, which proves whether the format and address are sane before
+hardware programming. `ddp_ovl.c` owns the final per-module OVL register
+programming and proves which hardware block consumes global layer 0.
+`ddp_path.c` owns mutex composition; keeping `OVL0_2L` in mutex was the narrow
+test for the proven active module. The state file binds the patch to exact
+artifact and capture evidence.
+
+Expected next marker: after a route/layer-placement patch, the first fresh
+timeout should no longer show the active current layer only on disconnected
+`OVL0_2L`. A positive marker is `M6 OVL diag cfg... mod=OVL0 ... addr=0xa00000`
+or a stock-equivalent connected `OVL0 -> OVL0_2L -> OVL0_VIRTUAL` route, with
+`RDMA0 IN/OUT` counters nonzero and `route VALID` no longer `0x0`. If that
+still leaves a black panel, the frontier moves to OVL output path or SMI/MMU
+state with fresh nonzero RDMA input evidence.
+
+Rollback condition: revert this checkpoint if a verified flash regresses before
+root ADB/SurfaceFlinger/fb0, if keeping `OVL0_2L` in mutex makes the first
+timeout earlier or noisier without producing handoff evidence, or after the
+next route patch proves `OVL0_2L` should be unused and absent from the mutex.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260531-m6-ovl0-2l-mutex/SHA256SUMS
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+grep -R -n -E 'M6 OVL input|M6 OVL handoff|M6 OVL diag cfg|M6 DDP timeout\\[VSYNC\\]|M0_MOD=0xd1280|RDMA0 IN=0/0|route VALID=0x0|Built-in Screen|BootAnimation|brightness' /srv/forge/android/meizu_m6/captures/20260601-010700-m6-ovl0-2l-mutex-runtime-47b5df7f-711HEBSR277K5
+grep -R -n -E 'DISP_MODULE_OVL0_2L|module_can_connect|mout_map|sel_out_map|sel_in_map|ovl_config_l' kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c /srv/forge/android/meizu_m6/kernel-meizu_M6-Q-ex2-3.18.119/drivers/misc/mediatek/video/mt6757/dispsys/ddp_path.c
+```

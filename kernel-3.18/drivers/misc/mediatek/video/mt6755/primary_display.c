@@ -2533,6 +2533,44 @@ static int _convert_disp_input_to_ovl(OVL_CONFIG_STRUCT *dst, disp_input_config 
 
 	return ret;
 }
+
+static void m6_dump_primary_ovl_handoff(const char *stage,
+					const struct disp_frame_cfg_t *cfg,
+					int cfg_idx,
+					const disp_input_config *input,
+					const OVL_CONFIG_STRUCT *ovl)
+{
+	static unsigned int m6_handoff_diag_count;
+	unsigned int idx;
+
+	if (!cfg || !input || !ovl)
+		return;
+	if (m6_handoff_diag_count >= 96)
+		return;
+	if (!input->layer_enable && m6_handoff_diag_count >= 24)
+		return;
+
+	idx = m6_handoff_diag_count++;
+	DISPERR("M6 OVL handoff[%u:%s]: comm=%s decouple=%d mode=%u bypass_pq=%d cfg=%d L%u input_en=%u ovl_en=%u source=%u input_fmt=0x%x ovl_fmt=%s/0x%x idx=%u fence_fd=%d frm=%u sec=%u\n",
+		idx, stage ? stage : "null", current->comm,
+		primary_display_is_decouple_mode(), pgc ? pgc->session_mode : 0,
+		disp_helper_get_option(DISP_OPT_BYPASS_PQ), cfg_idx,
+		input->layer_id, input->layer_enable, ovl->layer_en,
+		ovl->source, input->src_fmt, unified_color_fmt_name(ovl->fmt),
+		ovl->fmt, input->next_buff_idx, (int)input->src_fence_fd,
+		input->frm_sequence, ovl->security);
+	DISPERR("M6 OVL handoff[%u:%s]: input phy=%p base=%p pitch_px=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u ovl addr=0x%lx vaddr=0x%lx pitch_bytes=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u alpha=%u/%u sur=%u const=%d key=%u/0x%x\n",
+		idx, stage ? stage : "null", input->src_phy_addr,
+		input->src_base_addr, input->src_pitch, input->src_offset_x,
+		input->src_offset_y, input->src_width, input->src_height,
+		input->tgt_offset_x, input->tgt_offset_y, input->tgt_width,
+		input->tgt_height, ovl->addr, ovl->vaddr, ovl->src_pitch,
+		ovl->src_x, ovl->src_y, ovl->src_w, ovl->src_h,
+		ovl->dst_x, ovl->dst_y, ovl->dst_w, ovl->dst_h,
+		ovl->aen, ovl->alpha, ovl->sur_aen, ovl->const_bld,
+		ovl->keyEn, ovl->key);
+}
+
 #if 0
 static int _convert_disp_input_to_rdma(RDMA_CONFIG_STRUCT *dst,
 				       disp_session_input_config *session_input)
@@ -4776,6 +4814,7 @@ static int _config_ovl_input(struct disp_frame_cfg_t *cfg,
 			DISPMSG("set AEE layer %d\n", layer);
 		}
 		_convert_disp_input_to_ovl(ovl_cfg, input_cfg);
+		m6_dump_primary_ovl_handoff("pre-dpmgr", cfg, i, input_cfg, ovl_cfg);
 
 		dprec_logger_start(DPREC_LOGGER_PRIMARY_CONFIG,
 				   ovl_cfg->layer | (ovl_cfg->layer_en << 16), ovl_cfg->addr);

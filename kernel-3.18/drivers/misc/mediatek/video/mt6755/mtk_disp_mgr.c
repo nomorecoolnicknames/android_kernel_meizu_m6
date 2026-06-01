@@ -564,6 +564,49 @@ const char *_disp_format_spy(DISP_FORMAT format)
 	}
 }
 
+static void m6_dump_primary_input_cfg(const char *stage,
+				      const struct disp_frame_cfg_t *cfg,
+				      int cfg_idx,
+				      unsigned long dst_mva,
+				      unsigned int dst_size,
+				      unsigned int mva_offset,
+				      unsigned int bpp)
+{
+	static unsigned int m6_input_diag_count;
+	const disp_input_config *input;
+	unsigned int idx;
+
+	if (!cfg || cfg_idx < 0 || cfg_idx >= ARRAY_SIZE(cfg->input_cfg))
+		return;
+	if (DISP_SESSION_TYPE(cfg->session_id) != DISP_SESSION_PRIMARY)
+		return;
+	if (m6_input_diag_count >= 96)
+		return;
+
+	input = &cfg->input_cfg[cfg_idx];
+	if (!input->layer_enable && m6_input_diag_count >= 24)
+		return;
+
+	idx = m6_input_diag_count++;
+	DISPERR("M6 OVL input[%u:%s]: comm=%s sid=0x%x setter=%u user=%u layers=%u overlap=%u present=%u trigger=%u cfg=%d L%u en=%u src=%u fmt=%s/0x%x sec=%u fence_fd=%d idx=%u frm=%u\n",
+		idx, stage ? stage : "null", current->comm, cfg->session_id,
+		cfg->setter, cfg->user, cfg->input_layer_num, cfg->overlap_layer_num,
+		cfg->present_fence_idx, cfg->tigger_mode, cfg_idx, input->layer_id,
+		input->layer_enable, input->buffer_source,
+		_disp_format_spy(input->src_fmt), input->src_fmt, input->security,
+		(int)input->src_fence_fd, input->next_buff_idx, input->frm_sequence);
+	DISPERR("M6 OVL input[%u:%s]: base=%p phy=%p mva=0x%lx size=0x%x off=0x%x final=0x%lx pitch_px=%u bpp=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u alpha=%u/%u sur=%u key=%u/0x%x type=%u rot=%u direct=%u\n",
+		idx, stage ? stage : "null", input->src_base_addr,
+		input->src_phy_addr, dst_mva, dst_size, mva_offset,
+		dst_mva + mva_offset, input->src_pitch, bpp,
+		input->src_offset_x, input->src_offset_y, input->src_width,
+		input->src_height, input->tgt_offset_x, input->tgt_offset_y,
+		input->tgt_width, input->tgt_height, input->alpha_enable,
+		input->alpha, input->sur_aen, input->src_use_color_key,
+		input->src_color_key, input->layer_type, input->layer_rotation,
+		input->src_direct_link);
+}
+
 #if 0
 static int _sync_convert_fb_layer_to_disp_input(unsigned int session_id, disp_input_config *src,
 						primary_disp_input_config *dst,
@@ -910,9 +953,12 @@ static int input_config_preprocess(struct disp_frame_cfg_t *cfg)
 			     cfg->input_cfg[i].tgt_offset_y,
 			     _disp_format_spy(cfg->input_cfg[i].src_fmt), cfg->input_cfg[i].src_pitch,
 			     cfg->input_cfg[i].src_phy_addr, dst_mva, cfg->input_cfg[i].security);
+			m6_dump_primary_input_cfg("preprocess", cfg, i, dst_mva,
+						  dst_size, mva_offset, Bpp);
 		} else {
 			DISPPR_FENCE("S+/PL%d/e%d/id%d\n", cfg->input_cfg[i].layer_id,
 				     cfg->input_cfg[i].layer_enable, cfg->input_cfg[i].next_buff_idx);
+			m6_dump_primary_input_cfg("preprocess-disabled", cfg, i, 0, 0, 0, 0);
 		}
 
 		disp_sync_put_cached_layer_info(session_id, layer_id, &cfg->input_cfg[i], dst_mva);

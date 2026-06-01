@@ -60,6 +60,22 @@ static inline int is_module_ovl(DISP_MODULE_ENUM module)
 		return 0;
 }
 
+static const char *m6_ovl_module_name(DISP_MODULE_ENUM module)
+{
+	switch (module) {
+	case DISP_MODULE_OVL0:
+		return "OVL0";
+	case DISP_MODULE_OVL1:
+		return "OVL1";
+	case DISP_MODULE_OVL0_2L:
+		return "OVL0_2L";
+	case DISP_MODULE_OVL1_2L:
+		return "OVL1_2L";
+	default:
+		return "OVL?";
+	}
+}
+
 unsigned long ovl_base_addr(DISP_MODULE_ENUM module)
 {
 	switch (module) {
@@ -292,20 +308,21 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 	static unsigned int m6_ovl_diag_count;
 	unsigned int idx;
 
-	if (module != DISP_MODULE_OVL0 || m6_ovl_diag_count >= 24)
+	if (!is_module_ovl(module) || m6_ovl_diag_count >= 72)
 		return;
 
 	idx = m6_ovl_diag_count++;
-	DISPERR("M6 OVL diag cfg[%u]: L%u global=%u en=%u source=%u fmt=%s/0x%x bpp=%u sec=%u alpha=%u/%u const=%d key=%u/0x%x con=0x%x\n",
-		idx, local_layer, cfg->layer, cfg->layer_en, cfg->source,
-		unified_color_fmt_name(cfg->fmt), cfg->fmt, bpp, cfg->security,
-		cfg->aen, cfg->alpha, cfg->const_bld, cfg->keyEn, cfg->key,
-		con_value);
-	DISPERR("M6 OVL diag cfg[%u]: addr=0x%lx vaddr=0x%lx final=0x%lx low=0x%lx byte_off=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u pitch=%u adj_src_x=%u adj_dst_w=%u\n",
-		idx, cfg->addr, cfg->vaddr, final_addr, final_addr & 0xfff,
-		byte_offset, cfg->src_x, cfg->src_y, cfg->src_w, cfg->src_h,
-		cfg->dst_x, cfg->dst_y, cfg->dst_w, cfg->dst_h, cfg->src_pitch,
-		adjusted_src_x, adjusted_dst_w);
+	DISPERR("M6 OVL diag cfg[%u]: mod=%s L%u global=%u en=%u source=%u fmt=%s/0x%x bpp=%u sec=%u alpha=%u/%u const=%d key=%u/0x%x con=0x%x\n",
+		idx, m6_ovl_module_name(module), local_layer, cfg->layer,
+		cfg->layer_en, cfg->source, unified_color_fmt_name(cfg->fmt),
+		cfg->fmt, bpp, cfg->security, cfg->aen, cfg->alpha,
+		cfg->const_bld, cfg->keyEn, cfg->key, con_value);
+	DISPERR("M6 OVL diag cfg[%u]: mod=%s addr=0x%lx vaddr=0x%lx final=0x%lx low=0x%lx byte_off=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u pitch=%u adj_src_x=%u adj_dst_w=%u\n",
+		idx, m6_ovl_module_name(module), cfg->addr, cfg->vaddr,
+		final_addr, final_addr & 0xfff, byte_offset, cfg->src_x,
+		cfg->src_y, cfg->src_w, cfg->src_h, cfg->dst_x, cfg->dst_y,
+		cfg->dst_w, cfg->dst_h, cfg->src_pitch, adjusted_src_x,
+		adjusted_dst_w);
 }
 
 static int ovl_layer_config(DISP_MODULE_ENUM module,

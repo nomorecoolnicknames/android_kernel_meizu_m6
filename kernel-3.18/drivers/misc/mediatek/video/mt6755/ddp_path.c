@@ -276,8 +276,7 @@ static int ddp_m6_primary_direct_mutex_isolation(DDP_SCENARIO_ENUM scenario)
 
 static unsigned int ddp_m6_primary_direct_mutex_clear_mask(void)
 {
-	return ddp_mutex_module_mask(DISP_MODULE_OVL0_2L) |
-		ddp_mutex_module_mask(DISP_MODULE_OVL1_2L) |
+	return ddp_mutex_module_mask(DISP_MODULE_OVL1_2L) |
 		ddp_mutex_module_mask(DISP_MODULE_CCORR) |
 		ddp_mutex_module_mask(DISP_MODULE_AAL) |
 		ddp_mutex_module_mask(DISP_MODULE_GAMMA);
