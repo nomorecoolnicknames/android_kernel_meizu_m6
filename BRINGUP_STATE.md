@@ -3887,3 +3887,126 @@ sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-sequence-
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 LCM|tps65132|ili9881p|M6 DSI snapshot|BIST_PATTERN|self_pat" | tail -240'
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; cat /d/mtkfb; dmesg | grep -E "M6 LCM ATA|ATA|M6 LCM" | tail -120'
 ```
+
+Test result FACT: LCM marker artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-sequence-markers/boot-m6-lcm-sequence-markers.img`
+sha256 `849625d6b854dd6e469df756017bf1655768df32f4787826441226f6d37dcdf4`
+was flashed only to serial `711HEBSR277K5`; readback
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-sequence-markers/readback-boot-m6-lcm-sequence-markers.img`
+matches the same sha256 with `cmp_exit=0`. The boot reaches
+`sys.boot_completed=1` with `init.svc.bootanim=stopped` in
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-sequence-markers/reboot-wait.txt`.
+
+Test result FACT: fresh capture
+`/srv/forge/android/meizu_m6/captures/20260603-115019-m6-lcm-sequence-markers-711HEBSR277K5`
+shows Android display stack still alive: `LCM Driver=[ili9881p_hd_dsi_txd]`,
+`PathMode:DIRECT_LINK`, `RDMA0 Transfer` count `5576` at about `61.27` fps,
+`sys.boot_completed=1`, `DisplayDevice: Built-in Screen` at `720x1280`,
+`powerMode=2`, `isDisplayOn=1`, HWC layers for `ImageWallpaper#0`,
+`StatusBar#0`, and `HWC_FRAMEBUFFER_TARGET`. `screen-pre.png` and
+`screen-after-bist.png` are valid `720x1280` PNGs with identical sha256
+`ca236178134d435564a8de811b1415b71d60b9b0af56f1bf5736a2f8a5a66d6c`.
+
+Test result FACT: the LCM driver does not run Linux-side init during normal
+boot when LK reports the panel already initialized. The fresh dmesg contains
+`M6 LCM backlight` and `M6 LCM ATA`, but no `M6 LCM init start`, no
+`M6 LCM init seq`, no TPS65132 probe/write markers, and no
+`M6 LCM push_table start tag=init`. Source audit confirms
+`primary_display_init()` receives `is_lcm_inited=1`, `disp_lcm_probe()` stores
+`plcm->is_inited=true`, and the existing `disp_lcm_init(pgc->plcm, 0)` path
+does not call `lcm_drv->init_power()` or `lcm_drv->init()` when
+`disp_lcm_is_inited(plcm)` is true.
+
+Test result FACT: panel command readback currently fails. The live ATA probe
+logs `M6 LCM ATA expected=00 b4 02 1c read=00 00 00 00 ret=0`. The DSI BIST
+red-window command still sets DSI self-pattern state:
+`bist-post-enable` has `BIST_PATTERN=0xff0000`, `BIST_CON=0x200040`, and
+`self_pat=1`; `bist-post-disable` has `BIST_CON=0x0` and `self_pat=0`.
+
+INFERENCE: the prior stock Flyme LCM command-table restoration was not a real
+runtime test of the Linux LCM init sequence on normal boot, because the Linux
+driver skipped `lcm_init()` after trusting LK's `is_lcm_inited=1`. The earliest
+evidence-backed display frontier is now to force the selected M6 panel through
+the existing Linux `disp_lcm_init(force=1)` path even when LK claims it is
+already initialized, then retrigger the video path like the existing non-LK
+branch does.
+
+## 2026-06-03 force Linux LCM reinit on M6 boot
+
+PATCH HISTORY, BOOT-UNBLOCK + DIAGNOSTIC, 2026-06-03: force the selected
+`ili9881p_hd_dsi_txd` panel through Linux-side LCM init on normal boot when LK
+reports it initialized, and bound the hot-path backlight diagnostic logs.
+
+Hypothesis: the panel remains physically black because Linux trusts LK's
+`is_lcm_inited=1` handoff and therefore never executes the restored stock-like
+`ili9881p_hd_dsi_txd` Linux init table, TPS65132 bias writes, or reset sequence
+on normal boot. For this panel only, running the existing force-init branch
+should exercise the real Linux LCM init path, produce the missing TPS/reset/init
+markers, and either wake the panel or expose the next earliest command/power
+failure. The previous unbounded backlight markers are diagnostic noise and can
+evict the early init markers from dmesg, so they must be bounded before the next
+capture.
+
+Evidence: capture
+`/srv/forge/android/meizu_m6/captures/20260603-115019-m6-lcm-sequence-markers-711HEBSR277K5`
+shows normal boot with live Android composition, RDMA0, DSI BIST, and DCS
+backlight command, but no Linux-side `M6 LCM init`/TPS/init-table markers and
+ATA readback `00 00 00 00`. Source lines in
+`kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` show
+`disp_lcm_init(pgc->plcm, 0)` when `is_lcm_inited` is true; source lines in
+`kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_lcm.c` show that
+`force=0` skips `lcm_drv->init_power()` and `lcm_drv->init()` when
+`plcm->is_inited` is already true. New built artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-linux-lcm-reinit/boot-m6-linux-lcm-reinit.img`
+has sha256 `a5909870fffa8f79ce48e148abd185778a05525b1989eb01f87363d8252f4b60`;
+matching `Image.gz-dtb` sha256
+`6c26f781b4917227d8ef349f8a870e142b23fadb819ca31b8a8e06f389af1ad2`,
+matching `System.map` sha256
+`830bc29c8333e2cf515d2504b304188fa25efe1c50d81be0b15bb239f075d025`,
+and matching `vmlinux` sha256
+`c42fcf811eb07815ed7e36033cdbf5e25f5ad5feea1dc44ba622b13f2ef59daf`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` detects
+  the exact selected LK/kernel panel name `ili9881p_hd_dsi_txd` when
+  `is_lcm_inited=1`, logs `M6 LCM reinit`, runs `disp_lcm_init(..., 1)`, and
+  uses the existing video-mode retrigger branch.
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+  bounds backlight diagnostic logging to the first few calls, extremes, and
+  large deltas while still sending every `0x51` command unchanged.
+- `BRINGUP_STATE.md` records the previous capture result, hypothesis, evidence,
+  expected next marker, rollback condition, and verification commands.
+
+Why each file changed: `primary_display.c` is the point where the LK handoff
+`is_lcm_inited` decision is made and where a force-init branch already exists
+for the non-LK case, so this is the narrowest behavior change that can make the
+Linux LCM table actually execute. The LCM file change is diagnostic hygiene for
+the same capture cycle; it does not change panel commands or backlight levels.
+The state file is the required durable handoff.
+
+Expected next marker: fresh boot dmesg should show `M6 LCM reinit`, then
+`M6 LCM init_power`, `M6 LCM init start`, TPS65132 probe/write markers,
+reset/bias steps, `M6 LCM push_table start tag=init`, key init-table commands
+including `0xff`, `0x11`, and `0x29`, then `dpmgr_path_trigger`/RDMA0 transfer
+and bounded backlight markers. If the physical panel becomes visible, keep this
+as the first real display unblock and remove excess diagnostics later. If the
+panel remains black but ATA starts returning expected bytes, move to video
+stream/timing/backlight validation. If TPS writes fail or init markers stop at
+a specific boundary, patch that earliest boundary next. If boot regresses before
+ADB, collect pstore/last_kmsg and revert this patch.
+
+Rollback condition: revert if verified boot regresses before ADB,
+SurfaceFlinger, or RDMA0 transfer; if forced Linux init causes a new kernel
+panic, DSI timeout loop, or no-device state; or if the panel was visible before
+the patch and becomes black after it. Do not revert solely because the panel
+remains black while the new markers identify an earlier failing boundary.
+
+Verification commands:
+
+```bash
+git diff --check
+make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 O=/home/n8n/forge-work/kernel-builds/m6-directlink-smartovl-20260602/out ARCH=arm64 CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- -j4 Image.gz-dtb
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-linux-lcm-reinit/boot-m6-linux-lcm-reinit.img /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-linux-lcm-reinit/Image.gz-dtb /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-linux-lcm-reinit/System.map
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 LCM reinit|M6 LCM init|M6 LCM table\\[init\\]|tps65132|M6 LCM ATA|BIST_PATTERN|self_pat|RDMA0 Transfer|PathMode" | tail -260'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; cat /d/mtkfb'
+```

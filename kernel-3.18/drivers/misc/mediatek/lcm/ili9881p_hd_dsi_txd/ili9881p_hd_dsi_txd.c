@@ -608,6 +608,9 @@ static struct LCM_setting_table bl_level[] = {
 };
 
 static unsigned int lcm_m6_init_count;
+static unsigned int lcm_m6_backlight_log_this_call;
+static unsigned int lcm_m6_backlight_log_count;
+static unsigned int lcm_m6_backlight_last_level = 0xffffffff;
 
 static const char *lcm_m6_table_name(struct LCM_setting_table *table)
 {
@@ -668,14 +671,20 @@ static void push_table(void *cmdq, struct LCM_setting_table *table,
 {
 	unsigned int i;
 	unsigned cmd;
+	unsigned int log_table = 1;
 	const char *tag = lcm_m6_table_name(table);
 
-	LCM_LOGI("M6 LCM push_table start tag=%s count=%u force=%u cmdq=%p\n",
-		tag, count, force_update, cmdq);
+	if (table == bl_level)
+		log_table = lcm_m6_backlight_log_this_call;
+
+	if (log_table)
+		LCM_LOGI("M6 LCM push_table start tag=%s count=%u force=%u cmdq=%p\n",
+			tag, count, force_update, cmdq);
 	for (i = 0; i < count; i++) {
 
 		cmd = table[i].cmd;
-		lcm_m6_log_table_cmd(tag, i, &table[i], force_update);
+		if (log_table)
+			lcm_m6_log_table_cmd(tag, i, &table[i], force_update);
 
 		switch (cmd) {
 
@@ -697,8 +706,9 @@ static void push_table(void *cmdq, struct LCM_setting_table *table,
 			dsi_set_cmdq_V22(cmdq, cmd, table[i].count, table[i].para_list, force_update);
 		}
 	}
-	LCM_LOGI("M6 LCM push_table end tag=%s count=%u force=%u cmdq=%p\n",
-		tag, count, force_update, cmdq);
+	if (log_table)
+		LCM_LOGI("M6 LCM push_table end tag=%s count=%u force=%u cmdq=%p\n",
+			tag, count, force_update, cmdq);
 }
 
 
@@ -1121,14 +1131,35 @@ static unsigned int lcm_ata_check(unsigned char *buffer)
 
 static void lcm_setbacklight_cmdq(void *handle, unsigned int level)
 {
+	unsigned int delta;
+	unsigned int log_this = 0;
 
-	LCM_LOGI("%s,ili9881p_hd_dsi_txd backlight: level = %d\n", __func__, level);
+	if (lcm_m6_backlight_last_level == 0xffffffff)
+		delta = 0xffffffff;
+	else if (level > lcm_m6_backlight_last_level)
+		delta = level - lcm_m6_backlight_last_level;
+	else
+		delta = lcm_m6_backlight_last_level - level;
 
 	bl_level[0].para_list[0] = level;
-	LCM_LOGI("M6 LCM backlight handle=%p request=%u dcs51=0x%02x min=%u\n",
-		handle, level, bl_level[0].para_list[0], BL_MIN_LEVEL);
+
+	if (lcm_m6_backlight_log_count < 8 || level == 0 ||
+	    level == BL_MIN_LEVEL || level == 255 || delta >= 32)
+		log_this = 1;
+
+	lcm_m6_backlight_log_this_call = log_this;
+	if (log_this) {
+		lcm_m6_backlight_log_count++;
+		LCM_LOGI("%s,ili9881p_hd_dsi_txd backlight: level = %d\n",
+			__func__, level);
+		LCM_LOGI("M6 LCM backlight handle=%p request=%u dcs51=0x%02x min=%u count=%u delta=%u\n",
+			handle, level, bl_level[0].para_list[0], BL_MIN_LEVEL,
+			lcm_m6_backlight_log_count, delta);
+	}
+	lcm_m6_backlight_last_level = level;
 
 	push_table(handle, bl_level, sizeof(bl_level) / sizeof(struct LCM_setting_table), 1);
+	lcm_m6_backlight_log_this_call = 0;
 }
 
 static void *lcm_switch_mode(int mode)

@@ -3575,8 +3575,15 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	int use_cmdq = disp_helper_get_option(DISP_OPT_USE_CMDQ);
 	struct ddp_io_golden_setting_arg gset_arg;
 	disp_ddp_path_config *data_config = NULL;
+	bool m6_force_lcm_reinit = false;
 
 	DISPMSG("primary_display_init begin lcm=%s, inited=%d\n", lcm_name, is_lcm_inited);
+	if (lcm_name && is_lcm_inited &&
+	    !strcmp(lcm_name, "ili9881p_hd_dsi_txd")) {
+		m6_force_lcm_reinit = true;
+		DISPERR("M6 LCM reinit: LK reported %s initialized; force Linux init table\n",
+			lcm_name);
+	}
 	primary_video_first_config_flushed = false;
 	primary_video_frame_wait_diag_logged = false;
 	primary_video_bl_wait_diag_logged = false;
@@ -3762,9 +3769,11 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 		_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
 	}
 
-	if (is_lcm_inited) {
+	if (is_lcm_inited && !m6_force_lcm_reinit) {
 		ret = disp_lcm_init(pgc->plcm, 0);	/* no need lcm power on,because lk power on lcm */
 	} else {
+		if (m6_force_lcm_reinit)
+			DISPERR("M6 LCM reinit: run disp_lcm_init(force=1) and retrigger video path\n");
 		ret = disp_lcm_init(pgc->plcm, 1);
 
 		if (primary_display_is_video_mode())
