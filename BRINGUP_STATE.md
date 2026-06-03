@@ -3220,3 +3220,123 @@ adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/m
 grep -R -n -E 'M6 OVL cpu layer mirror|M6 OVL diag cfg|M6 DDP timeout\\[VSYNC\\]: (route|mutex|rdma0|ovl0|ovl0_2l|dsi0)|CMDQ_EVENT_DISP_RDMA0_EOF|IRQ: ovl0' /srv/forge/android/meizu_m6/captures/20260603-072431-m6-ovl0-cpu-layer-mirror-711HEBSR277K5
 grep -R -n -E 'boot_completed=1|Built-in Screen|PathMode:DIRECT_LINK|DISP_OPT_BYPASS_PQ|RDMA0 Transfer|dsi0' /srv/forge/android/meizu_m6/captures/20260603-072431-m6-ovl0-cpu-layer-mirror-711HEBSR277K5
 ```
+
+## 2026-06-03 OVL0 fetch/output IRQ diagnostics
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-03: add read-only OVL0 IRQ and trigger-loop
+snapshots for the first post-mirror fetch/output frontier.
+
+Hypothesis: after `boot-m6-ovl0-cpu-layer-mirror.img`, OVL0 L0 is now
+programmed with the expected 720x1280 RGBA layer, but the engine still reports
+frame underflow, L0 not complete until EOF, abnormal SOF, and RDMA0 `IN=0/0
+OUT=0/0`. The next missing evidence is whether OVL0 is starving on memory fetch
+or failing to hand valid pixels to the downstream route. Bounded read-only
+markers in the OVL0 IRQ handler and just before the trigger loop wait should
+capture the same failure at the exact hardware boundary without changing waits,
+tokens, fences, route, PQ, DSI, or panel state.
+
+Evidence: verified capture
+`/srv/forge/android/meizu_m6/captures/20260603-072431-m6-ovl0-cpu-layer-mirror-711HEBSR277K5`
+matches boot sha256
+`ad349802dda643c83998b7af3c363751da4918311658aa6ec24f06901fc1b9be` and
+matching `System.map`
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-cpu-layer-mirror/System.map`
+sha256 `5635678c5dc04f676c61159fb13c45ae5cc8941ccf7dfb878b298168ad04e5e5`.
+Dmesg lines 122-126 show `M6 OVL cpu layer mirror[23]` for `OVL0 L0` at
+`addr=0x1600000`, `pitch=2880`, `fmt=RGBA8888`. Dmesg lines 140-159 show
+direct route registers, mutex `M0_MOD=0x51280`, RDMA0 `IN=0/0 OUT=0/0`, OVL0
+`SRC=0x1`, and OVL0 L0 decoded as enabled with the expected address/pitch/size.
+Dmesg and logcat still show repeated `CMDQ_EVENT_DISP_RDMA0_EOF`,
+`IRQ: ovl0 -L0 not complete until EOF`, `IRQ: ovl0 frame underflow`, and HWC
+`[OVL-IN-0]` fence timeouts. Interrupt snapshots show OVL0/RDMA0 increasing and
+DSI0 staying zero.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_irq.c` adds bounded
+  `M6 OVL irq diag[...]` snapshots on OVL0 underflow/not-complete/abnormal-SOF
+  IRQs, including OVL flow/addcon/SMI/GREQ, L0 RDMA/GMC/FIFO/debug, route
+  valid/ready, mutex, and RDMA0 counters.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` extends
+  the existing `M6 trigger dump[...]` with RDMA0 FIFO/GMC/pitch/stall state and
+  OVL0 fetch/GREQ/FIFO/debug state before the trigger wait.
+- `BRINGUP_STATE.md` records the diagnostic hypothesis, evidence, expected next
+  marker, rollback condition, and verification commands.
+
+Why each file changed: `ddp_irq.c` is the earliest code path that observes the
+actual OVL0 underflow/not-complete/abnormal-SOF IRQ reported by the current
+capture. `primary_display.c` already owns the M6 trigger-loop diagnostic and can
+show pre-wait OVL/RDMA fetch state before the IRQ storm. The state file keeps
+the diagnostic marker contract synchronized with the code.
+
+Expected next marker: the next verified boot should emit `M6 OVL irq diag[...]`
+near the first OVL0 underflow/not-complete IRQ and expanded `M6 trigger
+dump[before-wait]` lines. A useful result is one of: OVL0 RDMA debug shows SMI
+GREQ/busy or FIFO starvation while RDMA0 input remains zero; OVL0 output valid
+state is present but RDMA0 does not consume it; or trigger-time state already
+differs from timeout-time state enough to identify ordering. If the markers
+show healthy OVL0 fetch/output but RDMA0 still has zero input, the frontier
+moves to route consumption/RDMA0 input gating rather than OVL memory fetch.
+
+Rollback condition: revert this diagnostic if a verified boot regresses before
+root ADB/SurfaceFlinger/fb0 or if the extra IRQ logging makes the device
+unusable or hides earlier evidence. Do not revert for continued black display
+alone; this patch is observation-only.
+
+Verification commands:
+
+```bash
+git diff --check
+make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 O=/home/n8n/forge-work/kernel-builds/m6-directlink-smartovl-20260602/out ARCH=arm64 CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- -j4 Image.gz-dtb
+grep -R -n -E 'M6 OVL irq diag|M6 trigger dump\\[before-wait\\]: (rdma0 fetch|ovl0 fetch)|M6 DDP timeout\\[VSYNC\\]|CMDQ_EVENT_DISP_RDMA0_EOF|IRQ: ovl0' <next-capture>
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 OVL irq diag|M6 trigger dump\\[before-wait\\]: (rdma0 fetch|ovl0 fetch)|RDMA0_EOF|IRQ: ovl0"'
+```
+
+Test result: artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-fetch-irqdiag/boot-m6-ovl0-fetch-irqdiag.img`
+was flashed to serial `711HEBSR277K5`; local image and boot readback in
+`/srv/forge/android/meizu_m6/captures/20260603-075401-m6-ovl0-fetch-irqdiag-711HEBSR277K5/boot-hashes.txt`
+both have sha256
+`2b6507360c1fa13d20a0abe6de00c13fa07ae397f151ebfbe68c517e7479df74`.
+Matching build outputs in
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-fetch-irqdiag/SHA256SUMS`
+are `Image.gz-dtb`
+`82bcd8f380904eadae9eaa0eb2664fa35597fa7af14af1d918201b5b3d919478`,
+`System.map`
+`e57bb41f643cab71e93c2e2f17f44aa0589b92913bfd9eb5c726280e83dbe426`,
+config `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`,
+and ramdisk `e82c6695614132e8759b9ee96ee5b9e9efdaf8df96d1ef0c32c5dae8b5e16332`.
+
+FACT: the verified boot reaches Android userspace again. `boot-wait.txt` shows
+`sys.boot_completed=1` by `2026-06-03T07:54:21-05:00`, with SurfaceFlinger,
+bootanimation, and the `input` service present. `dumpsys-sf.txt` reports
+Built-in Screen and HWC BootAnimation plus HWC framebuffer target layers.
+`mtkfb-debugfs.txt` reports `PathMode:DIRECT_LINK`, `RDMA0 Transfer=10`, and
+`DISP_OPT_BYPASS_PQ=1`; `screencap -p` still times out and the captured fb0
+head is all zero for the first 262144 bytes.
+
+FACT: the new IRQ marker fired at the live failure boundary. `dmesg.txt` lines
+2719-2720 show `M6 OVL irq diag[5120]` with `intsta=0x2034`, OVL0
+`sta=0x1d`, `en=0x1`, `src=0x1`, `flow=0x8071020`, `addcon=0x400c`,
+`smi=0x2`, `greq=0x10ff5555`, route `valid=0x3a ready=0x40009300`,
+mutex `0x51280/0x41`, RDMA0 `rdma=0x101 in=0/0 out=0/0`, and L0
+`con=0x10020ff`, `size=0x50002d0`, `addr=0x1600000`, `pitch=0x10000b40`,
+`rdma_ctrl=0x880001`, `gmc=0xffff`, `fifo=0x900000`, `buflow=0x0`,
+`rdma_dbg=0x20000001`.
+
+FACT: the timeout path remains the same direct OVL0 route. `dmesg.txt` lines
+191-223 and repeated later snapshots show route `OVL0 -> COLOR0 -> DITHER ->
+RDMA0 -> DSI0`, `M0_MOD=0x51280`, `M0_SOF=0x41`, OVL0 L0 decoded as enabled
+RGBA8888 at MVA `0x01600000`, RDMA0 `IN=0/0 OUT=0/0`, and DSI0
+`START=1 STA=0x20`. Interrupt snapshots show OVL0 and RDMA0 counters increase
+between `interrupts-before.txt` and `interrupts-after.txt`, while `dsi0`
+remains zero.
+
+INFERENCE: OVL0 layer programming, direct route selection, PQ bypass isolation,
+and Android service startup are now closed as the first blocker. The remaining
+display frontier is below the HWC handoff but before RDMA0 consumes pixels:
+either the HWC/ion MVA content is blank or unmapped for OVL, OVL0 is not
+actually fetching useful data despite a sane register set, or RDMA0 is not
+accepting OVL output from the route. The next diagnostic must sample the
+enabled OVL0 HWC/MVA buffer through M4U at handoff and log query/map/content
+state; do not patch CMDQ EOF waits, fence release, token seeding, PQ, Smart OVL,
+or panel DCS from this evidence.

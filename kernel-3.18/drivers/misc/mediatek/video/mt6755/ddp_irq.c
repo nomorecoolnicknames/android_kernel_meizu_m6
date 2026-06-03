@@ -26,6 +26,7 @@
 
 #include "ddp_reg.h"
 #include "ddp_irq.h"
+#include "ddp_ovl.h"
 #include "ddp_aal.h"
 #include "ddp_drv.h"
 #include "disp_helper.h"
@@ -42,6 +43,7 @@ static unsigned int cnt_rdma_underflow[2];
 static unsigned int cnt_rdma_abnormal[2];
 static unsigned int cnt_ovl_underflow[OVL_NUM];
 static unsigned int cnt_wdma_underflow[2];
+static unsigned int m6_ovl0_irq_diag_count;
 
 unsigned long long rdma_start_time[2] = { 0 };
 unsigned long long rdma_end_time[2] = { 0 };
@@ -52,6 +54,74 @@ unsigned int mmsys_enable = 4;
 
 
 #define DISP_MAX_IRQ_CALLBACK   10
+#define M6_OVL_LAYER_OFFSET     (0x20)
+#define M6_OVL_RDMA_DBG_OFFSET  (0x4)
+
+static bool disp_irq_m6_diag_sample(unsigned int *count)
+{
+	unsigned int n = (*count)++;
+
+	return n < 64 || ((n & 0x3ff) == 0);
+}
+
+static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
+	unsigned int intsta)
+{
+	unsigned long base;
+	unsigned long layer0;
+	unsigned long rdma0;
+	unsigned int idx;
+
+	if (module != DISP_MODULE_OVL0 ||
+	    !disp_helper_get_option(DISP_OPT_BYPASS_PQ) ||
+	    !(intsta & ((1U << 2) | (0xfU << 5) | (1U << 13))))
+		return;
+
+	if (!disp_irq_m6_diag_sample(&m6_ovl0_irq_diag_count))
+		return;
+
+	idx = m6_ovl0_irq_diag_count - 1;
+	base = ovl_base_addr(module);
+	layer0 = base;
+	rdma0 = base;
+
+	DISPERR("M6 OVL irq diag[%u]: intsta=0x%x sta=0x%x inten=0x%x en=0x%x src=0x%x roi=0x%x path=0x%x flow=0x%x addcon=0x%x smi=0x%x greq=0x%x urg=0x%x valid=0x%x ready=0x%x mutex=0x%x/0x%x rdma=0x%x in=%u/%u out=%u/%u\n",
+		idx, intsta,
+		DISP_REG_GET(base + DISP_REG_OVL_STA),
+		DISP_REG_GET(base + DISP_REG_OVL_INTEN),
+		DISP_REG_GET(base + DISP_REG_OVL_EN),
+		DISP_REG_GET(base + DISP_REG_OVL_SRC_CON),
+		DISP_REG_GET(base + DISP_REG_OVL_ROI_SIZE),
+		DISP_REG_GET(base + DISP_REG_OVL_DATAPATH_CON),
+		DISP_REG_GET(base + DISP_REG_OVL_FLOW_CTRL_DBG),
+		DISP_REG_GET(base + DISP_REG_OVL_ADDCON_DBG),
+		DISP_REG_GET(base + DISP_REG_OVL_SMI_DBG),
+		DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_NUM),
+		DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_URG_NUM),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT));
+	DISPERR("M6 OVL irq diag[%u]: L0 con=0x%x size=0x%x off=0x%x addr=0x%x pitch=0x%x rdma_ctrl=0x%x gmc=0x%x slow=0x%x fifo=0x%x gmc_s2=0x%x buflow=0x%x rdma_dbg=0x%x\n",
+		idx,
+		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_CON),
+		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_SRC_SIZE),
+		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_OFFSET),
+		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_ADDR),
+		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_PITCH),
+		DISP_REG_GET(layer0 + DISP_REG_OVL_RDMA0_CTRL),
+		DISP_REG_GET(layer0 + DISP_REG_OVL_RDMA0_MEM_GMC_SETTING),
+		DISP_REG_GET(layer0 + DISP_REG_OVL_RDMA0_MEM_SLOW_CON),
+		DISP_REG_GET(layer0 + DISP_REG_OVL_RDMA0_FIFO_CTRL),
+		DISP_REG_GET(base + DISP_REG_OVL_RDMA0_MEM_GMC_S2),
+		DISP_REG_GET(base + DISP_REG_OVL_RDMAn_BUF_LOW(0)),
+		DISP_REG_GET(rdma0 + DISP_REG_OVL_RDMA0_DBG));
+}
 
 static DDP_IRQ_CALLBACK irq_module_callback_table[DISP_MODULE_NUM][DISP_MAX_IRQ_CALLBACK];
 static DDP_IRQ_CALLBACK irq_callback_table[DISP_MAX_IRQ_CALLBACK];
@@ -275,6 +345,8 @@ irqreturn_t disp_irq_handler(int irq, void *dev_id)
 #endif
 		if (reg_val & (1 << 13))
 			DISPERR("IRQ: %s abnormal SOF!\n", ddp_get_module_name(module));
+
+		disp_irq_m6_dump_ovl0_state(module, reg_val);
 
 		DISP_CPU_REG_SET(DISP_REG_OVL_INTSTA + ovl_base_addr(module), ~reg_val);
 		MMProfileLogEx(ddp_mmp_get_events()->OVL_IRQ[index], MMProfileFlagPulse, reg_val,
