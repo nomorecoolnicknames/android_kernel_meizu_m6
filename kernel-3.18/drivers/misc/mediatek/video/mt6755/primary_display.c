@@ -2597,6 +2597,133 @@ static void m6_dump_primary_ovl_handoff(const char *stage,
 		ovl->keyEn, ovl->key);
 }
 
+static void m6_sample_primary_ovl_m4u_buffer(const char *stage,
+					     const disp_input_config *input,
+					     const OVL_CONFIG_STRUCT *ovl)
+{
+	static unsigned int m6_m4u_sample_count;
+	unsigned int idx;
+	unsigned int mva;
+	unsigned int layer_size;
+	unsigned int real_mva = 0;
+	unsigned int real_size = 0;
+	unsigned int map_size = 0;
+	unsigned int mapped_size = 0;
+	unsigned int mva_offset = 0;
+	unsigned int sample_bytes;
+	unsigned int sample_words;
+	unsigned int sample_count;
+	unsigned int nonzero = 0;
+	unsigned int first_nonzero = 0xffffffff;
+	unsigned int xorv = 0;
+	unsigned int w[8] = { 0 };
+	unsigned long kva = 0;
+	unsigned long sample_base;
+	unsigned long long sum = 0;
+	int ret;
+	unsigned int i;
+
+	if (!input || !ovl)
+		return;
+	if (!disp_helper_get_option(DISP_OPT_BYPASS_PQ) ||
+	    primary_display_is_decouple_mode())
+		return;
+	if (!input->layer_enable || !ovl->layer_en ||
+	    ovl->layer != 0 || ovl->source != OVL_LAYER_SOURCE_MEM ||
+	    ovl->security != DISP_NORMAL_BUFFER || !ovl->addr)
+		return;
+	idx = m6_m4u_sample_count++;
+	/* The dmesg ring can start after the first 40+ OVL handoffs. */
+	if (idx >= 96 && (idx & 0xff))
+		return;
+
+	mva = (unsigned int)ovl->addr;
+	layer_size = ovl->src_pitch * ovl->src_h;
+	if (!layer_size)
+		layer_size = input->src_pitch * input->src_height * 4;
+	if (!layer_size)
+		return;
+
+	ret = m4u_query_mva_info(mva, layer_size, &real_mva, &real_size);
+	if (ret) {
+		DISPERR("M6 OVL m4u sample[%u:%s]: query fail ret=%d mva=0x%x size=0x%x input_src=%u/%u/%u/%u pitch_px=%u src=%u fmt=0x%x\n",
+			idx, stage ? stage : "null", ret, mva, layer_size,
+			input->src_offset_x, input->src_offset_y,
+			input->src_width, input->src_height, input->src_pitch,
+			input->buffer_source, input->src_fmt);
+		return;
+	}
+
+	if (mva >= real_mva)
+		mva_offset = mva - real_mva;
+	if (mva_offset >= real_size) {
+		DISPERR("M6 OVL m4u sample[%u:%s]: offset outside ret=%d mva=0x%x size=0x%x real=0x%x/0x%x off=0x%x\n",
+			idx, stage ? stage : "null", ret, mva, layer_size,
+			real_mva, real_size, mva_offset);
+		return;
+	}
+
+	map_size = real_size;
+	if (layer_size < real_size - mva_offset)
+		map_size = mva_offset + layer_size;
+	ret = m4u_mva_map_kernel(real_mva, map_size, &kva, &mapped_size);
+	if (ret || !kva) {
+		DISPERR("M6 OVL m4u sample[%u:%s]: map fail ret=%d mva=0x%x size=0x%x real=0x%x/0x%x map_size=0x%x mapped=0x%x\n",
+			idx, stage ? stage : "null", ret, mva, layer_size,
+			real_mva, real_size, map_size, mapped_size);
+		return;
+	}
+
+	if (mva_offset >= mapped_size) {
+		DISPERR("M6 OVL m4u sample[%u:%s]: mapped smaller than offset mva=0x%x size=0x%x real=0x%x/0x%x off=0x%x map=0x%x/0x%x\n",
+			idx, stage ? stage : "null", mva, layer_size,
+			real_mva, real_size, mva_offset, map_size,
+			mapped_size);
+		m4u_mva_unmap_kernel(real_mva, map_size, kva);
+		return;
+	}
+
+	sample_base = kva + mva_offset;
+
+	sample_bytes = mapped_size;
+	if (sample_base > kva)
+		sample_bytes -= sample_base - kva;
+	if (sample_bytes > layer_size)
+		sample_bytes = layer_size;
+	sample_words = sample_bytes / sizeof(unsigned int);
+	sample_count = sample_words < 256 ? sample_words : 256;
+
+	for (i = 0; i < ARRAY_SIZE(w) && i < sample_words; i++)
+		w[i] = *((unsigned int *)sample_base + i);
+
+	for (i = 0; i < sample_count; i++) {
+		unsigned int pos = i;
+		unsigned int val;
+
+		if (sample_count > 1)
+			pos = (i * (sample_words - 1)) / (sample_count - 1);
+		val = *((unsigned int *)sample_base + pos);
+		sum += val;
+		xorv ^= val;
+		if (val) {
+			nonzero++;
+			if (first_nonzero == 0xffffffff)
+				first_nonzero = pos;
+		}
+	}
+
+	DISPERR("M6 OVL m4u sample[%u:%s]: mva=0x%x layer=0x%x real=0x%x/0x%x off=0x%x map=0x%x/0x%x usable=0x%x words=%u samples=%u nonzero=%u first_nz=%u xor=0x%x sum=0x%llx w=%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x input_src=%u/%u/%u/%u pitch_px=%u ovl_pitch=%u fmt=%s/0x%x\n",
+		idx, stage ? stage : "null", mva, layer_size, real_mva,
+		real_size, mva_offset, map_size, mapped_size, sample_bytes,
+		sample_words, sample_count, nonzero, first_nonzero, xorv, sum,
+		w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7],
+		input->src_offset_x, input->src_offset_y, input->src_width,
+		input->src_height, input->src_pitch, ovl->src_pitch,
+		unified_color_fmt_name(ovl->fmt), ovl->fmt);
+
+	m4u_mva_unmap_kernel(real_mva, map_size, kva);
+}
+
 #if 0
 static int _convert_disp_input_to_rdma(RDMA_CONFIG_STRUCT *dst,
 				       disp_session_input_config *session_input)
@@ -4889,6 +5016,7 @@ static int _config_ovl_input(struct disp_frame_cfg_t *cfg,
 		}
 		_convert_disp_input_to_ovl(ovl_cfg, input_cfg);
 		m6_dump_primary_ovl_handoff("pre-dpmgr", cfg, i, input_cfg, ovl_cfg);
+		m6_sample_primary_ovl_m4u_buffer("pre-dpmgr", input_cfg, ovl_cfg);
 
 		dprec_logger_start(DPREC_LOGGER_PRIMARY_CONFIG,
 				   ovl_cfg->layer | (ovl_cfg->layer_en << 16), ovl_cfg->addr);

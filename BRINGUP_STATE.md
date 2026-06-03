@@ -3340,3 +3340,117 @@ accepting OVL output from the route. The next diagnostic must sample the
 enabled OVL0 HWC/MVA buffer through M4U at handoff and log query/map/content
 state; do not patch CMDQ EOF waits, fence release, token seeding, PQ, Smart OVL,
 or panel DCS from this evidence.
+
+## 2026-06-03 OVL0 HWC/M4U buffer content sampler
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-03: sample the active OVL0 HWC buffer through
+M4U at the pre-DPMGR handoff.
+
+Hypothesis: the verified OVL0 IRQ diagnostic closed stale layer registers and
+showed a sane direct OVL0 route, but RDMA0 still reports `IN=0/0 OUT=0/0` and
+DSI0 never interrupts. The next missing fact is whether the active HWC/ion MVA
+given to OVL0 contains real pixels and can be mapped by M4U from the kernel.
+If M4U query/map fails or a strided sample is all zero, the frontier moves to
+HWC/gralloc/ion/M4U buffer production or mapping. If the sample is nonzero
+while OVL0 still underflows and RDMA0 input remains zero, the frontier stays in
+OVL fetch/output or RDMA route consumption.
+
+Evidence: verified test capture
+`/srv/forge/android/meizu_m6/captures/20260603-075401-m6-ovl0-fetch-irqdiag-711HEBSR277K5`
+matches boot/readback sha256
+`2b6507360c1fa13d20a0abe6de00c13fa07ae397f151ebfbe68c517e7479df74` and
+matching `System.map`
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-fetch-irqdiag/System.map`
+sha256 `e57bb41f643cab71e93c2e2f17f44aa0589b92913bfd9eb5c726280e83dbe426`.
+Dmesg lines 2719-2720 show `M6 OVL irq diag[5120]` with OVL0 L0
+`addr=0x1600000`, `size=0x50002d0`, `pitch=0x10000b40`, `rdma_ctrl=0x880001`,
+`gmc=0xffff`, `fifo=0x900000`, route `valid=0x3a ready=0x40009300`, mutex
+`0x51280/0x41`, and RDMA0 `in=0/0 out=0/0`. `boot-wait.txt` proves
+`sys.boot_completed=1`, SurfaceFlinger, bootanimation, and input service are
+alive. `dumpsys-sf.txt` shows BootAnimation as an HWC layer and
+`HWC_FRAMEBUFFER_TARGET`; `screencap -p` still times out and fb0 head is zero.
+
+Follow-up FACT: verified capture
+`/srv/forge/android/meizu_m6/captures/20260603-082037-m6-ovl0-m4u-sample-711HEBSR277K5`
+matches local/readback boot sha256
+`0d305200808cb22c1a8a42e5d0e6149a910b7c5434c2a48dd525ef574be4da4e`, and the
+tested kernel strings contain `M6 OVL m4u sample[...]`. The live dmesg ring
+starts at `91.472421s`, while the first visible OVL handoff in debugfs is
+`M6 OVL handoff[45:pre-dpmgr]`; no `M6 OVL m4u sample[...]` line survives in
+dmesg/debugfs/logcat. This means the first-8-only sampler cadence was too
+sparse for the capture window, not that the buffer content question is closed.
+The diagnostic now samples the first 96 eligible OVL0 handoffs and then every
+256th handoff.
+
+Test result FACT: wide-sampler artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-m4u-sample-wide/boot-m6-ovl0-m4u-sample-wide.img`
+sha256 `8095627bcbffcecc55ddf9c4b5bca06c245d4d3b28861cf34b2ad7e1116c225a`
+was flashed only to serial `711HEBSR277K5`; readback
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-m4u-sample-wide/readback-boot-m6-ovl0-m4u-sample-wide.img`
+matches the same sha256 with `cmp_exit=0`. Fresh capture
+`/srv/forge/android/meizu_m6/captures/20260603-084232-m6-ovl0-m4u-sample-wide-711HEBSR277K5`
+matches local/readback boot sha256 and reaches `sys.boot_completed=1` at
+`2026-06-03T08:42:38-05:00` with SurfaceFlinger, bootanimation, input, and a
+720x1280 `Built-in Screen` in state `ON`. The direct route/PQ state remains
+`PathMode:DIRECT_LINK`, `DISP_OPT_BYPASS_PQ=1`, and `RDMA0 Transfer=10`.
+
+Test result FACT: the sampler proves M4U query/map succeeds for the active OVL0
+layer but the sampled framebuffer content is zero. `dmesg.txt:551` reports
+`M6 OVL m4u sample[21:pre-dpmgr]` for `mva=0x1600000`, `layer=0x384000`,
+`real=0x1600000/0x384000`, `map=0x384000/0x384000`, `words=921600`,
+`samples=256`, `nonzero=0`, `xor=0x0`, `sum=0x0`, first eight words all
+`00000000`, format `RGBA8888/0xc00a08`, 720x1280. `dmesg.txt:2046` reports
+the same all-zero result for sample `[23:pre-dpmgr]`; `mtkfb-debugfs.txt:425`
+reports the same all-zero result for sample `[31:pre-dpmgr]`.
+
+INFERENCE: this closes "OVL0 is handed an unmappable/bad MVA" as the current
+frontier for the sampled layer. The unresolved earliest display boundary is now
+above or beside OVL fetch: HWC/gralloc/ION/cache/producer may be handing OVL0 a
+valid allocated buffer that contains zeros, or the kernel-side M4U mapping may
+be observing stale CPU-visible contents while the display engine still sees a
+different cache state. It is not evidence for another PQ/CMDQ-wait/token-seed
+patch.
+
+HYPOTHESIS: SurfaceFlinger/HWC is presenting a framebuffer target or overlay
+buffer before real pixels are written or flushed to the MVA consumed by OVL0.
+The next patch cycle should inspect HWC/gralloc/ION/cache sync and, if needed,
+add bounded producer-side markers around HWC set/prepare, gralloc allocation,
+ion import/map, and display cache flush paths.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` adds
+  `M6 OVL m4u sample[...]`, a bounded read-only sampler for active non-secure
+  OVL0 memory layers in DIRECT_LINK + `DISP_OPT_BYPASS_PQ`, with a wider
+  first-96-call window so the marker survives the current late dmesg capture.
+- `BRINGUP_STATE.md` records the diagnostic hypothesis, evidence, expected
+  marker, rollback condition, and verification commands.
+
+Why each file changed: `primary_display.c` owns `_config_ovl_input()` and
+already logs the `M6 OVL handoff[...]` marker immediately before DPMGR consumes
+the layer. Sampling the exact OVL0 MVA at that boundary is the narrowest way to
+prove whether the buffer is present/nonzero before changing any display
+hardware behavior. The state file keeps the marker contract synchronized with
+the code.
+
+Expected next marker: the next capture or patch should show HWC/gralloc/ION
+producer state for the same MVA `0x1600000`: allocation/import owner, usage
+flags, cache flush/sync calls, and whether the userspace framebuffer target has
+nonzero content before OVL0 handoff. If producer-side evidence shows nonzero
+content and explicit cache sync while the kernel sampler still sees zeros,
+reopen M4U/cache aliasing. If producer-side evidence also shows zeros, debug
+SurfaceFlinger/HWC composition input rather than DDP hardware.
+
+Rollback condition: revert this diagnostic if a verified boot regresses before
+root ADB/SurfaceFlinger/fb0, if M4U kernel mapping destabilizes the device, or
+if the extra logs hide earlier display evidence. Do not revert solely for
+continued black display; this patch is observation-only.
+
+Verification commands:
+
+```bash
+git diff --check
+make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 O=/home/n8n/forge-work/kernel-builds/m6-directlink-smartovl-20260602/out ARCH=arm64 CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- -j4 Image.gz-dtb
+grep -R -n -E 'M6 OVL m4u sample|M6 OVL handoff|M6 OVL irq diag|M6 DDP timeout\\[VSYNC\\]: (route|mutex|rdma0|ovl0|dsi0)|CMDQ_EVENT_DISP_RDMA0_EOF' <next-capture>
+grep -R -n -E 'hwc|HWC|gralloc|ion|ION|GraphicBuffer|Framebuffer|FB target|cache|flush|sync' <next-capture>
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 OVL m4u sample|M6 OVL handoff|M6 OVL irq diag|RDMA0_EOF"'
+```
