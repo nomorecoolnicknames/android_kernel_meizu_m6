@@ -4010,3 +4010,109 @@ sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-linux-lcm-rei
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 LCM reinit|M6 LCM init|M6 LCM table\\[init\\]|tps65132|M6 LCM ATA|BIST_PATTERN|self_pat|RDMA0 Transfer|PathMode" | tail -260'
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; cat /d/mtkfb'
 ```
+
+Runtime result FACT: boot image
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-linux-lcm-reinit/boot-m6-linux-lcm-reinit.img`
+sha256 `a5909870fffa8f79ce48e148abd185778a05525b1989eb01f87363d8252f4b60`
+was flashed only to serial `711HEBSR277K5`; readback
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-linux-lcm-reinit/readback-boot-m6-linux-lcm-reinit.img`
+matched with `cmp_exit=0`. Reboot wait
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-linux-lcm-reinit/reboot-wait.txt`
+records 240 consecutive polls from `2026-06-03T12:03:19-05:00` through
+`2026-06-03T12:12:57-05:00` with `state=none`, empty
+`sys.boot_completed`, empty `init.svc.bootanim`, and empty
+`init.svc.surfaceflinger`. ADB then showed only sibling device
+`91HEBNL163XD`, not target `711HEBSR277K5`.
+
+INFERENCE: boot-time `disp_lcm_init(force=1)` for `ili9881p_hd_dsi_txd`
+is too early or unsafe in the primary display init path. It satisfies the
+rollback condition for the boot-time force-reinit patch. The failure proves
+that Linux-side panel init must be tested after a known-good ADB boot or via a
+more staged path, not forced during early display bring-up.
+
+## 2026-06-03 M6 debugfs LCM reinit command
+
+PATCH HISTORY, BOOT-UNBLOCK + DIAGNOSTIC, 2026-06-03: restore the LK-trusting
+boot path for the selected M6 panel and add an explicit `/d/mtkfb`
+`m6_lcm_reinit:[0|1]` diagnostic command to run Linux-side LCM init only after
+ADB/userspace is available.
+
+Hypothesis: the no-ADB regression came from forcing the full LCM reset/bias/init
+sequence during `primary_display_init()` while the display path and LK handoff
+state are still fragile. Restoring the pre-regression boot branch should recover
+the previously verified Android/ADB boot, while a post-boot debugfs command lets
+the next capture exercise `disp_lcm_init(force=1)` with dense LCM markers and
+without losing the ability to collect logs if it hangs or fails.
+
+Evidence: the previous fresh LCM-marker capture
+`/srv/forge/android/meizu_m6/captures/20260603-115019-m6-lcm-sequence-markers-711HEBSR277K5`
+booted Android with live SurfaceFlinger/RDMA0/DSI BIST but showed that normal
+boot skipped Linux-side `M6 LCM init` markers when LK reported the panel
+initialized. The immediately following force-reinit image
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-linux-lcm-reinit/boot-m6-linux-lcm-reinit.img`
+was verified flashed/read back, then never returned ADB across 240 polls in
+`reboot-wait.txt`. New safe-debug artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-debugfs-reinit/boot-m6-lcm-debugfs-reinit.img`
+has sha256 `fed6f77cc420087a2b2a15f5781a3e4c82ce8cd864fd26491cfe3bf994279eb3`;
+matching `Image.gz-dtb` sha256 is
+`1f086cb37dd1dc0e95748ac7e11e33c7ba46480474198e5772962d9323f09017`;
+matching `System.map` sha256 is
+`26c2da87acff905d12f46b453da3b4ddffbc2207cbecb88094e22124ff399cd7`;
+matching `vmlinux` sha256 is
+`461703ee0367da30086be96cb4425259e51025f647f2d176623684d437262aa0`;
+matching ramdisk sha256 is
+`e82c6695614132e8759b9ee96ee5b9e9efdaf8df96d1ef0c32c5dae8b5e16332`.
+The built marker strings contain `m6_lcm_reinit`, `M6 LCM debug reinit`, and
+`M6 LCM handoff`, and no longer contain the old boot-time
+`force Linux init table` string.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` removes
+  boot-time forced LCM reinit for `ili9881p_hd_dsi_txd`, leaves a handoff
+  marker, and adds `primary_display_m6_lcm_reinit()` for post-boot manual
+  force init plus video-path retrigger.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.h` declares
+  the new debug helper for `disp_debug.c`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c` adds
+  `/d/mtkfb` command parsing for `m6_lcm_reinit:[0|1]`.
+- `BRINGUP_STATE.md` records the no-ADB regression, artifact identity, expected
+  next markers, rollback condition, and verification commands.
+
+Why each file changed: `primary_display.c` owns the LK handoff decision and is
+the only safe place to call `disp_lcm_init()` while holding the primary path
+lock and optionally retriggering the video path. `primary_display.h` is needed
+for a typed cross-file call. `disp_debug.c` is the existing `/d/mtkfb` command
+surface already used for `ata`, `dsipattern`, `resume`, and panel reset tests.
+The state file is the durable handoff required for this M6 cycle.
+
+Expected next marker: flash
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-debugfs-reinit/boot-m6-lcm-debugfs-reinit.img`
+to serial `711HEBSR277K5` only, verify readback hash
+`fed6f77cc420087a2b2a15f5781a3e4c82ce8cd864fd26491cfe3bf994279eb3`, and
+confirm Android returns to `sys.boot_completed=1`. Baseline dmesg should show
+`M6 LCM handoff` but should not show `M6 LCM debug reinit` until the command is
+manually issued. Then run `echo m6_lcm_reinit:1 > /d/mtkfb`; fresh dmesg should
+show `M6 LCM debug reinit: start`, `M6 LCM init_power`, `M6 LCM init start`,
+TPS65132 markers if the bias client is present, reset/init-table markers, and
+`M6 LCM debug reinit: end ret=...`. Follow immediately with ATA and red DSI
+BIST markers.
+
+Rollback condition: revert this patch if the safe-debug image regresses before
+ADB or loses the previously verified SurfaceFlinger/RDMA0/BIST behavior without
+even issuing `m6_lcm_reinit`. If only the manual command hangs or fails after
+ADB boot, keep the boot-path restoration and narrow the next patch to the
+earliest marker inside the manual LCM init sequence.
+
+Verification commands:
+
+```bash
+git diff --check
+make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 O=/home/n8n/forge-work/kernel-builds/m6-directlink-smartovl-20260602/out ARCH=arm64 CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- -j4 Image.gz-dtb
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-debugfs-reinit/boot-m6-lcm-debugfs-reinit.img /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-debugfs-reinit/Image.gz-dtb /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-debugfs-reinit/System.map /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-debugfs-reinit/ramdisk.img
+(gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-debugfs-reinit/Image.gz-dtb 2>/dev/null || true) | strings | grep -E 'm6_lcm_reinit|M6 LCM debug reinit|M6 LCM handoff|force Linux init table|run disp_lcm_init'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-debugfs-reinit/boot-m6-lcm-debugfs-reinit.img /data/local/tmp/boot.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dd if=/data/local/tmp/boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=4M conv=fsync; sync; reboot'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 LCM handoff|M6 LCM debug reinit|M6 LCM init|M6 LCM table\\[init\\]|tps65132|M6 LCM ATA|BIST_PATTERN|self_pat|RDMA0 Transfer|PathMode" | tail -260'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_lcm_reinit:1 > /d/mtkfb; sleep 2; echo ata > /d/mtkfb; cat /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo 255 > /sys/class/leds/lcd-backlight/brightness; echo dsipattern:0x00ff0000 > /d/mtkfb; sleep 8; echo dsipattern:0 > /d/mtkfb'
+```

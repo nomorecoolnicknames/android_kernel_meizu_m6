@@ -123,6 +123,9 @@ char MTKFB_STR_HELP[] =
 	"        lcm:[on|off|init]\n"
 	"             power on/off lcm\n"
 	"\n"
+	"        m6_lcm_reinit:[0|1]\n"
+	"             Meizu M6 diagnostic Linux LCM init after boot\n"
+	"\n"
 	"        cabc:[ui|mov|still]\n"
 	"             cabc mode, UI/Moving picture/Still picture\n"
 	"\n"
@@ -585,6 +588,20 @@ void mtkfb_process_dbg_opt(const char *opt)
 		return;
 	} else if (0 == strncmp(opt, "resume", 6)) {
 		primary_display_resume();
+	} else if (0 == strncmp(opt, "m6_lcm_reinit", 14)) {
+		char *p = (char *)opt + 14;
+		unsigned int force_power = 1;
+
+		if (*p == ':') {
+			ret = kstrtouint(p + 1, 0, &force_power);
+			if (ret) {
+				pr_err("error to parse cmd %s\n", opt);
+				return;
+			}
+		}
+		DISPERR("M6 LCM debug reinit command: force=%u\n", force_power);
+		primary_display_m6_lcm_reinit(force_power);
+		return;
 	} else if (0 == strncmp(opt, "ata", 3)) {
 		mtkfb_fm_auto_test();
 		return;
@@ -978,4 +995,3 @@ void sub_debug_deinit(void)
 	debugfs_remove(lowpowermode_debugfs);
 	debugfs_remove(kickdump_debugfs);
 }
-

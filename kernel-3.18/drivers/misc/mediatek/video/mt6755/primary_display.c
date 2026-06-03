@@ -3575,15 +3575,12 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	int use_cmdq = disp_helper_get_option(DISP_OPT_USE_CMDQ);
 	struct ddp_io_golden_setting_arg gset_arg;
 	disp_ddp_path_config *data_config = NULL;
-	bool m6_force_lcm_reinit = false;
 
 	DISPMSG("primary_display_init begin lcm=%s, inited=%d\n", lcm_name, is_lcm_inited);
 	if (lcm_name && is_lcm_inited &&
-	    !strcmp(lcm_name, "ili9881p_hd_dsi_txd")) {
-		m6_force_lcm_reinit = true;
-		DISPERR("M6 LCM reinit: LK reported %s initialized; force Linux init table\n",
+	    !strcmp(lcm_name, "ili9881p_hd_dsi_txd"))
+		DISPERR("M6 LCM handoff: LK reported %s initialized; boot path keeps LK state, use m6_lcm_reinit debugfs for manual force init\n",
 			lcm_name);
-	}
 	primary_video_first_config_flushed = false;
 	primary_video_frame_wait_diag_logged = false;
 	primary_video_bl_wait_diag_logged = false;
@@ -3769,11 +3766,9 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 		_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
 	}
 
-	if (is_lcm_inited && !m6_force_lcm_reinit) {
+	if (is_lcm_inited) {
 		ret = disp_lcm_init(pgc->plcm, 0);	/* no need lcm power on,because lk power on lcm */
 	} else {
-		if (m6_force_lcm_reinit)
-			DISPERR("M6 LCM reinit: run disp_lcm_init(force=1) and retrigger video path\n");
 		ret = disp_lcm_init(pgc->plcm, 1);
 
 		if (primary_display_is_video_mode())
@@ -5891,6 +5886,31 @@ int primary_display_diagnose(void)
 CMDQ_SWITCH primary_display_cmdq_enabled(void)
 {
 	return disp_helper_get_option(DISP_OPT_USE_CMDQ);
+}
+
+int primary_display_m6_lcm_reinit(unsigned int force_power)
+{
+	int ret;
+
+	if (!pgc || !pgc->plcm) {
+		DISPERR("M6 LCM debug reinit: no primary LCM handle\n");
+		return -1;
+	}
+
+	DISPERR("M6 LCM debug reinit: start force=%u state=%d video=%d cmdq=%d\n",
+		force_power, primary_get_state(), primary_display_is_video_mode(),
+		primary_display_cmdq_enabled());
+
+	_primary_path_lock(__func__);
+	ret = disp_lcm_init(pgc->plcm, force_power ? 1 : 0);
+	if (!ret && primary_display_is_video_mode()) {
+		DISPERR("M6 LCM debug reinit: trigger video path after init\n");
+		dpmgr_path_trigger(pgc->dpmgr_handle, NULL, primary_display_cmdq_enabled());
+	}
+	_primary_path_unlock(__func__);
+
+	DISPERR("M6 LCM debug reinit: end ret=%d\n", ret);
+	return ret;
 }
 
 int primary_display_manual_lock(void)
