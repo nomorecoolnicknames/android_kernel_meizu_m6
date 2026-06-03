@@ -3693,3 +3693,119 @@ grep -R -n -E 'M6 DDP mutex isolate: keep PQ bridge|PathMode:DIRECT_LINK|DISP_OP
 sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-pq-bridge-mutex-pass-through/boot-m6-pq-bridge-mutex-pass-through.img /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-pq-bridge-mutex-pass-through/readback-boot-m6-pq-bridge-mutex-pass-through.img /srv/forge/android/meizu_m6/captures/20260603-110328-m6-pq-bridge-mutex-pass-through-711HEBSR277K5/screen.png
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /sys/class/leds/lcd-backlight/brightness; dumpsys SurfaceFlinger | grep -E "powerMode|isDisplayOn|Display 0|Built-in Screen"; dumpsys window displays | grep -E "DisplayFrames|mDisplayId|cur=|app="'
 ```
+
+## 2026-06-03 DSI BIST register snapshot diagnostic
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-03: log bounded DSI BIST, DSI state, and
+MIPITX state snapshots around the existing `/d/mtkfb` `dsipattern` command.
+
+Hypothesis: after the PQ bridge mutex fix, Android composition and RDMA0
+transfer are live. If the physical LCD remains black, the next hardware
+boundary is whether DSI0 actually enters self-pattern mode and whether the DSI
+PHY/lane state is sane while backlight is at `255`. The existing
+`echo dsipattern:0x00ff0000 > /d/mtkfb` command logs only that the parser
+accepted the command; it does not prove `DSI_BIST_CON.SELF_PAT_MODE`,
+`DSI_BIST_PATTERN`, DSI state machines, or MIPITX lanes after the write.
+
+Evidence: the live DSI BIST probe
+`/srv/forge/android/meizu_m6/captures/20260603-111135-m6-dsi-bist-red-711HEBSR277K5`
+ran against serial `711HEBSR277K5` with the verified PQ bridge artifact still
+booted. The capture records `dsipattern:0x00ff0000` and
+`enable dsi pattern: 0x00ff0000` in the `mtkfb` debug buffer, RDMA0 transfer
+continuing near 60.9 fps, `PathMode:DIRECT_LINK`, and backlight `255`. It does
+not expose the BIST register state, so it cannot distinguish "test pattern
+accepted and transmitted but panel does not show it" from "debugfs command
+accepted but BIST bit did not stick or DSI/PHY is in the wrong state".
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c` extends the
+  existing `M6 DSI snapshot[...]` marker with `DSI_BIST_PATTERN`,
+  `DSI_BIST_CON`, decoded `SELF_PAT_MODE`, BIST mode/enable/fixed-pattern lane
+  fields, checksum/debug-select registers, and bounded pre/post snapshots
+  around `DSI_BIST_Pattern_Test()` enable and disable paths.
+- `BRINGUP_STATE.md` records the diagnostic hypothesis, evidence, expected
+  marker, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns both the DSI self-pattern register
+write and the existing M6 DSI snapshot helper, so this is the narrowest
+read-only way to prove the hardware state produced by the already-available
+debugfs command. No DSI timing, panel init command, mutex, route, RDMA, OVL, or
+backlight behavior is changed.
+
+Expected next marker: after flashing the diagnostic artifact and running
+`echo dsipattern:0x00ff0000 > /d/mtkfb`, dmesg should contain
+`M6 DSI snapshot[bist-pre-enable]` followed by
+`M6 DSI snapshot[bist-post-enable]` with `BIST_PATTERN=0xff0000` or
+`0x00ff0000` and `self_pat=1`. After `echo dsipattern:0 > /d/mtkfb`, dmesg
+should contain `bist-pre-disable` and `bist-post-disable` with `self_pat=0`.
+If post-enable proves `self_pat=1` while the user sees no solid color, move to
+panel command acceptance, MIPI lane/electrical state, reset/power GPIO, and
+backlight wiring. If `self_pat` does not stick, debug DSI register writes,
+clock gating, or DSI reset/state instead.
+
+Rollback condition: revert this diagnostic if it regresses before root
+ADB/SurfaceFlinger/fb0, if the added snapshots flood logs enough to hide
+earlier markers, or if register reads prove unsafe. Do not revert solely for a
+continued physical black screen; this patch is observation-only.
+
+Verification commands:
+
+```bash
+git diff --check
+make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 O=/home/n8n/forge-work/kernel-builds/m6-directlink-smartovl-20260602/out ARCH=arm64 CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- -j4 Image.gz-dtb
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo 255 > /sys/class/leds/lcd-backlight/brightness; echo dsipattern:0x00ff0000 > /d/mtkfb; sleep 8; echo dsipattern:0 > /d/mtkfb; dmesg | grep -E "M6 DSI snapshot\\[bist-(pre|post)-(enable|disable)\\]|BIST_PATTERN|self_pat" | tail -120'
+```
+
+Test result FACT: DSI BIST snapshot artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-dsi-bist-snapshot/boot-m6-dsi-bist-snapshot.img`
+sha256 `559006b2d8f888fc75cd7fb9e60834117ceb12b014a168bcde955575b48d0e63`
+was flashed only to serial `711HEBSR277K5`; readback
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-dsi-bist-snapshot/readback-boot-m6-dsi-bist-snapshot.img`
+matches the same sha256 with `cmp_exit=0`. Matching `Image.gz-dtb` is
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-dsi-bist-snapshot/Image.gz-dtb`
+sha256 `526882e51fe11d69076ca613b238804c1927755c5a20876e7643750b48848e72`;
+matching `System.map` is
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-dsi-bist-snapshot/System.map`
+sha256 `6c2d823989a0195867904049b2d92e350e809145592cb12c6e7bbcb659362f37`.
+The flashed boot reaches `sys.boot_completed=1` with `init.svc.bootanim=stopped`
+in `/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-dsi-bist-snapshot/reboot-wait.txt`.
+
+Test result FACT: fresh BIST capture
+`/srv/forge/android/meizu_m6/captures/20260603-112512-m6-dsi-bist-snapshot-red-711HEBSR277K5`
+confirms the existing `/d/mtkfb` pattern command changes DSI0 registers.
+Before enable, `BIST_PATTERN=0x0`, `BIST_CON=0x200000`, and `self_pat=0`.
+After `echo dsipattern:0x00ff0000 > /d/mtkfb`, `bist-post-enable` reports
+`BIST_PATTERN=0xff0000`, `BIST_CON=0x200040`, and `self_pat=1` while DSI0 stays
+in video mode (`MODE=0x3`), `PHY_LCCON=0x1`, `MIPITX lanes=0x603/0x601/0x601/0x601/0x601`,
+and `PathMode:DIRECT_LINK` with `RDMA0 Transfer` count `5154` at about
+`61.35` fps. Before disable the same BIST state remains set; after
+`echo dsipattern:0 > /d/mtkfb`, `bist-post-disable` reports `BIST_CON=0x0` and
+`self_pat=0`.
+
+Test result FACT: the display stack still has valid internal output after the
+BIST test. `screen-after-bist-snapshot.png` is a valid `720x1280` PNG sha256
+`14ca584f83ddb7fa6d8d0139941930bc59b901b00440e795e7071264c01d725f`; pre-state
+had `powerMode=2`, `sys.boot_completed=1`, `init.svc.bootanim=stopped`, and
+backlight was raised from `10` to `255` for the BIST probe.
+
+INFERENCE: DSI0 register writes, video-mode timing, MIPITX PLL/lane register
+state, RDMA0 transfer, and Android composition are all live enough for the DSI
+self-pattern bit to stick. If the user did not see a solid red panel during
+the BIST window, the remaining physical black-screen frontier is panel
+acceptance or board-level output: panel init command sequence, reset/power GPIO
+polarity/timing, MIPI lane/electrical mapping, or backlight enable path. The
+next useful evidence is not more OVL/RDMA/PQ; it is stock-vs-current LCM init
+sequence comparison and targeted panel status/readback or reset/power markers.
+
+Expected next marker: user visual report for the 8-second red BIST window. If
+red was visible, resume normal UI/output tuning. If red was not visible, add
+bounded markers around `ili9881p_hd_dsi_txd` power/reset/init command order and
+compare that sequence against stock Flyme LK/kernel, then test a reset/power
+timing or command-sequence correction.
+
+Verification commands:
+
+```bash
+grep -R -n -E 'M6 DSI snapshot\\[bist-(pre|post)-(enable|disable)\\]|BIST_PATTERN|self_pat|RDMA0 Transfer|PathMode:DIRECT_LINK' /srv/forge/android/meizu_m6/captures/20260603-112512-m6-dsi-bist-snapshot-red-711HEBSR277K5
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-dsi-bist-snapshot/boot-m6-dsi-bist-snapshot.img /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-dsi-bist-snapshot/readback-boot-m6-dsi-bist-snapshot.img /srv/forge/android/meizu_m6/captures/20260603-112512-m6-dsi-bist-snapshot-red-711HEBSR277K5/screen-after-bist-snapshot.png
+```

@@ -787,18 +787,27 @@ DSI_STATUS DSI_RestoreRegisters(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 	return DSI_STATUS_OK;
 }
 
+static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM module,
+					 void *cmdq, unsigned int *count,
+					 unsigned int limit);
+
 DSI_STATUS DSI_BIST_Pattern_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bool enable,
 				 unsigned int color)
 {
 	int i = 0;
+	static unsigned int m6_bist_dump_count;
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
 		if (enable) {
+			dsi_m6_dump_snapshot_limited("bist-pre-enable", module, cmdq,
+						     &m6_bist_dump_count, 16);
 			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_PATTERN, color);
 			/* DSI_OUTREG32(&DSI_REG->DSI_BIST_CON, AS_UINT32(&temp_reg)); */
 			/* DSI_OUTREGBIT(DSI_BIST_CON_REG, DSI_REG->DSI_BIST_CON, SELF_PAT_MODE, 1); */
 			DSI_OUTREGBIT(cmdq, DSI_BIST_CON_REG, DSI_REG[i]->DSI_BIST_CON,
 				      SELF_PAT_MODE, 1);
+			dsi_m6_dump_snapshot_limited("bist-post-enable", module, cmdq,
+						     &m6_bist_dump_count, 16);
 
 			if (!_dsi_is_video_mode(module)) {
 				DSI_T0_INS t0;
@@ -821,7 +830,11 @@ DSI_STATUS DSI_BIST_Pattern_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bo
 			/* so we just disable pattern bit, do not start dsi here */
 			/* DSI_WaitForNotBusy(module,cmdq); */
 			/* DSI_OUTREGBIT(cmdq, DSI_BIST_CON_REG, DSI_REG[i]->DSI_BIST_CON, SELF_PAT_MODE, 0); */
+			dsi_m6_dump_snapshot_limited("bist-pre-disable", module, cmdq,
+						     &m6_bist_dump_count, 16);
 			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_CON, 0x00);
+			dsi_m6_dump_snapshot_limited("bist-post-disable", module, cmdq,
+						     &m6_bist_dump_count, 16);
 		}
 
 	}
@@ -1155,6 +1168,17 @@ static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void 
 		INREG32(DDP_REG_BASE_DSI0 + 0x118),
 		INREG32(DDP_REG_BASE_DSI0 + 0x11c),
 		INREG32(DDP_REG_BASE_DSI0 + 0x130));
+	DISPERR("M6 DSI snapshot[%s]: BIST_PATTERN=0x%x BIST_CON=0x%x self_pat=%u bist_en=%u bist_mode=%u fix=%u lane=%u timing=0x%x CKSM=0x%x DEBUG_SEL=0x%x\n",
+		tag, INREG32(DDP_REG_BASE_DSI0 + 0x178),
+		INREG32(DDP_REG_BASE_DSI0 + 0x17c),
+		DSI_REG[0]->DSI_BIST_CON.SELF_PAT_MODE,
+		DSI_REG[0]->DSI_BIST_CON.BIST_ENABLE,
+		DSI_REG[0]->DSI_BIST_CON.BIST_MODE,
+		DSI_REG[0]->DSI_BIST_CON.BIST_FIX_PATTERN,
+		DSI_REG[0]->DSI_BIST_CON.BIST_LANE_NUM,
+		DSI_REG[0]->DSI_BIST_CON.BIST_TIMING,
+		INREG32(DDP_REG_BASE_DSI0 + 0x144),
+		INREG32(DDP_REG_BASE_DSI0 + 0x170));
 	DISPERR("M6 DSI snapshot[%s]: STATE6=0x%x/%s STATE7=0x%x/%s STATE8=0x%x STATE9=0x%x DBG0-3=0x%x/0x%x/0x%x/0x%x\n",
 		tag, state6, _dsi_cmd_mode_parse_state(state6 & 0xffff),
 		state7, _dsi_vdo_mode_parse_state(state7 & 0xff),
