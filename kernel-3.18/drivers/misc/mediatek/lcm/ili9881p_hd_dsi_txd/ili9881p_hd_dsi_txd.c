@@ -156,6 +156,9 @@ static int tps65132_probe(struct i2c_client *client, const struct i2c_device_id 
 {
 	LCM_LOGI("tps65132_iic_probe\n");
 	LCM_LOGI("TPS: info==>name=%s addr=0x%x\n", client->name, client->addr);
+	LCM_LOGI("M6 LCM tps65132 probe client=%p adapter=%d name=%s addr=0x%x\n",
+		client, client->adapter ? client->adapter->nr : -1,
+		client->name, client->addr);
 	tps65132_i2c_client = client;
 	return 0;
 }
@@ -178,6 +181,8 @@ int tps65132_write_bytes(unsigned char addr, unsigned char value)
 
 	if (!client) {
 		LCM_LOGI("tps65132 i2c client is not ready !!\n");
+		LCM_LOGI("M6 LCM tps65132 write blocked addr=0x%02x value=0x%02x client=NULL\n",
+			addr, value);
 		return -1;
 	}
 
@@ -186,18 +191,24 @@ int tps65132_write_bytes(unsigned char addr, unsigned char value)
 	ret = i2c_master_send(client, write_data, 2);
 	if (ret < 0)
 		LCM_LOGI("tps65132 write data fail !!\n");
+	LCM_LOGI("M6 LCM tps65132 write addr=0x%02x value=0x%02x ret=%d client=0x%x/%s adapter=%d\n",
+		addr, value, ret, client->addr, client->name,
+		client->adapter ? client->adapter->nr : -1);
 	return ret;
 }
 #endif
 
 static int __init tps65132_iic_init(void)
 {
+	int ret;
+
 	LCM_LOGI("tps65132_iic_init\n");
 #if defined(CONFIG_MTK_LEGACY)
 	i2c_register_board_info(TPS_I2C_BUSNUM, &tps65132_board_info, 1);
 #endif
 	LCM_LOGI("tps65132_iic_init2\n");
-	i2c_add_driver(&tps65132_iic_driver);
+	ret = i2c_add_driver(&tps65132_iic_driver);
+	LCM_LOGI("M6 LCM tps65132_iic_init add_driver ret=%d\n", ret);
 	LCM_LOGI("tps65132_iic_init success\n");
 	return 0;
 }
@@ -596,15 +607,75 @@ static struct LCM_setting_table bl_level[] = {
 	{REGFLAG_END_OF_TABLE, 0x00, {} }
 };
 
+static unsigned int lcm_m6_init_count;
+
+static const char *lcm_m6_table_name(struct LCM_setting_table *table)
+{
+	if (table == init_setting)
+		return "init";
+	if (table == lcm_suspend_setting)
+		return "suspend";
+	if (table == bl_level)
+		return "backlight";
+	return "custom";
+}
+
+static unsigned int lcm_m6_should_log_cmd(unsigned int cmd)
+{
+	switch (cmd) {
+	case REGFLAG_DELAY:
+	case REGFLAG_UDELAY:
+	case REGFLAG_END_OF_TABLE:
+	case 0xFF:
+	case 0x11:
+	case 0x29:
+	case 0x35:
+	case 0x36:
+	case 0x3A:
+	case 0x51:
+	case 0x2A:
+	case 0x2B:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static void lcm_m6_log_table_cmd(const char *tag, unsigned int index,
+	struct LCM_setting_table *entry, unsigned char force_update)
+{
+	unsigned int cmd = entry->cmd;
+
+	if (!lcm_m6_should_log_cmd(cmd))
+		return;
+
+	if (cmd == REGFLAG_DELAY || cmd == REGFLAG_UDELAY ||
+	    cmd == REGFLAG_END_OF_TABLE) {
+		LCM_LOGI("M6 LCM table[%s] idx=%u flag=0x%04x count=%u force=%u\n",
+			tag, index, cmd, entry->count, force_update);
+		return;
+	}
+
+	LCM_LOGI("M6 LCM table[%s] idx=%u cmd=0x%02x count=%u p=%02x %02x %02x %02x force=%u\n",
+		tag, index, cmd, entry->count,
+		entry->para_list[0], entry->para_list[1],
+		entry->para_list[2], entry->para_list[3],
+		force_update);
+}
+
 static void push_table(void *cmdq, struct LCM_setting_table *table,
 	unsigned int count, unsigned char force_update)
 {
 	unsigned int i;
 	unsigned cmd;
+	const char *tag = lcm_m6_table_name(table);
 
+	LCM_LOGI("M6 LCM push_table start tag=%s count=%u force=%u cmdq=%p\n",
+		tag, count, force_update, cmdq);
 	for (i = 0; i < count; i++) {
 
 		cmd = table[i].cmd;
+		lcm_m6_log_table_cmd(tag, i, &table[i], force_update);
 
 		switch (cmd) {
 
@@ -626,6 +697,8 @@ static void push_table(void *cmdq, struct LCM_setting_table *table,
 			dsi_set_cmdq_V22(cmdq, cmd, table[i].count, table[i].para_list, force_update);
 		}
 	}
+	LCM_LOGI("M6 LCM push_table end tag=%s count=%u force=%u cmdq=%p\n",
+		tag, count, force_update, cmdq);
 }
 
 
@@ -711,6 +784,21 @@ static void lcm_get_params(LCM_PARAMS *params)
 	params->dsi.lcm_esd_check_table[0].cmd = 0x0A;
 	params->dsi.lcm_esd_check_table[0].count = 1;
 	params->dsi.lcm_esd_check_table[0].para_list[0] = 0x9C;
+	LCM_LOGI("M6 LCM params mode=%d lanes=%u size=%ux%u v=%u/%u/%u/%u h=%u/%u/%u pll=%u esd=%u/%u esd0=0x%02x/0x%02x\n",
+		params->dsi.mode, params->dsi.LANE_NUM,
+		params->width, params->height,
+		params->dsi.vertical_sync_active,
+		params->dsi.vertical_backporch,
+		params->dsi.vertical_frontporch,
+		params->dsi.vertical_active_line,
+		params->dsi.horizontal_sync_active,
+		params->dsi.horizontal_backporch,
+		params->dsi.horizontal_frontporch,
+		params->dsi.PLL_CLOCK,
+		params->dsi.esd_check_enable,
+		params->dsi.customization_esd_check_enable,
+		params->dsi.lcm_esd_check_table[0].cmd,
+		params->dsi.lcm_esd_check_table[0].para_list[0]);
 
 #ifdef CONFIG_MTK_ROUND_CORNER_SUPPORT
 	params->corner_pattern_width = 32;
@@ -759,30 +847,40 @@ static int TPS65132_write_byte(kal_uint8 addr, kal_uint8 value)
 
 static void lcm_init_power(void)
 {
-
+	LCM_LOGI("M6 LCM init_power\n");
 }
 
 static void lcm_suspend_power(void)
 {
-
+	LCM_LOGI("M6 LCM suspend_power\n");
 }
 
 static void lcm_resume_power(void)
 {
-
+	LCM_LOGI("M6 LCM resume_power\n");
 }
 
 static void lcm_init(void)
 {
 	unsigned char cmd = 0x0;
 	unsigned char data = 0xFF;
+	unsigned int seq;
 #ifndef CONFIG_FPGA_EARLY_PORTING
 	int ret = 0;
+#endif
+
+	seq = ++lcm_m6_init_count;
+	LCM_LOGI("M6 LCM init start seq=%u mode=%d init_count=%u table_count=%u\n",
+		seq, lcm_dsi_mode, lcm_m6_init_count,
+		(unsigned int)(sizeof(init_setting) / sizeof(struct LCM_setting_table)));
+#if !defined(CONFIG_FPGA_EARLY_PORTING) && !defined(BUILD_LK)
+	LCM_LOGI("M6 LCM init seq=%u tps_client=%p\n", seq, tps65132_i2c_client);
 #endif
 
 	cmd = 0x00;
 	data = 0x0F;
 
+	LCM_LOGI("M6 LCM init seq=%u reset=0 pre-bias\n", seq);
 	SET_RESET_PIN(0);
 
 #ifndef CONFIG_FPGA_EARLY_PORTING
@@ -791,8 +889,10 @@ static void lcm_init(void)
 	mt_set_gpio_dir(GPIO_65132_EN, GPIO_DIR_OUT);
 	mt_set_gpio_out(GPIO_65132_EN, GPIO_OUT_ONE);
 #else
+	LCM_LOGI("M6 LCM init seq=%u bias_enp=1\n", seq);
 	set_gpio_lcd_enp(1);
 	MDELAY(5);
+	LCM_LOGI("M6 LCM init seq=%u bias_enn=1\n", seq);
 	set_gpio_lcd_enn(1);
 #endif
 	MDELAY(5);
@@ -808,6 +908,8 @@ static void lcm_init(void)
 		LCM_LOGI("ili9881p_hd_dsi_txd----tps6132----cmd=%0x--i2c write error----\n", cmd);
 	else
 		LCM_LOGI("ili9881p_hd_dsi_txd----tps6132----cmd=%0x--i2c write success----\n", cmd);
+	LCM_LOGI("M6 LCM init seq=%u tps reg0 ret=%d value=0x%02x\n",
+		seq, ret, data);
 
 	cmd = 0x01;
 	data = 0x0F;
@@ -824,25 +926,38 @@ static void lcm_init(void)
 		LCM_LOGI("ili9881p_hd_dsi_txd----tps6132----cmd=%0x--i2c write error----\n", cmd);
 	else
 		LCM_LOGI("ili9881p_hd_dsi_txd----tps6132----cmd=%0x--i2c write success----\n", cmd);
+	LCM_LOGI("M6 LCM init seq=%u tps reg1 ret=%d value=0x%02x\n",
+		seq, ret, data);
 
 #endif
+	LCM_LOGI("M6 LCM init seq=%u reset=1 delay=1ms\n", seq);
 	SET_RESET_PIN(1);
 	MDELAY(1);
+	LCM_LOGI("M6 LCM init seq=%u reset=0 delay=2ms\n", seq);
 	SET_RESET_PIN(0);
 	MDELAY(2);
 
+	LCM_LOGI("M6 LCM init seq=%u reset=1 delay=6ms\n", seq);
 	SET_RESET_PIN(1);
 	MDELAY(6);
 	if (lcm_dsi_mode == CMD_MODE) {
 		LCM_LOGI("ili9881p_hd_dsi_txd----not support ----lcm mode\n");
+		LCM_LOGI("M6 LCM init seq=%u skip init table cmd mode=%d\n",
+			seq, lcm_dsi_mode);
 	} else {
+		LCM_LOGI("M6 LCM init seq=%u push init table start mode=%d\n",
+			seq, lcm_dsi_mode);
 		push_table(NULL, init_setting, sizeof(init_setting) / sizeof(struct LCM_setting_table), 1);
+		LCM_LOGI("M6 LCM init seq=%u push init table end mode=%d\n",
+			seq, lcm_dsi_mode);
 		LCM_LOGI("ili9881p_hd_dsi_txd----tps6132----lcm mode = vdo mode :%d----\n", lcm_dsi_mode);
 	}
+	LCM_LOGI("M6 LCM init end seq=%u mode=%d\n", seq, lcm_dsi_mode);
 }
 
 static void lcm_suspend(void)
 {
+	LCM_LOGI("M6 LCM suspend start mode=%d\n", lcm_dsi_mode);
 	push_table(NULL, lcm_suspend_setting, sizeof(lcm_suspend_setting) / sizeof(struct LCM_setting_table), 1);
 	MDELAY(10);
 #ifndef CONFIG_FPGA_EARLY_PORTING
@@ -851,16 +966,21 @@ static void lcm_suspend(void)
 	mt_set_gpio_dir(GPIO_65132_EN, GPIO_DIR_OUT);
 	mt_set_gpio_out(GPIO_65132_EN, GPIO_OUT_ZERO);
 #else
+	LCM_LOGI("M6 LCM suspend bias_enn=0\n");
 	set_gpio_lcd_enn(0);
+	LCM_LOGI("M6 LCM suspend bias_enp=0\n");
 	set_gpio_lcd_enp(0);
 #endif
 #endif
 	/*SET_RESET_PIN(0);*/
+	LCM_LOGI("M6 LCM suspend end mode=%d\n", lcm_dsi_mode);
 }
 
 static void lcm_resume(void)
 {
+	LCM_LOGI("M6 LCM resume start mode=%d\n", lcm_dsi_mode);
 	lcm_init();
+	LCM_LOGI("M6 LCM resume end mode=%d\n", lcm_dsi_mode);
 }
 
 static void lcm_update(unsigned int x, unsigned int y, unsigned int width, unsigned int height)
@@ -977,6 +1097,9 @@ static unsigned int lcm_ata_check(unsigned char *buffer)
 		ret = 1;
 	else
 		ret = 0;
+	LCM_LOGI("M6 LCM ATA expected=%02x %02x %02x %02x read=%02x %02x %02x %02x ret=%u\n",
+		x0_MSB, x0_LSB, x1_MSB, x1_LSB,
+		read_buf[0], read_buf[1], read_buf[2], read_buf[3], ret);
 
 	x0 = 0;
 	x1 = FRAME_WIDTH - 1;
@@ -1002,6 +1125,8 @@ static void lcm_setbacklight_cmdq(void *handle, unsigned int level)
 	LCM_LOGI("%s,ili9881p_hd_dsi_txd backlight: level = %d\n", __func__, level);
 
 	bl_level[0].para_list[0] = level;
+	LCM_LOGI("M6 LCM backlight handle=%p request=%u dcs51=0x%02x min=%u\n",
+		handle, level, bl_level[0].para_list[0], BL_MIN_LEVEL);
 
 	push_table(handle, bl_level, sizeof(bl_level) / sizeof(struct LCM_setting_table), 1);
 }

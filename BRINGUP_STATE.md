@@ -3809,3 +3809,81 @@ Verification commands:
 grep -R -n -E 'M6 DSI snapshot\\[bist-(pre|post)-(enable|disable)\\]|BIST_PATTERN|self_pat|RDMA0 Transfer|PathMode:DIRECT_LINK' /srv/forge/android/meizu_m6/captures/20260603-112512-m6-dsi-bist-snapshot-red-711HEBSR277K5
 sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-dsi-bist-snapshot/boot-m6-dsi-bist-snapshot.img /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-dsi-bist-snapshot/readback-boot-m6-dsi-bist-snapshot.img /srv/forge/android/meizu_m6/captures/20260603-112512-m6-dsi-bist-snapshot-red-711HEBSR277K5/screen-after-bist-snapshot.png
 ```
+
+## 2026-06-03 LCM init sequence markers
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-03: add bounded markers around the active
+`ili9881p_hd_dsi_txd` LCM power, reset, init table, TPS65132 I2C, ATA, and
+backlight paths.
+
+Hypothesis: the PQ bridge mutex fix and DSI BIST snapshot prove Android
+composition, RDMA0 transfer, DSI video mode, DSI self-pattern register writes,
+and MIPITX register state are live. If the physical LCD remains black and the
+red BIST window is not visible, the next earliest unproven boundary is whether
+the selected LCM driver actually performs the stock-like power/reset/init
+sequence, whether the TPS65132 bias writes succeed, whether `0x11`/`0x29` and
+other key panel commands are emitted, whether the backlight command is sent
+with the expected byte, and whether ATA readback can prove panel command
+acceptance.
+
+Evidence: previous verified capture
+`/srv/forge/android/meizu_m6/captures/20260603-112512-m6-dsi-bist-snapshot-red-711HEBSR277K5`
+shows `sys.boot_completed=1`, `PathMode:DIRECT_LINK`, RDMA0 transfer near
+61 fps, DSI `MODE=0x3`, `PHY_LCCON=0x1`, MIPITX lane registers sane, and
+`bist-post-enable` with `BIST_PATTERN=0xff0000`, `BIST_CON=0x200040`, and
+`self_pat=1`. That capture does not prove the LCM driver's power/reset/init
+boundaries or panel command readback. The new built artifact is
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-sequence-markers/boot-m6-lcm-sequence-markers.img`
+sha256 `849625d6b854dd6e469df756017bf1655768df32f4787826441226f6d37dcdf4`;
+matching `Image.gz-dtb` sha256
+`029efaf557635b587ad68317a852c07f2dac5c3c42a0b999778db2a178626beb`,
+matching `System.map` sha256
+`cdd5d1a510cf71a530c652a2ecce6d34f465fcb80a32805a05acfa6dcf421dec`,
+and matching `vmlinux` sha256
+`f05176c5b6cbc19008cceed408bc6ccc812943c0110752cb751bc9e2d75cfafc`.
+`marker-strings.txt` contains `M6 LCM init`, `M6 LCM tps65132 write`,
+`M6 LCM push_table`, `M6 LCM table[...]`, `M6 LCM ATA`, and
+`M6 LCM backlight` markers.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+  logs the selected panel's `lcm_get_params`, power hooks, TPS65132 probe and
+  write results, reset/bias/init sequence, key init-table commands, suspend and
+  resume boundaries, ATA expected/read bytes, and `0x51` backlight command byte.
+- `BRINGUP_STATE.md` records the diagnostic hypothesis, evidence, expected
+  next markers, rollback condition, and verification commands.
+
+Why each file changed: the LCM file owns the selected panel's power/reset/init
+sequence and exposes the lowest-risk read-only evidence for the remaining
+physical black-screen frontier. The patch does not change DSI timings, panel
+commands, reset delays, TPS65132 values, ESD flags, route state, PQ policy,
+RDMA/OVL programming, CMDQ waits, or userspace behavior. The state file is the
+required durable handoff for this DIAGNOSTIC patch.
+
+Expected next marker: after flashing only serial `711HEBSR277K5`, fresh dmesg
+should contain `M6 LCM params`, `M6 LCM init start`, `M6 LCM tps65132 probe`,
+`M6 LCM init ... tps reg0 ret=2`, `M6 LCM init ... tps reg1 ret=2`, the reset
+steps, `M6 LCM push_table start tag=init`, key table markers for `0xff`,
+`0x11`, and `0x29`, `M6 LCM backlight`, and an `M6 LCM ATA expected=...`
+readback line after running the ATA probe. If the markers are absent, the
+selected LCM path is not executing. If TPS writes fail or the client is NULL,
+debug bias I2C/probe/GPIO. If init and backlight markers execute but ATA fails
+and BIST remains invisible, move to panel command acceptance, reset timing,
+lane/electrical mapping, or a targeted behavior patch backed by the marker
+gap.
+
+Rollback condition: revert this diagnostic if the verified boot regresses
+before root ADB, SurfaceFlinger, or stable RDMA0 transfer; if log volume hides
+earlier boot markers; or if the read probes are proven unsafe. Do not revert
+solely because the physical panel remains black, since this patch is
+observation-only.
+
+Verification commands:
+
+```bash
+git diff --check
+make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 O=/home/n8n/forge-work/kernel-builds/m6-directlink-smartovl-20260602/out ARCH=arm64 CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- -j4 Image.gz-dtb
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-sequence-markers/boot-m6-lcm-sequence-markers.img /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-sequence-markers/Image.gz-dtb /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-lcm-sequence-markers/System.map
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 LCM|tps65132|ili9881p|M6 DSI snapshot|BIST_PATTERN|self_pat" | tail -240'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; cat /d/mtkfb; dmesg | grep -E "M6 LCM ATA|ATA|M6 LCM" | tail -120'
+```
