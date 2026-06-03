@@ -2921,3 +2921,302 @@ adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/m
 grep -R -n -E 'M6 OVL input|M6 OVL handoff|M6 OVL diag cfg|M6 DDP timeout\\[VSYNC\\]|M0_MOD=0xd1280|RDMA0 IN=0/0|route VALID=0x0|Built-in Screen|BootAnimation|brightness' /srv/forge/android/meizu_m6/captures/20260601-010700-m6-ovl0-2l-mutex-runtime-47b5df7f-711HEBSR277K5
 grep -R -n -E 'DISP_MODULE_OVL0_2L|module_can_connect|mout_map|sel_out_map|sel_in_map|ovl_config_l' kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c /srv/forge/android/meizu_m6/kernel-meizu_M6-Q-ex2-3.18.119/drivers/misc/mediatek/video/mt6757/dispsys/ddp_path.c
 ```
+
+## 2026-06-01 Primary OVL0 route plus deep OVL/fence diagnostics
+
+PATCH HISTORY, BOOT-UNBLOCK + DIAGNOSTIC, 2026-06-01: force the primary
+scenario family back to routed `OVL0 -> OVL0_VIRTUAL -> COLOR/DITHER/RDMA0`
+instead of placing the first active primary layer on `OVL0_2L`, and add dense
+bounded markers around DDP path config order, `ovl_layer_scanned`, OVL0/OVL0_2L
+register state, and present/OVL fence timelines.
+
+Hypothesis: the previous mutex checkpoint proved `OVL0_2L` was no longer
+missing from mutex0, but the active layer still lived on a module that the
+primary route could not connect to RDMA0. Because `module_can_connect` marks
+`OVL0_2L` as non-connectable and the path selection tables route primary scanout
+through `OVL0` / `OVL0_VIRTUAL`, the earliest evidence-backed route fix is to
+make primary scenario configuration start at `OVL0`. If the panel remains black
+after that route fix, the next capture must prove whether the layer really lands
+on `OVL0`, whether RDMA0 receives nonzero input, and whether present fences are
+blocked only because IF_VSYNC never arrives.
+
+Evidence: the route artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260601-m6-primary-ovl0-route/boot-m6-primary-ovl0-route.img`
+was flashed to serial `711HEBSR277K5`; `flash-711HEBSR277K5.txt` records
+matching local and readback sha256
+`d1828f179721b5cde761b43f6cc53250aca10f99dafb7d6f4b65e60cb0b31bf8`. Its
+kernel payload `Image.gz-dtb` is
+`9e8866e66fb343561904d3a5021d92e83ac39dfdacf24af9b694db025db09224`. The
+currently attached device (`adb -H 127.0.0.1 -P 15038 -s 0123456789ABCDEF`)
+has boot partition sha256
+`13a2569ad4bb5d89b4e1ad603f3582abfbb23845f728f056bc9ab8ccd08e1651`; readback
+capture `/srv/forge/android/meizu_m6/captures/20260601-current-boot-readback-0123456789ABCDEF`
+unpacks to zImage sha256
+`9e8866e66fb343561904d3a5021d92e83ac39dfdacf24af9b694db025db09224` and
+ramdisk sha256
+`bf3b959f70d8dbfae8d39c69d55cd93a6d1637663a2804177346e163a29de056`, matching
+the route kernel plus the pure64/hwremap ramdisk. Fresh runtime capture
+`/srv/forge/android/meizu_m6/captures/20260601-pure64-hwremap-0123456789ABCDEF/live-awake-170931`
+shows `sys.boot_completed=1`, SurfaceFlinger running, bootanim stopped, built-in
+720x1280 display in SurfaceFlinger, `DISP_OPT_BYPASS_PQ=1`, RDMA0 transfer
+counters around 60fps, repeated OVL0 underflow/reset, and a stuck present fence
+line `GED : fence disp-S10000-L0-15775 0`. That runtime was later tainted by an
+HWC-disable/SF-restart probe, so the new diagnostics are required before a
+proper-fix conclusion.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` removes
+  `OVL0_2L`/`OVL1_2L` from primary scanout scenario lists so global layer 0 is
+  assigned to routed `OVL0`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` logs primary
+  path config order, pre/post `ovl_layer_scanned`, OVL0/OVL0_2L SRC state, RDMA
+  counters, and timeout snapshots for both OVL engines.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c` logs the chosen
+  first global layer, module layer count, final scan mask, enabled local layer
+  mask, and key OVL state around `ovl_config_l()`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` logs
+  present fence updates/timeouts with timeline value, route/RDMA/OVL state, and
+  OVL fence release values per layer.
+- `BRINGUP_STATE.md` records the route/kernel/ramdisk identity and the next
+  marker contract.
+- `/srv/forge/android/meizu_m6/AGENTS.md` records the local M6 marker policy:
+  dense bounded debug markers are preferred over guessing when evidence is
+  missing.
+
+Why each file changed: `ddp_path.c` is the only path table that decides whether
+primary scanout starts on connected `OVL0` or non-connectable `OVL0_2L`.
+`ddp_manager.c` owns path config sequencing and timeout state, so it proves
+whether the route patch is actually used at runtime. `ddp_ovl.c` owns global
+layer-to-local-layer assignment via `ovl_layer_scanned`, which is the exact
+branch that must prove or falsify the placement hypothesis. `primary_display.c`
+owns present fence update/release and first-frame callbacks, so it proves
+whether fences are blocked by missing VSYNC/RDMA progress rather than by an
+unrelated userspace fence issue. `AGENTS.md` captures the working rule requested
+by the user so later agents keep adding cheap evidence markers instead of
+guessing.
+
+Expected next marker: after rebuild and flash of this exact source, a clean
+capture should include `M6 DDP path cfg[...]` followed by `M6 OVL scan[...]` and
+`M6 OVL diag cfg[...]` showing global layer 0 on `mod=OVL0`, not `OVL0_2L`.
+The first timeout must include OVL0 and OVL0_2L decoded state, RDMA0 IN/OUT
+counters, and `M6 display: IF_VSYNC timeout[...]` with present timeline value.
+Positive route evidence is `OVL0_SRC` enabling the live layer, `OVL0_2L_SRC=0`,
+and nonzero RDMA0 input/out counters. Negative route evidence is unchanged
+`OVL0_2L` activity or `OVL0_SRC=0` after path config, which keeps the frontier
+inside DDP path/layer assignment.
+
+Rollback condition: revert the route part if a verified flash regresses before
+root ADB/SurfaceFlinger or if new markers show stock-equivalent working primary
+scanout must include `OVL0_2L` in the connected route. Revert the diagnostic
+part if log volume makes the device unusable or if a later capture proves the
+OVL/fence frontier and narrower markers can replace this broad instrumentation.
+Do not treat this patch as a physical display fix until the user reports image
+or a clean capture proves RDMA/DSI scanout with advancing fences.
+
+Verification commands:
+
+```bash
+sha256sum /srv/forge/android/meizu_m6/captures/20260601-current-boot-readback-0123456789ABCDEF/current-boot.img /srv/forge/android/meizu_m6/captures/20260601-current-boot-readback-0123456789ABCDEF/zImage /srv/forge/android/meizu_m6/captures/20260601-current-boot-readback-0123456789ABCDEF/initrd.img
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260601-m6-primary-ovl0-route/Image.gz-dtb /srv/forge/android/export/meizu_m6_artifacts/20260601-m6-pure64-hwremap-bootpatch/pure64-hwremap-ramdisk.img
+adb -H 127.0.0.1 -P 15038 -s 0123456789ABCDEF exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8876032 count=1 2>/dev/null' | sha256sum
+grep -R -n -E 'M6 DDP path cfg|M6 OVL scan|M6 OVL input|M6 OVL handoff|M6 OVL diag cfg|M6 DDP timeout\\[VSYNC\\]|ovl0_2l|M6 present fence update|M6 display: IF_VSYNC timeout|M6 OVL fence release|GED : fence' /srv/forge/android/meizu_m6/captures/<next-clean-capture>
+grep -R -n -E 'DISP_MODULE_OVL0_2L|module_can_connect|module_list_scenario|M6 DDP path cfg|M6 OVL scan|M6 display: IF_VSYNC timeout' kernel-3.18/drivers/misc/mediatek/video/mt6755
+```
+
+## 2026-06-02 keep PQ-bypass route in DIRECT_LINK for OVL0 proof
+
+PATCH HISTORY, ISOLATION, 2026-06-02: stop Smart OVL from pinning the M6
+PQ-bypass display path in RDMA0-DISP DECOUPLE, and restore DIRECT_LINK if the
+runtime has already switched there.
+
+Hypothesis: the `Primary OVL0 route plus deep OVL/fence diagnostics` kernel
+payload is already present in the current working boot image, but Smart OVL
+still moves the runtime into the older PQ-bypass `primary_rdma0_disp` decouple
+experiment before the direct OVL0 route can produce clean markers. Keeping
+PQ-bypass display in DIRECT_LINK should make the next boot exercise the routed
+`OVL0 -> OVL0_VIRTUAL -> COLOR/DITHER -> RDMA0 -> DSI0` path and expose the
+first OVL0/RDMA0/DSI0 failure without the CPU-RDMA decouple path masking it.
+
+Evidence: current runtime capture
+`/srv/forge/android/meizu_m6/captures/20260602-2058-m6-current-runtime-markers-711HEBSR277K5`
+read back the boot partition trimmed to 8863744 bytes with sha256
+`eae3bc563a067540588eacb69e78e8e33943279cc40ba3cfef5c2b4cfb9eb836`.
+The unpacked kernel payload in
+`/srv/forge/android/export/meizu_m6_artifacts/20260602-m6-runtime-unblock-minimal-boot/kernel`
+has sha256 `9e8866e66fb343561904d3a5021d92e83ac39dfdacf24af9b694db025db09224`,
+matching
+`/srv/forge/android/export/meizu_m6_artifacts/20260601-m6-primary-ovl0-route/Image.gz-dtb`.
+The same capture showed Android booted (`sys.boot_completed=1`,
+SurfaceFlinger running), `PathMode:DECOUPLE`, `DISP_OPT_BYPASS_PQ=1`,
+`DISP_OPT_SMART_OVL=1`, `RDMA0 Transfer` around 60 fps, repeated
+`M6 DDP decouple rdma: CPU RDMA MEM=...`, repeated
+`M6 DSI snapshot[cpu-rdma-live]`, and `dsi0` IRQ counters still zero while
+`mutex`, `ovl0`, and `rdma0` counters rose. Full-stride fb0 marker writes in
+`screen-markers-fullstride/` proved raw framebuffer writes/readbacks were real
+for black, white, and bars, but physical LCD remained treated as black and
+`dsi0` IRQs stayed zero.
+
+Live isolation evidence: after
+`echo helper:DISP_OPT_SMART_OVL,0 > /sys/kernel/debug/mtkfb` and
+`echo switch_mode:1 > /sys/kernel/debug/mtkfb`, capture-local directory
+`live-switch-directlink/` showed `PathMode:DIRECT_LINK` and
+`DISP_OPT_SMART_OVL=0`; Android and SurfaceFlinger stayed alive. The same
+direct-link probe produced dense `IRQ: ovl0 frame underflow`, `hw reset done`,
+`L0/L1 not complete until EOF`, and `abnormal SOF` messages, while `dsi0`
+IRQs remained zero. This proves direct-link can be entered live, but the next
+boot must gather clean path-config and OVL scan markers before the underflow
+spam consumes the ring buffer.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` changes
+  `smart_ovl_try_switch_mode_nolock()` so PQ-bypass DIRECT_LINK does not switch
+  into DECOUPLE, and PQ-bypass DECOUPLE is switched back to DIRECT_LINK.
+
+Why each file changed: `primary_display.c` owns the Smart OVL DL/DC switching
+decision that live evidence proved can force the already-built OVL0 route
+kernel back into the older CPU-RDMA decouple path. The patch does not touch
+DSI, CMDQ wait tokens, fence release policy, panel init, or PQ register
+programming; it only isolates the route mode so the existing OVL0 diagnostics
+can run on a clean boot.
+
+Expected next marker: a boot from the next image should include
+`M6 DDP smart ovl: hold DIRECT_LINK while PQ bypass isolates direct OVL0 route`
+or `M6 DDP smart ovl: restore DIRECT_LINK; PQ bypass RDMA0-DISP decouple is
+diagnostic-only`, then `PathMode:DIRECT_LINK`, `M6 DDP path cfg[...]`,
+`M6 OVL scan[...]`, and `M6 OVL diag cfg[...]` showing whether the live layer
+lands on `mod=OVL0`. A positive route marker is `OVL0_SRC` enabled with
+`OVL0_2L_SRC=0` and nonzero RDMA0 input/output counters. A negative marker is
+unchanged OVL0 underflow with decoded sane layer addresses but no RDMA0 input,
+which moves the frontier to OVL0 fetch/SMI/M4U or OVL output handoff rather
+than PQ or RDMA0-DISP decouple.
+
+Rollback condition: revert this isolation if a readback-verified boot regresses
+before root ADB, `sys.boot_completed`, SurfaceFlinger, or fb0, or if a clean
+boot proves that the physical display only lights when Smart OVL enters
+RDMA0-DISP DECOUPLE. Re-enable the decouple path only as a diagnostic branch,
+not as a display fix, if DIRECT_LINK remains black with no additional markers.
+
+Verification commands:
+
+```bash
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/<next>/boot.img /srv/forge/android/export/meizu_m6_artifacts/<next>/Image.gz-dtb
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=<next-size> count=1 2>/dev/null' | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /sys/kernel/debug/mtkfb 2>&1 | strings | egrep "PathMode|DISP_OPT_BYPASS_PQ|DISP_OPT_SMART_OVL|RDMA0 Transfer"; cat /proc/interrupts | egrep "mutex|ovl|rdma|dsi"'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "hold DIRECT_LINK|restore DIRECT_LINK|M6 DDP path cfg|M6 OVL scan|M6 OVL diag cfg|M6 DDP timeout|M6 display: IF_VSYNC|IRQ: ovl0|dsi0|RDMA0"'
+```
+
+## 2026-06-03 OVL0 CPU layer mirror result
+
+PATCH HISTORY, BOOT-UNBLOCK + DIAGNOSTIC, 2026-06-03: CPU-mirror active OVL0
+layer programming for the M6 DIRECT_LINK/PQ-bypass path and keep the bounded
+direct-route/OVL/fence diagnostics from the previous checkpoint.
+
+Hypothesis: the clean DIRECT_LINK/PQ-bypass capture had moved past PQ, Smart
+OVL decouple, route selection, clocks, and mutex membership, but the timeout
+still showed stale or late OVL0 layer registers while the queued frame config
+looked sane. In this tree, the active OVL layer config can remain only in CMDQ
+while the first video wait is already observing stale hardware registers; for
+the already-isolated M6 `OVL0 -> COLOR0 -> DITHER -> RDMA0 -> DSI0` route,
+mirroring only the active non-secure OVL0 layer config with CPU writes should
+prove whether stale OVL0 register programming is the remaining frontier.
+
+Evidence: artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-cpu-layer-mirror/boot-m6-ovl0-cpu-layer-mirror.img`
+was built from branch `work/m6-rdma0-disp-decpq-20260531` and flashed to serial
+`711HEBSR277K5`; local artifact and boot readback in capture
+`/srv/forge/android/meizu_m6/captures/20260603-072431-m6-ovl0-cpu-layer-mirror-711HEBSR277K5/boot-hashes.txt`
+both have sha256
+`ad349802dda643c83998b7af3c363751da4918311658aa6ec24f06901fc1b9be`.
+Matching payload identities in
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-cpu-layer-mirror/SHA256SUMS`
+are `Image.gz-dtb`
+`f0cf06c019b4d211bb27eb2e39c0d7e11cb75726884ad96bbfeff3e799f0244e`,
+`System.map`
+`5635678c5dc04f676c61159fb13c45ae5cc8941ccf7dfb878b298168ad04e5e5`,
+config `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`,
+and ramdisk `e82c6695614132e8759b9ee96ee5b9e9efdaf8df96d1ef0c32c5dae8b5e16332`.
+
+FACT: the verified boot reaches Android userspace. `boot-wait.txt` shows
+`sys.boot_completed=1` by 07:24:43 with SurfaceFlinger and bootanim running;
+`/proc/fb` reports `0 mtkfb`; fb0 is `U:720x1280p-0`; DisplayManager and
+SurfaceFlinger report Built-in Screen 720x1280, rotation 0, state ON,
+`powerMode=2`, `isDisplayOn=1`, and `flips=36`. `debugfs-mtkfb.txt` reports
+`PathMode:DIRECT_LINK`, `LCM Driver=[ili9881p_hd_dsi_txd]`,
+`DISP_OPT_BYPASS_PQ=1`, `RDMA0 Transfer=10`, and `DSI_EXT_TE=0`; `screencap.png`
+is 0 bytes because `screencap -p` did not complete during the capture window.
+
+FACT: the CPU mirror marker fired and changed the key observation. Dmesg lines
+122-126 show `M6 OVL diag cfg[46]` for `mod=OVL0 L0` at `addr=0x1600000`,
+`pitch=2880`, `fmt=RGBA8888`, then `M6 OVL cpu layer mirror[23]`, then the
+same OVL0 layer config again. The first VSYNC timeout now decodes active OVL0
+L0 hardware as `en=1`, `fmt=RGBA8888`, `addr=0x1600000`, `pitch=2880`,
+`wh=720/1280`, `SRC=0x1`, while `OVL0_2L` is disabled and the stale L3 register
+image is not enabled.
+
+FACT: the display is still black/stalled after the mirror. The same timeout
+shows route `VALID=0x3a READY=0x40009300`, `M0_MOD=0x51280`,
+`M0_SOF=0x41`, clocks not gated for the primary path, `rdma0 GLOBAL=0x101
+SIZE=720x1280 IN=0/0 OUT=0/0`, and `dsi0 START=0x1 STA=0x20`. IRQ deltas show
+OVL0/RDMA0 interrupts rising while `dsi0` and `ovl0_2l` remain zero. Logcat
+continues to show `GED Frame didn't finished in 1000 ms`, `[OVL-IN-0] fence
+... didn't signal`, and `[WKR] Timed out waiting for Dispatcher_0`; dmesg keeps
+`CMDQ_EVENT_DISP_RDMA0_EOF` token value 0 and repeated `IRQ: ovl0 -L0 not
+complete until EOF` / `frame underflow`.
+
+INFERENCE: stale active OVL0 register programming is closed as the primary
+explanation. The frontier moved one layer lower: OVL0 has a sane enabled L0
+register set, but OVL0 still does not produce a completed frame into RDMA0
+(`IN=0/0 OUT=0/0`) and DSI0 never interrupts. The next evidence-backed work
+should instrument OVL0 fetch/output state, SMI/M4U/GMC/FIFO state, and route
+VALID/READY immediately around trigger/underflow, not CMDQ wait tokens, fences,
+PQ bypass, Smart OVL, or panel DCS.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` keeps the primary
+  scanout scenarios routed through connected `OVL0` instead of assigning the
+  first live layer to `OVL0_2L`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` logs primary
+  path config order, route/mutex/RDMA/DSI/OVL timeout state, and decodes both
+  OVL0 and OVL0_2L layers.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c` logs OVL scan
+  decisions, clears stale inactive OVL0 layer enables, and mirrors the active
+  non-secure OVL0 layer config with CPU writes only under M6 DIRECT_LINK +
+  `DISP_OPT_BYPASS_PQ`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c` keeps the
+  M6 PQ-bypass path in DIRECT_LINK for this OVL0 proof and logs present/OVL
+  fence timeout state.
+- `BRINGUP_STATE.md` records the artifact identity, capture, conclusion, and
+  next diagnostic boundary.
+
+Why each file changed: `ddp_path.c` and `primary_display.c` isolate the proven
+direct OVL0 route so old PQ/RDMA0-DISP decouple paths do not mask the failure.
+`ddp_manager.c` owns the timeout snapshots needed to prove route/mutex/RDMA/DSI
+state from the exact flashed image. `ddp_ovl.c` owns both layer assignment and
+hardware layer programming, so the CPU mirror is the narrowest test for stale
+OVL0 registers without touching waits, fences, CMDQ tokens, DSI, panel init, or
+PQ registers. The state file is the required durable evidence record.
+
+Expected next marker: a follow-up DIAGNOSTIC build should keep the same
+DIRECT_LINK route and add read-only markers that answer whether OVL0 is failing
+at memory fetch (`RDMA0_DBG`, `GMC`, `FIFO`, M4U/SMI state), at OVL output
+handoff (`FLOW_CTRL_DBG`, `ADDCON_DBG`, `DATAPATH_CON`, abnormal SOF/underflow
+reason), or at route consumption by RDMA0 (`VALID/READY`, `RDMA_IN/OUT`,
+mutex SOF/MOD immediately after trigger and at underflow). A useful positive
+marker is RDMA0 `IN/OUT` becoming nonzero or a decoded OVL0 fetch fault that
+explains why it remains zero.
+
+Rollback condition: revert the CPU mirror if a verified boot regresses before
+root ADB, `sys.boot_completed`, SurfaceFlinger/fb0, or if a later capture proves
+CPU mirroring active OVL0 config creates a worse hardware state than pure CMDQ
+with the same direct route. Do not revert it merely because the panel is still
+black; this capture proves it closed the stale-L0-register question while
+exposing the OVL0 fetch/output frontier.
+
+Verification commands:
+
+```bash
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-cpu-layer-mirror/SHA256SUMS
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=8863744 count=1 2>/dev/null' | sha256sum
+grep -R -n -E 'M6 OVL cpu layer mirror|M6 OVL diag cfg|M6 DDP timeout\\[VSYNC\\]: (route|mutex|rdma0|ovl0|ovl0_2l|dsi0)|CMDQ_EVENT_DISP_RDMA0_EOF|IRQ: ovl0' /srv/forge/android/meizu_m6/captures/20260603-072431-m6-ovl0-cpu-layer-mirror-711HEBSR277K5
+grep -R -n -E 'boot_completed=1|Built-in Screen|PathMode:DIRECT_LINK|DISP_OPT_BYPASS_PQ|RDMA0 Transfer|dsi0' /srv/forge/android/meizu_m6/captures/20260603-072431-m6-ovl0-cpu-layer-mirror-711HEBSR277K5
+```

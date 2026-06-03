@@ -1118,6 +1118,13 @@ static unsigned int dpmgr_is_PQ(DISP_MODULE_ENUM module)
 	return isPQ;
 }
 
+static bool dpmgr_m6_diag_sample(unsigned int *count)
+{
+	unsigned int n = (*count)++;
+
+	return n < 16 || ((n & 0x3ff) == 0);
+}
+
 int dpmgr_path_config(disp_path_handle dp_handle, disp_ddp_path_config *config, void *cmdq_handle)
 {
 	int i = 0;
@@ -1125,27 +1132,60 @@ int dpmgr_path_config(disp_path_handle dp_handle, disp_ddp_path_config *config, 
 	ddp_path_handle handle;
 	int *modules;
 	int module_num;
+	bool m6_log_cfg = false;
+	unsigned int m6_cfg_idx = 0;
+	static unsigned int m6_path_cfg_count;
 
 	ASSERT(dp_handle != NULL);
 	handle = (ddp_path_handle) dp_handle;
 	modules = ddp_get_scenario_list(handle->scenario);
 	module_num = ddp_get_module_num(handle->scenario);
+	if (handle->scenario == DDP_SCENARIO_PRIMARY_DISP &&
+	    disp_helper_get_option(DISP_OPT_BYPASS_PQ) &&
+	    (config->ovl_dirty || config->rdma_dirty || config->dst_dirty)) {
+		m6_log_cfg = dpmgr_m6_diag_sample(&m6_path_cfg_count);
+		m6_cfg_idx = m6_path_cfg_count - 1;
+	}
 
 	DISPDBG("path config ovl %d, rdma %d, wdma %d, dst %d on handle %p scenario %s\n",
 		   config->ovl_dirty,
 		   config->rdma_dirty,
 		   config->wdma_dirty,
 		   config->dst_dirty, handle, ddp_get_scenario_name(handle->scenario));
+	if (m6_log_cfg)
+		DISPERR("M6 DDP path cfg[%u]: scenario=%s mode=%d cmdq=%p dirty ovl=%d rdma=%d wdma=%d dst=%d scan=0x%x route VALID=0x%x READY=0x%x OVL0_SRC=0x%x OVL0_2L_SRC=0x%x\n",
+			m6_cfg_idx, ddp_get_scenario_name(handle->scenario),
+			handle->mode, cmdq_handle, config->ovl_dirty,
+			config->rdma_dirty, config->wdma_dirty, config->dst_dirty,
+			config->ovl_layer_scanned,
+			DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+			DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+			DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON),
+			DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_SRC_CON));
 	memcpy(&handle->last_config, config, sizeof(disp_ddp_path_config));
 	for (i = 0; i < module_num; i++) {
 		module_name = modules[i];
 		if (ddp_modules_driver[module_name] != 0) {
 			if (ddp_modules_driver[module_name]->config != 0) {
+				if (m6_log_cfg)
+					DISPERR("M6 DDP path cfg[%u]: step=%d module=%s pre_scan=0x%x\n",
+						m6_cfg_idx, i, ddp_get_module_name(module_name),
+						config->ovl_layer_scanned);
 				DISPDBG("scenario %s  config module %s\n",
 					   ddp_get_scenario_name(handle->scenario),
 					   ddp_get_module_name(module_name));
 				ddp_modules_driver[module_name]->config(module_name, config,
 									cmdq_handle);
+				if (m6_log_cfg)
+					DISPERR("M6 DDP path cfg[%u]: step=%d module=%s post_scan=0x%x OVL0_SRC=0x%x OVL0_2L_SRC=0x%x RDMA_IN=%u/%u OUT=%u/%u\n",
+						m6_cfg_idx, i, ddp_get_module_name(module_name),
+						config->ovl_layer_scanned,
+						DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON),
+						DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_SRC_CON),
+						DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+						DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+						DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+						DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT));
 			}
 
 			if (disp_helper_get_option(DISP_OPT_BYPASS_PQ)
@@ -1156,6 +1196,19 @@ int dpmgr_path_config(disp_path_handle dp_handle, disp_ddp_path_config *config, 
 
 		}
 	}
+	if (m6_log_cfg)
+		DISPERR("M6 DDP path cfg[%u]: done scan=0x%x VALID=0x%x READY=0x%x M0_MOD=0x%x OVL0_SRC=0x%x OVL0_2L_SRC=0x%x RDMA_GLOBAL=0x%x IN=%u/%u OUT=%u/%u\n",
+			m6_cfg_idx, config->ovl_layer_scanned,
+			DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+			DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+			DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+			DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON),
+			DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_SRC_CON),
+			DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+			DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+			DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+			DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+			DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT));
 	return 0;
 }
 
@@ -1738,17 +1791,17 @@ static void dpmgr_m6_hold_primary_video_clocks(ddp_path_handle handle,
 		event_name, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 }
 
-static void dpmgr_m6_dump_ovl0_layer_decode(const char *event_name,
-	unsigned int layer)
+static void dpmgr_m6_dump_ovl_layer_decode(const char *event_name,
+	const char *ovl_name, unsigned long ovl_base, unsigned int layer)
 {
 	unsigned long layer_off = layer * M6_OVL_LAYER_OFFSET;
 	unsigned long rdma_off = layer * M6_OVL_RDMA_DEBUG_OFFSET;
-	unsigned int src_on = DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON);
-	unsigned int con = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_CON);
-	unsigned int size = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_SRC_SIZE);
-	unsigned int pos = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_OFFSET);
-	unsigned int addr = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_ADDR);
-	unsigned int pitch = DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_L0_PITCH);
+	unsigned int src_on = DISP_REG_GET(ovl_base + DISP_REG_OVL_SRC_CON);
+	unsigned int con = DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_L0_CON);
+	unsigned int size = DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_L0_SRC_SIZE);
+	unsigned int pos = DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_L0_OFFSET);
+	unsigned int addr = DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_L0_ADDR);
+	unsigned int pitch = DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_L0_PITCH);
 	enum UNIFIED_COLOR_FMT fmt;
 
 	fmt = display_fmt_reg_to_unified_fmt(
@@ -1756,8 +1809,8 @@ static void dpmgr_m6_dump_ovl0_layer_decode(const char *event_name,
 		REG_FLD_VAL_GET(L_CON_FLD_BTSW, con),
 		REG_FLD_VAL_GET(L_CON_FLD_RGB_SWAP, con));
 
-	DISPERR("M6 DDP timeout[%s]: ovl0 L%u decode en=%u source=%u fmt=%s/0x%x bpp=%u aen=%u alpha=%u key=%u const=%u xy=%u/%u wh=%u/%u addr=0x%x low=0x%x pitch=%u raw_pitch=0x%x rdma=0x%x gmc=0x%x fifo=0x%x dbg=0x%x\n",
-		event_name, layer, !!(src_on & (1U << layer)),
+	DISPERR("M6 DDP timeout[%s]: %s L%u decode en=%u source=%u fmt=%s/0x%x bpp=%u aen=%u alpha=%u key=%u const=%u xy=%u/%u wh=%u/%u addr=0x%x low=0x%x pitch=%u raw_pitch=0x%x rdma=0x%x gmc=0x%x fifo=0x%x dbg=0x%x\n",
+		event_name, ovl_name, layer, !!(src_on & (1U << layer)),
 		REG_FLD_VAL_GET(L_CON_FLD_LARC, con),
 		unified_color_fmt_name(fmt), fmt, UFMT_GET_Bpp(fmt),
 		REG_FLD_VAL_GET(L_CON_FLD_AEN, con),
@@ -1768,10 +1821,10 @@ static void dpmgr_m6_dump_ovl0_layer_decode(const char *event_name,
 		size & 0xfff, (size >> 16) & 0xfff,
 		addr, addr & 0xfff,
 		REG_FLD_VAL_GET(L_PITCH_FLD_LSP, pitch), pitch,
-		DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_RDMA0_CTRL),
-		DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_RDMA0_MEM_GMC_SETTING),
-		DISP_REG_GET(DISPSYS_OVL0_BASE + layer_off + DISP_REG_OVL_RDMA0_FIFO_CTRL),
-		DISP_REG_GET(DISPSYS_OVL0_BASE + rdma_off + DISP_REG_OVL_RDMA0_DBG));
+		DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_RDMA0_CTRL),
+		DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_RDMA0_MEM_GMC_SETTING),
+		DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_RDMA0_FIFO_CTRL),
+		DISP_REG_GET(ovl_base + rdma_off + DISP_REG_OVL_RDMA0_DBG));
 }
 
 static void dpmgr_m6_dump_primary_video_state(const char *event_name)
@@ -1780,11 +1833,14 @@ static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 	unsigned int cg1 = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1);
 	unsigned int layer;
 
-	DISPERR("M6 DDP timeout[%s]: route VALID=0x%x READY=0x%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x SW0_RST=0x%x MMSYS_CG=0x%x/%x LARB0_GREQ=0x%x\n",
+	DISPERR("M6 DDP timeout[%s]: route VALID=0x%x READY=0x%x OVL0_MOUT=0x%x OVL0_SOUT=0x%x OVL0_SEL=0x%x OVL1_SOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x SW0_RST=0x%x MMSYS_CG=0x%x/%x LARB0_GREQ=0x%x\n",
 		event_name,
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_SOUT_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL1_SOUT_SEL_IN),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_COLOR0_SEL_IN),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DITHER_MOUT_EN),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
@@ -1856,7 +1912,30 @@ static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L3_ADDR),
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L3_PITCH));
 	for (layer = 0; layer < 4; layer++)
-		dpmgr_m6_dump_ovl0_layer_decode(event_name, layer);
+		dpmgr_m6_dump_ovl_layer_decode(event_name, "ovl0",
+			DISPSYS_OVL0_BASE, layer);
+	DISPERR("M6 DDP timeout[%s]: ovl0_2l STA=0x%x INTEN=0x%x INTSTA=0x%x EN=0x%x SRC=0x%x ROI=0x%x PATH=0x%x FLOW=0x%x ADDCON=0x%x L0=0x%x/0x%x/0x%x/0x%x L1=0x%x/0x%x/0x%x/0x%x\n",
+		event_name,
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_STA),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_INTEN),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_INTSTA),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_EN),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_SRC_CON),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_ROI_SIZE),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_DATAPATH_CON),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_FLOW_CTRL_DBG),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_ADDCON_DBG),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_L0_CON),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_L0_SRC_SIZE),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_L0_ADDR),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_L0_PITCH),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_L1_CON),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_L1_SRC_SIZE),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_L1_ADDR),
+		DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L + DISP_REG_OVL_L1_PITCH));
+	for (layer = 0; layer < 2; layer++)
+		dpmgr_m6_dump_ovl_layer_decode(event_name, "ovl0_2l",
+			DDP_REG_BASE_DISP_OVL0_2L, layer);
 	DISPERR("M6 DDP timeout[%s]: smi LARB0_STA=0x%x LARB0_MMU=0x%x/0x%x/0x%x/0x%x LARB0_GREQ=0x%x\n",
 		event_name,
 		DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0x0),

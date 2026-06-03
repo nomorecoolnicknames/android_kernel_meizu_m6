@@ -27,6 +27,7 @@
 #include "ddp_reg.h"
 #include "ddp_ovl.h"
 #include "primary_display.h"
+#include "disp_helper.h"
 
 #define OVL_REG_BACK_MAX          (40)
 #define OVL_LAYER_OFFSET        (0x20)
@@ -323,6 +324,13 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 		cfg->src_y, cfg->src_w, cfg->src_h, cfg->dst_x, cfg->dst_y,
 		cfg->dst_w, cfg->dst_h, cfg->src_pitch, adjusted_src_x,
 		adjusted_dst_w);
+}
+
+static bool m6_ovl_scan_diag_sample(unsigned int *count)
+{
+	unsigned int n = (*count)++;
+
+	return n < 24 || ((n & 0x3ff) == 0);
 }
 
 static int ovl_layer_config(DISP_MODULE_ENUM module,
@@ -844,17 +852,35 @@ static int ovl_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, 
 	int enabled_layers = 0;
 	int has_sec_layer = 0;
 	unsigned int local_layer, global_layer, layer_id;
+	unsigned int scanned_before = pConfig->ovl_layer_scanned;
+	unsigned int first_global_layer = 0;
+	bool m6_log_scan = false;
+	unsigned int m6_scan_idx = 0;
+	static unsigned int m6_ovl_scan_diag_count;
+	static unsigned int m6_ovl_cpu_preclear_count;
+	static unsigned int m6_ovl_cpu_layer_mirror_count;
 
 	if (pConfig->dst_dirty)
 		ovl_roi(module, pConfig->dst_w, pConfig->dst_h, gOVLBackground, handle);
 
 	if (!pConfig->ovl_dirty)
 		return 0;
+	if (is_module_ovl(module)) {
+		m6_log_scan = m6_ovl_scan_diag_sample(&m6_ovl_scan_diag_count);
+		m6_scan_idx = m6_ovl_scan_diag_count - 1;
+	}
 
 	for (global_layer = 0; global_layer < TOTAL_OVL_LAYER_NUM; global_layer++) {
 		if (!(pConfig->ovl_layer_scanned & (1 << global_layer)))
 			break;
 	}
+	first_global_layer = global_layer;
+	if (m6_log_scan)
+		DISPERR("M6 OVL scan[%u]: mod=%s dirty ovl=%u dst=%u scanned_before=0x%x first_global=%u layer_count=%lu total=%u dst=%ux%u\n",
+			m6_scan_idx, m6_ovl_module_name(module), pConfig->ovl_dirty,
+			pConfig->dst_dirty, scanned_before, first_global_layer,
+			ovl_layer_num(module), TOTAL_OVL_LAYER_NUM,
+			pConfig->dst_w, pConfig->dst_h);
 	if (global_layer > TOTAL_OVL_LAYER_NUM - ovl_layer_num(module)) {
 		DISPERR("%s: %s scan error, layer_scanned=%u\n", __func__,
 		       ddp_get_module_name(module), pConfig->ovl_layer_scanned);
@@ -893,12 +919,66 @@ static int ovl_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, 
 			continue;
 		print_layer_config_args(module, local_layer, ovl_cfg);
 		ovl_layer_config(module, local_layer, has_sec_layer, ovl_cfg, handle);
+		if (module == DISP_MODULE_OVL0 &&
+		    disp_helper_get_option(DISP_OPT_BYPASS_PQ) &&
+		    !primary_display_is_decouple_mode() &&
+		    !has_sec_layer) {
+			if (m6_ovl_cpu_layer_mirror_count < 80) {
+				DISPERR("M6 OVL cpu layer mirror[%u]: mod=%s L%u global=%u addr=0x%lx pitch=%u fmt=%s/0x%x src=%u dst=%ux%u handle=%p direct=%d bypass_pq=%d\n",
+					m6_ovl_cpu_layer_mirror_count,
+					m6_ovl_module_name(module), local_layer,
+					global_layer, ovl_cfg->addr,
+					ovl_cfg->src_pitch,
+					unified_color_fmt_name(ovl_cfg->fmt),
+					ovl_cfg->fmt, ovl_cfg->source,
+					ovl_cfg->dst_w, ovl_cfg->dst_h, handle,
+					!primary_display_is_decouple_mode(),
+					disp_helper_get_option(DISP_OPT_BYPASS_PQ));
+				m6_ovl_cpu_layer_mirror_count++;
+			}
+			ovl_layer_config(module, local_layer, has_sec_layer, ovl_cfg, NULL);
+		}
 
 		enabled_layers |= 1 << local_layer;
 
 	}
 
 	DISP_REG_SET(handle, ovl_base_addr(module) + DISP_REG_OVL_SRC_CON, enabled_layers);
+	if (module == DISP_MODULE_OVL0 &&
+	    disp_helper_get_option(DISP_OPT_BYPASS_PQ) &&
+	    !primary_display_is_decouple_mode()) {
+		unsigned long ovl_base = ovl_base_addr(module);
+		unsigned int old_src = DISP_REG_GET(ovl_base + DISP_REG_OVL_SRC_CON);
+		unsigned int stale_layers = old_src & ~enabled_layers;
+
+		if (stale_layers && m6_ovl_cpu_preclear_count < 80) {
+			DISPERR("M6 OVL cpu preclear[%u]: mod=%s old_src=0x%x enabled=0x%x stale=0x%x handle=%p direct=%d bypass_pq=%d\n",
+				m6_ovl_cpu_preclear_count,
+				m6_ovl_module_name(module), old_src, enabled_layers,
+				stale_layers, handle, !primary_display_is_decouple_mode(),
+				disp_helper_get_option(DISP_OPT_BYPASS_PQ));
+			m6_ovl_cpu_preclear_count++;
+		}
+		if (stale_layers) {
+			unsigned int i;
+
+			for (i = 0; i < ovl_layer_num(module); i++) {
+				if (!(enabled_layers & (1 << i)))
+					DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_RDMA0_CTRL +
+							 i * OVL_LAYER_OFFSET, 0);
+			}
+			DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_SRC_CON, enabled_layers);
+		}
+	}
+	if (m6_log_scan)
+		DISPERR("M6 OVL scan[%u]: mod=%s scanned_after=0x%x first_global=%u enabled=0x%x SRC=0x%x EN=0x%x ROI=0x%x PATH=0x%x FLOW=0x%x\n",
+			m6_scan_idx, m6_ovl_module_name(module),
+			pConfig->ovl_layer_scanned, first_global_layer, enabled_layers,
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_SRC_CON),
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_EN),
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_ROI_SIZE),
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_DATAPATH_CON),
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_FLOW_CTRL_DBG));
 
 	return 0;
 }

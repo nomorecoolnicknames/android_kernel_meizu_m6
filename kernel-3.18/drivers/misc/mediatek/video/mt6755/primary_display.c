@@ -113,6 +113,9 @@ static bool primary_present_fence_timeout_diag_logged;
 static bool primary_m6_direct_dsi_route_applied;
 static unsigned int primary_m6_cpu_rdma_log_count;
 static unsigned int primary_m6_smart_ovl_log_count;
+static unsigned int primary_m6_ovl_release_log_count;
+static unsigned int primary_m6_present_update_log_count;
+static unsigned int primary_m6_present_timeout_log_count;
 static unsigned int g_keep;
 static unsigned int g_skip;
 static DISP_POWER_STATE power_stat_backup;
@@ -2998,6 +3001,10 @@ static int _ovl_fence_release_callback(unsigned long userdata)
 	unsigned int addr = 0;
 	int ret = 0;
 	int real_overlap_layers = 0;
+	unsigned int status = 0;
+	bool m6_log_release =
+		primary_m6_diag_sample(&primary_m6_ovl_release_log_count);
+	unsigned int m6_release_idx = primary_m6_ovl_release_log_count - 1;
 
 	MMProfileLogEx(ddp_mmp_get_events()->session_release, MMProfileFlagStart, 1, userdata);
 
@@ -3019,8 +3026,6 @@ static int _ovl_fence_release_callback(unsigned long userdata)
 
 	/*check last ovl status: should be idle when config */
 	if (primary_display_is_video_mode() && !primary_display_is_decouple_mode()) {
-		unsigned int status = 0;
-
 		cmdqBackupReadSlot(pgc->ovl_status_info, 0, &status);
 #ifdef DEBUG_OVL_CONFIG_TIME
 		unsigned int time_event = 0;
@@ -3042,6 +3047,11 @@ static int _ovl_fence_release_callback(unsigned long userdata)
 			ret = -1;
 		}
 	}
+	if (m6_log_release)
+		DISPPR_ERROR("M6 OVL fence release[%u]: userdata=%lu overlap=%d status=0x%x ret=%d video=%d decouple=%d\n",
+			m6_release_idx, userdata, real_overlap_layers, status, ret,
+			primary_display_is_video_mode(),
+			primary_display_is_decouple_mode());
 
 	for (i = 0; i < PRIMARY_SESSION_INPUT_LAYER_COUNT; i++) {
 		int fence_idx = 0;
@@ -3055,6 +3065,10 @@ static int _ovl_fence_release_callback(unsigned long userdata)
 			subtractor &= 0xFFFF;
 			mtkfb_release_fence(primary_session_id, i, fence_idx - subtractor);
 		}
+		if (m6_log_release)
+			DISPPR_ERROR("M6 OVL fence release[%u]: L%d fence=%d subtractor=%d release=%d\n",
+				m6_release_idx, i, fence_idx, subtractor,
+				fence_idx - subtractor);
 		MMProfileLogEx(ddp_mmp_get_events()->primary_ovl_fence_release, MMProfileFlagPulse,
 			       i, fence_idx - subtractor);
 	}
@@ -3257,11 +3271,32 @@ static int _present_fence_release_worker_thread(void *data)
 					DISP_PATH_EVENT_IF_VSYNC, HZ / 20);
 
 			if (ret <= 0) {
-				if (!primary_present_fence_timeout_diag_logged || (count++ % 60) == 0) {
+				if (primary_m6_diag_sample(&primary_m6_present_timeout_log_count)) {
+					timeline_id = disp_sync_get_present_timeline_id();
+					layer_info = _get_sync_info(primary_session_id, timeline_id);
+					DISPPR_ERROR("M6 display: IF_VSYNC timeout[%u]; hold present fence idx=%u timeline=%d value=%d ret=%d event=%d route=0x%x/0x%x m0=0x%x rdma=0x%x in=%u/%u out=%u/%u ovl0_src=0x%x ovl0_2l_src=0x%x\n",
+						primary_m6_present_timeout_log_count - 1,
+						gPresentFenceIndex, timeline_id,
+						layer_info && layer_info->timeline ?
+							layer_info->timeline->value : -1,
+						ret,
+						atomic_read(&primary_display_present_fence_update_event),
+						DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+						DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+						DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+						DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+						DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+						DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+						DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+						DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+						DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON),
+						DISP_REG_GET(DDP_REG_BASE_DISP_OVL0_2L +
+							DISP_REG_OVL_SRC_CON));
+					primary_present_fence_timeout_diag_logged = true;
+				} else if (!primary_present_fence_timeout_diag_logged ||
+					   (count++ % 60) == 0)
 					DISPPR_ERROR("M6 display: IF_VSYNC timeout; hold present fence idx=%u ret=%d until real VSYNC\n",
 						gPresentFenceIndex, ret);
-					primary_present_fence_timeout_diag_logged = true;
-				}
 				continue;
 			}
 			/* dpmgr_wait_event(pgc->dpmgr_handle, DISP_PATH_EVENT_FRAME_DONE); */
@@ -4393,9 +4428,25 @@ done:
 
 void primary_display_update_present_fence(unsigned int fence_idx)
 {
+	unsigned int old_fence_idx = gPresentFenceIndex;
+	int timeline_id;
+	disp_sync_info *layer_info;
+
 	if (!disp_helper_get_option(DISP_OPT_PRESENT_FENCE))
 		return;
 
+	if (primary_m6_diag_sample(&primary_m6_present_update_log_count)) {
+		timeline_id = disp_sync_get_present_timeline_id();
+		layer_info = _get_sync_info(primary_session_id, timeline_id);
+		DISPPR_ERROR("M6 present fence update[%u]: old=%u new=%u timeline=%d value=%d event=%d video=%d decouple=%d\n",
+			primary_m6_present_update_log_count - 1, old_fence_idx,
+			fence_idx, timeline_id,
+			layer_info && layer_info->timeline ?
+				layer_info->timeline->value : -1,
+			atomic_read(&primary_display_present_fence_update_event),
+			primary_display_is_video_mode(),
+			primary_display_is_decouple_mode());
+	}
 	gPresentFenceIndex = fence_idx;
 	atomic_set(&primary_display_present_fence_update_event, 1);
 	wake_up_interruptible(&primary_display_present_fence_wq);
@@ -5354,6 +5405,22 @@ static int smart_ovl_try_switch_mode_nolock(void)
 			return 0;
 	}
 
+	if (disp_helper_get_option(DISP_OPT_BYPASS_PQ)) {
+		if (pgc->session_mode == DISP_SESSION_DIRECT_LINK_MODE) {
+			if (primary_m6_diag_sample(&primary_m6_smart_ovl_log_count))
+				DISPERR("M6 DDP smart ovl: hold DIRECT_LINK while PQ bypass isolates direct OVL0 route\n");
+			return 0;
+		}
+
+		if (pgc->session_mode == DISP_SESSION_DECOUPLE_MODE) {
+			if (primary_m6_diag_sample(&primary_m6_smart_ovl_log_count))
+				DISPERR("M6 DDP smart ovl: restore DIRECT_LINK; PQ bypass RDMA0-DISP decouple is diagnostic-only\n");
+			do_primary_display_switch_mode(DISP_SESSION_DIRECT_LINK_MODE,
+				pgc->session_id, 0, NULL, 0);
+			return 0;
+		}
+	}
+
 	if (hwc_fps > lcm_fps)
 		hwc_fps = lcm_fps;
 
@@ -5393,11 +5460,6 @@ static int smart_ovl_try_switch_mode_nolock(void)
 			do_primary_display_switch_mode(DISP_SESSION_DECOUPLE_MODE, pgc->session_id, 0, NULL, 0);
 		}
 	} else {
-		if (disp_helper_get_option(DISP_OPT_BYPASS_PQ)) {
-			if (primary_m6_diag_sample(&primary_m6_smart_ovl_log_count))
-				DISPERR("M6 DDP smart ovl: keep DECOUPLE while PQ bypass RDMA0-DISP is active\n");
-			return 0;
-		}
 		bw_th = DC_bw*4;
 		do_div(bw_th, 5);
 		if (DL_bw < bw_th) {
