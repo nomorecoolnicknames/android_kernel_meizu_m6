@@ -280,10 +280,12 @@ static int ddp_m6_primary_direct_mutex_isolation(DDP_SCENARIO_ENUM scenario)
 
 static unsigned int ddp_m6_primary_direct_mutex_clear_mask(void)
 {
-	return ddp_mutex_module_mask(DISP_MODULE_OVL1_2L) |
-		ddp_mutex_module_mask(DISP_MODULE_CCORR) |
-		ddp_mutex_module_mask(DISP_MODULE_AAL) |
-		ddp_mutex_module_mask(DISP_MODULE_GAMMA);
+	/*
+	 * DISP_OPT_BYPASS_PQ bypasses picture processing, not the physical
+	 * direct-link bridge.  COLOR0 -> CCORR -> AAL -> GAMMA -> DITHER must
+	 * stay in the mutex for VALID/READY to propagate to RDMA0.
+	 */
+	return ddp_mutex_module_mask(DISP_MODULE_OVL1_2L);
 }
 
 /* module can be connect if 1 */
@@ -1088,7 +1090,7 @@ int ddp_mutex_set(int mutex_id, DDP_SCENARIO_ENUM scenario, DDP_MODE mode, void 
 		before = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id));
 		queued = before & ~clear_mask;
 		DISP_REG_MASK(handle, DISP_REG_CONFIG_MUTEX_MOD(mutex_id), 0, clear_mask);
-		DISPMSG("M6 DDP mutex isolate: scenario=%s mutex=%d MOD 0x%x queued=0x%x now=0x%x clear=0x%x\n",
+		DISPMSG("M6 DDP mutex isolate: keep PQ bridge scenario=%s mutex=%d MOD 0x%x queued=0x%x now=0x%x clear=0x%x\n",
 			ddp_get_scenario_name(scenario), mutex_id, before, queued,
 			DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)), clear_mask);
 		return 0;

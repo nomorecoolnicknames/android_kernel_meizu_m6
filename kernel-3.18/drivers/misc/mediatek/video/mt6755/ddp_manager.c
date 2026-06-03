@@ -1829,14 +1829,17 @@ static void dpmgr_m6_dump_ovl_layer_decode(const char *event_name,
 
 static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 {
+	unsigned int valid0 = DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0);
+	unsigned int ready0 = DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0);
+	unsigned int larb0_greq = DISP_REG_GET(DISP_REG_CONFIG_SMI_LARB0_GREQ);
 	unsigned int cg = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0);
 	unsigned int cg1 = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1);
 	unsigned int layer;
 
 	DISPERR("M6 DDP timeout[%s]: route VALID=0x%x READY=0x%x OVL0_MOUT=0x%x OVL0_SOUT=0x%x OVL0_SEL=0x%x OVL1_SOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x SW0_RST=0x%x MMSYS_CG=0x%x/%x LARB0_GREQ=0x%x\n",
 		event_name,
-		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
-		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		valid0,
+		ready0,
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_MOUT_EN),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_SOUT_SEL_IN),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_SEL_IN),
@@ -1847,7 +1850,22 @@ static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
 		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_SW0_RST_B),
 		cg, cg1,
-		DISP_REG_GET(DISP_REG_CONFIG_SMI_LARB0_GREQ));
+		larb0_greq);
+	DISPERR("M6 DDP timeout[%s]: direct bits v/r ovl0_mout=%u/%u ovl0_color=%u/%u color_in=%u/%u color_ccorr=%u/%u ccorr_aal=%u/%u aal_gamma=%u/%u gamma_dither=%u/%u dither_out=%u/%u dither_rdma=%u/%u rdma_sout=%u/%u rdma_dsi=%u/%u dsi_in=%u/%u larb0_greq=0x%x\n",
+		event_name,
+		!!(valid0 & (1U << 0)), !!(ready0 & (1U << 0)),
+		!!(valid0 & (1U << 1)), !!(ready0 & (1U << 1)),
+		!!(valid0 & (1U << 3)), !!(ready0 & (1U << 3)),
+		!!(valid0 & (1U << 4)), !!(ready0 & (1U << 4)),
+		!!(valid0 & (1U << 5)), !!(ready0 & (1U << 5)),
+		!!(valid0 & (1U << 6)), !!(ready0 & (1U << 6)),
+		!!(valid0 & (1U << 7)), !!(ready0 & (1U << 7)),
+		!!(valid0 & (1U << 8)), !!(ready0 & (1U << 8)),
+		!!(valid0 & (1U << 9)), !!(ready0 & (1U << 9)),
+		!!(valid0 & (1U << 12)), !!(ready0 & (1U << 12)),
+		!!(valid0 & (1U << 15)), !!(ready0 & (1U << 15)),
+		!!(valid0 & (1U << 30)), !!(ready0 & (1U << 30)),
+		larb0_greq);
 	DISPERR("M6 DDP timeout[%s]: MMSYS_CG gated bits smi_common=%u larb0=%u ovl0=%u color=%u dither=%u rdma0=%u dsi_engine=%u dsi_digital=%u\n",
 		event_name,
 		!!(cg & (1U << 0)), !!(cg & (1U << 1)),

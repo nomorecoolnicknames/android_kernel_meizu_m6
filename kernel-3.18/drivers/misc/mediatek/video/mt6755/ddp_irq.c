@@ -70,6 +70,9 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 	unsigned long base;
 	unsigned long layer0;
 	unsigned long rdma0;
+	unsigned int ovl_greq_num;
+	unsigned int ovl_greq_urg;
+	unsigned int larb0_greq;
 	unsigned int idx;
 
 	if (module != DISP_MODULE_OVL0 ||
@@ -84,8 +87,11 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 	base = ovl_base_addr(module);
 	layer0 = base;
 	rdma0 = base;
+	ovl_greq_num = DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_NUM);
+	ovl_greq_urg = DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_URG_NUM);
+	larb0_greq = DISP_REG_GET(DISP_REG_CONFIG_SMI_LARB0_GREQ);
 
-	DISPERR("M6 OVL irq diag[%u]: intsta=0x%x sta=0x%x inten=0x%x en=0x%x src=0x%x roi=0x%x path=0x%x flow=0x%x addcon=0x%x smi=0x%x greq=0x%x urg=0x%x valid=0x%x ready=0x%x mutex=0x%x/0x%x rdma=0x%x in=%u/%u out=%u/%u\n",
+	DISPERR("M6 OVL irq diag[%u]: intsta=0x%x sta=0x%x inten=0x%x en=0x%x src=0x%x roi=0x%x path=0x%x flow=0x%x addcon=0x%x smi=0x%x ovl_greq=0x%x ovl_urg=0x%x larb0_greq=0x%x valid=0x%x ready=0x%x mutex=0x%x/0x%x rdma=0x%x in=%u/%u out=%u/%u\n",
 		idx, intsta,
 		DISP_REG_GET(base + DISP_REG_OVL_STA),
 		DISP_REG_GET(base + DISP_REG_OVL_INTEN),
@@ -96,8 +102,9 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 		DISP_REG_GET(base + DISP_REG_OVL_FLOW_CTRL_DBG),
 		DISP_REG_GET(base + DISP_REG_OVL_ADDCON_DBG),
 		DISP_REG_GET(base + DISP_REG_OVL_SMI_DBG),
-		DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_NUM),
-		DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_URG_NUM),
+		ovl_greq_num,
+		ovl_greq_urg,
+		larb0_greq,
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
 		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
 		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
@@ -107,6 +114,22 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
 		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
 		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT));
+	DISPERR("M6 OVL irq diag[%u]: ovl_greq decode layer=%u/%u/%u/%u ostd=0x%x dis=%u flush_pre=%u flush_ultra=%u urg_layer=%u/%u/%u/%u urg_th=0x%x urg_bias=%u\n",
+		idx,
+		ovl_greq_num & 0x7,
+		(ovl_greq_num >> 4) & 0x7,
+		(ovl_greq_num >> 8) & 0x7,
+		(ovl_greq_num >> 12) & 0x7,
+		(ovl_greq_num >> 16) & 0xff,
+		(ovl_greq_num >> 24) & 0x7,
+		(ovl_greq_num >> 28) & 0x1,
+		(ovl_greq_num >> 29) & 0x1,
+		ovl_greq_urg & 0x7,
+		(ovl_greq_urg >> 4) & 0x7,
+		(ovl_greq_urg >> 8) & 0x7,
+		(ovl_greq_urg >> 12) & 0x7,
+		(ovl_greq_urg >> 16) & 0x3ff,
+		(ovl_greq_urg >> 28) & 0x1);
 	DISPERR("M6 OVL irq diag[%u]: L0 con=0x%x size=0x%x off=0x%x addr=0x%x pitch=0x%x rdma_ctrl=0x%x gmc=0x%x slow=0x%x fifo=0x%x gmc_s2=0x%x buflow=0x%x rdma_dbg=0x%x\n",
 		idx,
 		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_CON),

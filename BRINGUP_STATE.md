@@ -3454,3 +3454,242 @@ grep -R -n -E 'M6 OVL m4u sample|M6 OVL handoff|M6 OVL irq diag|M6 DDP timeout\\
 grep -R -n -E 'hwc|HWC|gralloc|ion|ION|GraphicBuffer|Framebuffer|FB target|cache|flush|sync' <next-capture>
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 OVL m4u sample|M6 OVL handoff|M6 OVL irq diag|RDMA0_EOF"'
 ```
+
+## 2026-06-03 OVL/RDMA route bit and GREQ decode diagnostics
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-03: decode direct-route `VALID/READY` bits
+and distinguish OVL RDMA GREQ config from real SMI LARB0 GREQ state.
+
+Hypothesis: after the live HWC-off SurfaceFlinger isolation, the HWC overlay
+producer is no longer the first display frontier. SurfaceFlinger can force
+GLES/client composition and OVL0 can receive a different framebuffer-target
+MVA, sometimes with sparse nonzero sampled content, but RDMA0 still reports
+`IN=0/0 OUT=0/0`. The next missing fact is which direct-route handoff bit is
+valid/not-ready or ready/not-valid, and whether the repeated `0x10ff5555`
+marker is only the OVL RDMA golden-setting register rather than an SMI grant
+failure.
+
+Evidence: live HWC-off capture
+`/srv/forge/android/meizu_m6/captures/20260603-101011-m6-hwc-off-sf-live-711HEBSR277K5`
+keeps the verified kernel artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl0-m4u-sample-wide/boot-m6-ovl0-m4u-sample-wide.img`
+sha256 `8095627bcbffcecc55ddf9c4b5bca06c245d4d3b28861cf34b2ad7e1116c225a`,
+while replacing only userspace `libsurfaceflinger.so`. The capture has
+`debug.sf.disable_hwc=1`; `dumpsys SurfaceFlinger` shows `BootAnimation#0` as
+`GLES` plus an `HWC_FRAMEBUFFER_TARGET`; `M6 OVL m4u sample[37:pre-dpmgr]`
+for `mva=0x1e00000` reports `samples=256`, `nonzero=8`, `first_nz=184721`,
+and `sum=0x7f8000000`; the same runtime still has `PathMode:DIRECT_LINK`,
+`DISP_OPT_BYPASS_PQ=1`, OVL underflow/not-complete IRQs, and RDMA0
+`IN=0/0 OUT=0/0`. Timeout markers show `VALID=0x3a`, `READY=0x40009300`,
+`LARB0_GREQ=0x0`, all relevant display clock gates ungated, and OVL IRQ
+markers show `greq=0x10ff5555` from `DISP_REG_OVL_RDMA_GREQ_NUM`. Source
+inspection of `ddp_ovl.c` confirms `0x10ff5555` is the configured OVL golden
+setting for layer GREQ counts/OSTD/pre-ultra flush, not the
+`DISP_REG_CONFIG_SMI_LARB0_GREQ` not-grant register.
+
+INFERENCE: an SMI LARB0 not-grant condition is not proven by the current
+`greq=0x10ff5555` marker. The useful next evidence is route handshake decode
+and an unambiguous label for `ovl_greq` versus `larb0_greq`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_irq.c` renames the OVL
+  IRQ `greq` field to `ovl_greq`, adds `larb0_greq`, and decodes
+  `DISP_REG_OVL_RDMA_GREQ_NUM` / `DISP_REG_OVL_RDMA_GREQ_URG_NUM` into layer
+  GREQ, OSTD, flush, and urgency fields.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` adds a
+  compact direct-route `VALID/READY` bit line for OVL0->COLOR,
+  DITHER->RDMA0, RDMA0->DSI0, and DSI0 input bits beside the existing timeout
+  dump.
+- `BRINGUP_STATE.md` records the corrected interpretation and expected
+  markers.
+
+Why each file changed: `ddp_irq.c` owns the OVL0 underflow/not-complete IRQ
+boundary where the ambiguous `greq=0x10ff5555` string currently appears.
+`ddp_manager.c` owns the VSYNC/frame-done timeout dump where RDMA0 still has
+zero input despite direct-route registers looking configured. Both changes are
+read-only markers and do not touch route selection, CMDQ events, fences, PQ,
+DSI, panel init, or clock enable behavior.
+
+Expected next marker: the next verified boot should emit `M6 OVL irq diag[...]`
+with `ovl_greq=...`, `larb0_greq=...`, and `ovl_greq decode ...`; VSYNC
+timeout dumps should emit `M6 DDP timeout[VSYNC]: direct bits v/r ...`. A
+useful result is either a specific direct-route bit that stays `valid=0` before
+RDMA0, or proof that route bits are healthy while RDMA0 still has zero input,
+which moves the frontier to RDMA0 input gating or DSI video acceptance.
+
+Rollback condition: revert this diagnostic if it regresses before root
+ADB/SurfaceFlinger/fb0, if the added logging hides earlier OVL/RDMA evidence,
+or if build/runtime proves the register reads are unsafe on this path. Do not
+revert solely for continued black display; this patch is observation-only.
+
+Verification commands:
+
+```bash
+git diff --check
+make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 O=/home/n8n/forge-work/kernel-builds/m6-directlink-smartovl-20260602/out ARCH=arm64 CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- -j4 Image.gz-dtb
+grep -R -n -E 'M6 OVL irq diag.*(ovl_greq|larb0_greq|ovl_greq decode)|M6 DDP timeout\\[VSYNC\\]: direct bits|M6 OVL m4u sample|RDMA0_EOF' <next-capture>
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 OVL irq diag.*(ovl_greq|larb0_greq|ovl_greq decode)|M6 DDP timeout\\[VSYNC\\]: direct bits|RDMA0_EOF" | tail -120'
+```
+
+Test result FACT: route/GREQ decode artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl-rdma-greq-route-decode/boot-m6-ovl-rdma-greq-route-decode.img`
+sha256 `bc1a588cc3f4887ab210af75eb48894ae9ba855cfb9af30bfe7a6f24b4cc43be`
+was flashed only to serial `711HEBSR277K5`; readback
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl-rdma-greq-route-decode/readback-boot-m6-ovl-rdma-greq-route-decode.img`
+matches the same sha256 with `cmp_exit=0`. Matching `System.map` is
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-ovl-rdma-greq-route-decode/System.map`
+sha256 `3ea46eaee9f7e6adf5ee967f6879d46b2e88789e2ee6f524bdf71bfdac37878c`.
+Fresh captures
+`/srv/forge/android/meizu_m6/captures/20260603-103810-m6-ovl-rdma-greq-route-decode-711HEBSR277K5`
+and
+`/srv/forge/android/meizu_m6/captures/20260603-104050-m6-hwc-off-ovl-rdma-greq-route-decode-711HEBSR277K5`
+both reach `sys.boot_completed=1`.
+
+Test result FACT: HWC-active and HWC-off captures both keep the same failing
+hardware boundary. Runtime has `PathMode:DIRECT_LINK`, `DISP_OPT_BYPASS_PQ=1`,
+OVL underflow/not-complete IRQs, RDMA0 `IN=0/0 OUT=0/0`, and route
+`VALID=0x3a READY=0x40009300`. `M6 OVL irq diag[...]` now distinguishes
+`ovl_greq=0x10ff5555` from `larb0_greq=0x0`; decoded `ovl_greq` reports layer
+GREQ `5/5/5/5`, OSTD `0xff`, and pre-ultra flush set. This rejects the
+previous SMI LARB0 not-grant interpretation for this marker.
+
+INFERENCE: `VALID=0x3a` means bits 1, 3, 4, and 5 are valid while bits 6, 7,
+8, 9, 12, 15, and 30 are not valid. `READY=0x40009300` means the downstream
+tail beginning at DITHER/RDMA0/DSI0 is ready. The proven direct-link hole is
+between `CCORR->AAL` and `DITHER`. Source inspection shows the active M6
+`DISP_OPT_BYPASS_PQ` isolation clears `CCORR`, `AAL`, and `GAMMA` from the
+mutex even though the scenario route still contains
+`COLOR0 -> CCORR -> AAL -> GAMMA -> DITHER`. That behavior can prevent
+`AAL->GAMMA` / `GAMMA->DITHER` VALID propagation before RDMA0.
+
+## 2026-06-03 PQ bridge mutex pass-through fix
+
+PATCH HISTORY, BOOT-UNBLOCK, 2026-06-03: keep the required CCORR/AAL/GAMMA
+bridge modules in the primary direct-link mutex while `DISP_OPT_BYPASS_PQ` is
+enabled.
+
+Hypothesis: the display stack reaches Android, SurfaceFlinger, HWC-off GLES
+composition, OVL0 layer programming, and the direct OVL0 path, but RDMA0 still
+never receives input because the M6 PQ bypass isolation removes physical bridge
+modules from mutex membership. PQ bypass should disable picture processing
+effects, not remove the CCORR/AAL/GAMMA hardware path that connects COLOR0 to
+DITHER. Keeping these modules in the mutex should allow VALID to propagate
+through bits 6/7 to DITHER/RDMA0 and advance the frontier from RDMA0 input
+starvation to either DSI/panel output or producer content.
+
+Evidence: verified artifact and captures from the preceding route/GREQ
+diagnostic are listed above. The decisive marker is `VALID=0x3a` and
+`READY=0x40009300` in both HWC-active and HWC-off captures, with RDMA0
+`IN=0/0 OUT=0/0` and `larb0_greq=0x0`. The route bit map in `ddp_dump.h`
+defines bit 4 as `COLOR__CCORR`, bit 5 as `CCORR__AAL`, bit 6 as
+`AAL__GAMMA`, bit 7 as `GAMMA__DITHER`, bit 8 as `DITHER__DITHER_MOUT`,
+bit 9 as `DITHER_MOUT0__RDMA0`, bit 12 as `RDMA0__RDMA0_SOUT`, bit 15 as
+`RDMA0_SOUT2__DSI0_SIN1`, and bit 30 as `DIS0_SEL__DSI0`. The source path in
+`ddp_path.c` had been clearing `DISP_MODULE_CCORR`, `DISP_MODULE_AAL`, and
+`DISP_MODULE_GAMMA` from the mutex under `DISP_OPT_BYPASS_PQ`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c` changes the M6
+  direct-link PQ isolation mask so it clears only stale `OVL1_2L` and keeps
+  `CCORR`, `AAL`, and `GAMMA` in the mutex; the log marker now says
+  `M6 DDP mutex isolate: keep PQ bridge ...`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c` expands the
+  direct-route marker to print bits 0, 1, 3, 4, 5, 6, 7, 8, 9, 12, 15, and 30
+  so the next capture can prove exactly where VALID/READY stops.
+- `BRINGUP_STATE.md` records the behavior fix, evidence, expected marker,
+  rollback condition, and verification commands.
+
+Why each file changed: `ddp_path.c` owns mutex module programming for the
+primary display scenarios and contains the proven M6 isolation mask. The path
+still routes through the PQ bridge modules, so keeping them in mutex is the
+minimum behavior change tied to the route-bit evidence. `ddp_manager.c` owns
+the timeout register dump and must show the previously omitted bridge bits that
+falsify or confirm the fix.
+
+Expected next marker: the next verified boot should log
+`M6 DDP mutex isolate: keep PQ bridge ... clear=0x...` with only the `OVL1_2L`
+mask cleared. Mutex `M0_MOD` should retain the CCORR/AAL/GAMMA bits and the
+direct route marker should show `aal_gamma`, `gamma_dither`, `dither_out`, and
+`dither_rdma` as valid/ready or move the failure to a later named bit. RDMA0
+should begin incrementing `IN/OUT` or the capture should prove a later DSI/panel
+or producer-content boundary.
+
+Rollback condition: revert this patch if a verified boot regresses before root
+ADB/SurfaceFlinger/fb0, if the mutex now includes the PQ bridge but route bits
+or RDMA0 counters prove no progress and a stock/donor source comparison shows
+these modules must be excluded in this mode, or if the new markers prove the
+first failing boundary is earlier than the PQ bridge. Do not revert solely for
+continued black screen until the route bits and RDMA0 counters are compared.
+
+Verification commands:
+
+```bash
+git diff --check
+make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 O=/home/n8n/forge-work/kernel-builds/m6-directlink-smartovl-20260602/out ARCH=arm64 CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- -j4 Image.gz-dtb
+grep -R -n -E 'M6 DDP mutex isolate: keep PQ bridge|M6 DDP timeout\\[VSYNC\\]: direct bits|M6 OVL irq diag.*(ovl_greq|larb0_greq)|RDMA0_EOF|M6 OVL m4u sample' <next-capture>
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 DDP mutex isolate: keep PQ bridge|M6 DDP timeout\\[VSYNC\\]: direct bits|M6 OVL irq diag.*(ovl_greq|larb0_greq)|RDMA0_EOF" | tail -160'
+```
+
+Test result FACT: PQ bridge mutex pass-through artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-pq-bridge-mutex-pass-through/boot-m6-pq-bridge-mutex-pass-through.img`
+sha256 `e428c9b8c50a0f8d72ad1fc0bb9a70f62611c77599fa197bbe818624ccc4214a`
+was flashed only to serial `711HEBSR277K5`; readback
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-pq-bridge-mutex-pass-through/readback-boot-m6-pq-bridge-mutex-pass-through.img`
+matches the same sha256 with `cmp_exit=0`. Matching `Image.gz-dtb` is
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-pq-bridge-mutex-pass-through/Image.gz-dtb`
+sha256 `8810425c67d22825dbfb7de25759615f10467283deb5beb44e8f4def42d40213`;
+matching `System.map` is
+`/srv/forge/android/export/meizu_m6_artifacts/20260603-m6-pq-bridge-mutex-pass-through/System.map`
+sha256 `02e44abdd7c1b0194c5c6d5589a33f88d5cc96b9f590f2885906a42af9c9dce3`.
+The fresh capture is
+`/srv/forge/android/meizu_m6/captures/20260603-110328-m6-pq-bridge-mutex-pass-through-711HEBSR277K5`;
+it reaches `sys.boot_completed=1` and `init.svc.bootanim=stopped`.
+
+Test result FACT: the direct-link starvation moved forward. The capture has
+`M6 DDP mutex isolate: keep PQ bridge scenario=primary_disp mutex=0 MOD
+0x5f280 queued=0x5f280 now=0x5f280 clear=0x100000`, proving the bridge modules
+remained in mutex membership and only stale `OVL1_2L` was cleared. Runtime
+still reports `PathMode:DIRECT_LINK` and `DISP_OPT_BYPASS_PQ=1`, but RDMA0 now
+transfers: `RDMA0 Transfer` count `8528`, `Primary Path Trigger` count `1214`,
+and route state includes `VALID=0x4000937a` with nonzero RDMA `IN/OUT` counters
+such as `IN=608/992 OUT=42/989`.
+
+Test result FACT: Android's internal composition is no longer black. Capture
+file
+`/srv/forge/android/meizu_m6/captures/20260603-110328-m6-pq-bridge-mutex-pass-through-711HEBSR277K5/screen.png`
+is a valid `720x1280` PNG sha256
+`9071e79080656e8aed1793500cf7e86f4c699b612d2b26bf7cea73c43ed4491b`,
+showing the lock screen wallpaper, status bar, notifications, and charging
+state. `dumpsys SurfaceFlinger` shows the built-in screen at `720x1280`,
+`powerMode=2`, `isDisplayOn=1`, HWC enabled, and layers including
+`ImageWallpaper#0`, `StatusBar#0`, and `HWC_FRAMEBUFFER_TARGET`. `fb0-head.raw`
+is still all zero, but that is not decisive now because composition is through
+HWC/overlay rather than a linear fb0 scanout.
+
+Test result FACT: live backlight state was low after boot and was raised for
+visual confirmation. Before the live write,
+`/sys/class/leds/lcd-backlight/brightness=10` while max brightness is `255` and
+Display Power is ON. The live command sequence in
+`/srv/forge/android/meizu_m6/captures/20260603-110328-m6-pq-bridge-mutex-pass-through-711HEBSR277K5/live-brightness-255.txt`
+sets manual brightness and writes `255` to the LCD backlight sysfs node; the
+node then reads back `255`.
+
+INFERENCE: the PQ bridge mutex patch closes the previously proven
+OVL/RDMA direct-link starvation. If the physical LCD is still black after the
+brightness-255 live write, the next frontier is DSI/panel/backlight electrical
+output or panel command acceptance, not SurfaceFlinger, HWC producer content,
+OVL MVA content, PQ bridge mutex membership, or RDMA0 transfer.
+
+Expected next marker: human visual confirmation after the brightness-255 live
+write. If the panel is still physically black, run a DSI BIST/color-pattern
+visual test and add a bounded DSI/MIPITX register or DCS-readback diagnostic
+around `ddp_dsi_start`, `ddp_dsi_config`, panel init, and backlight command
+paths.
+
+Verification commands:
+
+```bash
+grep -R -n -E 'M6 DDP mutex isolate: keep PQ bridge|PathMode:DIRECT_LINK|DISP_OPT_BYPASS_PQ|RDMA0 Transfer|VALID=0x4000937a|lcm_setbacklight|backlight' /srv/forge/android/meizu_m6/captures/20260603-110328-m6-pq-bridge-mutex-pass-through-711HEBSR277K5
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-pq-bridge-mutex-pass-through/boot-m6-pq-bridge-mutex-pass-through.img /srv/forge/android/export/meizu_m6_artifacts/20260603-m6-pq-bridge-mutex-pass-through/readback-boot-m6-pq-bridge-mutex-pass-through.img /srv/forge/android/meizu_m6/captures/20260603-110328-m6-pq-bridge-mutex-pass-through-711HEBSR277K5/screen.png
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /sys/class/leds/lcd-backlight/brightness; dumpsys SurfaceFlinger | grep -E "powerMode|isDisplayOn|Display 0|Built-in Screen"; dumpsys window displays | grep -E "DisplayFrames|mDisplayId|cur=|app="'
+```
