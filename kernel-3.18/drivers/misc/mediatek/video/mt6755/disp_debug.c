@@ -533,7 +533,9 @@ void mtkfb_process_dbg_opt(const char *opt)
 		}
 
 		if (pattern) {
+			primary_display_manual_lock();
 			DSI_BIST_Pattern_Test(DISP_MODULE_DSI0, NULL, true, pattern);
+			primary_display_manual_unlock();
 			DISPMSG("enable dsi pattern: 0x%08x\n", pattern);
 		} else {
 			primary_display_manual_lock();
@@ -588,8 +590,8 @@ void mtkfb_process_dbg_opt(const char *opt)
 		return;
 	} else if (0 == strncmp(opt, "resume", 6)) {
 		primary_display_resume();
-	} else if (0 == strncmp(opt, "m6_lcm_reinit", 14)) {
-		char *p = (char *)opt + 14;
+	} else if (0 == strncmp(opt, "m6_lcm_reinit", 13)) {
+		char *p = (char *)opt + 13;
 		unsigned int force_power = 1;
 
 		if (*p == ':') {

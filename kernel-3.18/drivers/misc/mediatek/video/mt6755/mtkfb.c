@@ -32,6 +32,7 @@
 #include <linux/dma-buf.h>
 #include <linux/uaccess.h>
 #include <linux/atomic.h>
+#include <linux/err.h>
 /* #include <asm/mach-types.h> */
 #include <asm/cacheflush.h>
 #include <linux/io.h>
@@ -2929,24 +2930,51 @@ static int lcm_pinctl_gpio_probe(struct platform_device *pdev)
 	printk ("[lcm_pinctl %d] mt_lcm_pinctl_pinctrl----------\n", pdev->id);
 	return 0;
 }
+
+static int lcm_pinctl_select_state_checked(const char *name,
+					   struct pinctrl_state *state)
+{
+	int ret;
+
+	if (IS_ERR_OR_NULL(lcm_pinctl_pinctrl) || IS_ERR_OR_NULL(state)) {
+		printk(KERN_ERR
+		       "[lcm_pinctl] M6 output skipped: state=%s pctrl=%p state_ptr=%p\n",
+		       name, lcm_pinctl_pinctrl, state);
+		return -ENODEV;
+	}
+
+	ret = pinctrl_select_state(lcm_pinctl_pinctrl, state);
+	printk(KERN_ERR "[lcm_pinctl] M6 output state=%s ret=%d\n", name, ret);
+	return ret;
+}
+
 void lcm_pinctl_gpio_output(int pin, int level) //pin 0->vsp 1>vsn 2->rst   0->pull_down   1->pull_up 
 {
 	printk ("[lcm_pinctl] lcm_pinctl_output pin = %d, level = %d\n", pin, level);
 	if (pin == 0) {
 		if (level)
-			pinctrl_select_state(lcm_pinctl_pinctrl, lcm_pinctl_vsp_high);
+			lcm_pinctl_select_state_checked("vsp-pullhigh",
+							lcm_pinctl_vsp_high);
 		else
-			pinctrl_select_state(lcm_pinctl_pinctrl, lcm_pinctl_vsp_low);
+			lcm_pinctl_select_state_checked("vsp-pulllow",
+							lcm_pinctl_vsp_low);
 	} else if (pin == 1){
 		if (level)
-			pinctrl_select_state(lcm_pinctl_pinctrl, lcm_pinctl_vsn_high);
+			lcm_pinctl_select_state_checked("vsn-pullhigh",
+							lcm_pinctl_vsn_high);
 		else
-			pinctrl_select_state(lcm_pinctl_pinctrl, lcm_pinctl_vsn_low);
+			lcm_pinctl_select_state_checked("vsn-pulllow",
+							lcm_pinctl_vsn_low);
 	} else if (pin == 2){
 		if (level)
-			pinctrl_select_state(lcm_pinctl_pinctrl, lcm_pinctl_rst_high);
+			lcm_pinctl_select_state_checked("rst-pullhigh",
+							lcm_pinctl_rst_high);
 		else
-			pinctrl_select_state(lcm_pinctl_pinctrl, lcm_pinctl_rst_low);
+			lcm_pinctl_select_state_checked("rst-pulllow",
+							lcm_pinctl_rst_low);
+	} else {
+		printk(KERN_ERR "[lcm_pinctl] M6 output invalid pin=%d level=%d\n",
+		       pin, level);
 	}
 }
 
@@ -2976,9 +3004,15 @@ int __init mtkfb_init(void)
 
 	MSG_FUNC_ENTER();
 	DISPMSG("mtkfb_init Enter\n");
+	if (platform_driver_register(&lcm_pinctl_gpio_driver) != 0) {
+		printk("unable to register lcm_pinctl gpio driver.\n");
+		r = -ENODEV;
+		goto exit;
+	}
 	if (platform_driver_register(&mtkfb_driver)) {
 		PRNERR("failed to register mtkfb driver\n");
 		r = -ENODEV;
+		platform_driver_unregister(&lcm_pinctl_gpio_driver);
 		goto exit;
 	}
 #if 0
@@ -2986,10 +3020,6 @@ int __init mtkfb_init(void)
 	register_early_suspend(&mtkfb_early_suspend_handler);
 #endif
 #endif
-	if (platform_driver_register(&lcm_pinctl_gpio_driver) != 0) {
-		printk ( "unable to register lcm_pinctl gpio driver.\n");
-		return -1;
-    }
 	PanelMaster_Init();
 	DBG_Init();
 	mtkfb_ipo_init();
@@ -3005,6 +3035,7 @@ static void __exit mtkfb_cleanup(void)
 	MSG_FUNC_ENTER();
 
 	platform_driver_unregister(&mtkfb_driver);
+	platform_driver_unregister(&lcm_pinctl_gpio_driver);
 #if 0
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	unregister_early_suspend(&mtkfb_early_suspend_handler);

@@ -94,6 +94,7 @@ static LCM_UTIL_FUNCS lcm_util;
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/platform_device.h>
+#include <linux/jiffies.h>
 
 
 #ifndef CONFIG_FPGA_EARLY_PORTING
@@ -156,6 +157,12 @@ static int tps65132_probe(struct i2c_client *client, const struct i2c_device_id 
 {
 	LCM_LOGI("tps65132_iic_probe\n");
 	LCM_LOGI("TPS: info==>name=%s addr=0x%x\n", client->name, client->addr);
+	if (tps65132_i2c_client && tps65132_i2c_client != client)
+		LCM_LOGI("M6 LCM tps65132 probe replacing active client=%p adapter=%d with client=%p adapter=%d\n",
+			tps65132_i2c_client,
+			tps65132_i2c_client->adapter ?
+				tps65132_i2c_client->adapter->nr : -1,
+			client, client->adapter ? client->adapter->nr : -1);
 	LCM_LOGI("M6 LCM tps65132 probe client=%p adapter=%d name=%s addr=0x%x\n",
 		client, client->adapter ? client->adapter->nr : -1,
 		client->name, client->addr);
@@ -165,9 +172,11 @@ static int tps65132_probe(struct i2c_client *client, const struct i2c_device_id 
 
 static int tps65132_remove(struct i2c_client *client)
 {
-	LCM_LOGI("tps65132_remove\n");
-	tps65132_i2c_client = NULL;
-	i2c_unregister_device(client);
+	LCM_LOGI("M6 LCM tps65132 remove client=%p adapter=%d name=%s active=%p\n",
+		client, client->adapter ? client->adapter->nr : -1,
+		client->name, tps65132_i2c_client);
+	if (tps65132_i2c_client == client)
+		tps65132_i2c_client = NULL;
 	return 0;
 }
 
@@ -623,34 +632,10 @@ static const char *lcm_m6_table_name(struct LCM_setting_table *table)
 	return "custom";
 }
 
-static unsigned int lcm_m6_should_log_cmd(unsigned int cmd)
-{
-	switch (cmd) {
-	case REGFLAG_DELAY:
-	case REGFLAG_UDELAY:
-	case REGFLAG_END_OF_TABLE:
-	case 0xFF:
-	case 0x11:
-	case 0x29:
-	case 0x35:
-	case 0x36:
-	case 0x3A:
-	case 0x51:
-	case 0x2A:
-	case 0x2B:
-		return 1;
-	default:
-		return 0;
-	}
-}
-
 static void lcm_m6_log_table_cmd(const char *tag, unsigned int index,
 	struct LCM_setting_table *entry, unsigned char force_update)
 {
 	unsigned int cmd = entry->cmd;
-
-	if (!lcm_m6_should_log_cmd(cmd))
-		return;
 
 	if (cmd == REGFLAG_DELAY || cmd == REGFLAG_UDELAY ||
 	    cmd == REGFLAG_END_OF_TABLE) {
@@ -681,6 +666,7 @@ static void push_table(void *cmdq, struct LCM_setting_table *table,
 		LCM_LOGI("M6 LCM push_table start tag=%s count=%u force=%u cmdq=%p\n",
 			tag, count, force_update, cmdq);
 	for (i = 0; i < count; i++) {
+		unsigned long start_jiffies = jiffies;
 
 		cmd = table[i].cmd;
 		if (log_table)
@@ -705,6 +691,9 @@ static void push_table(void *cmdq, struct LCM_setting_table *table,
 		default:
 			dsi_set_cmdq_V22(cmdq, cmd, table[i].count, table[i].para_list, force_update);
 		}
+		if (log_table)
+			LCM_LOGI("M6 LCM table[%s] idx=%u done cmd=0x%04x elapsed_ms=%u\n",
+				tag, i, cmd, jiffies_to_msecs(jiffies - start_jiffies));
 	}
 	if (log_table)
 		LCM_LOGI("M6 LCM push_table end tag=%s count=%u force=%u cmdq=%p\n",

@@ -4116,3 +4116,134 @@ adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 LCM handof
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_lcm_reinit:1 > /d/mtkfb; sleep 2; echo ata > /d/mtkfb; cat /d/mtkfb'
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo 255 > /sys/class/leds/lcd-backlight/brightness; echo dsipattern:0x00ff0000 > /d/mtkfb; sleep 8; echo dsipattern:0 > /d/mtkfb'
 ```
+
+Runtime result FACT, 2026-06-04: the earlier unsafe manual force-init path was
+reworked into a bounded stop/reset/init/start sequence and tested with boot
+image
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-lcm-safe-reinit-tabletiming/boot-m6-lcm-safe-reinit-tabletiming.img`
+sha256 `d1c479fbb91e880016d6edf7c13a613276a4435d7bc6e1dbdd9caf8f20e2f547`.
+Readback matched the local image. Capture
+`/srv/forge/android/meizu_m6/captures/20260604-174621-m6-safe-reinit-tabletiming-711HEBSR277K5`
+showed `sys.boot_completed=1`, SurfaceFlinger running, a non-black
+screencap, `m6_lcm_reinit:1` returning `ret=0`, and no OVL underflow /
+abnormal SOF after the reinit sequence. The same capture proved the active
+TPS65132 DT client was wrong: runtime sysfs had `4-003e` under
+`11011000.i2c`, and LCM reinit logged TPS writes timing out/failing on adapter
+4.
+
+Runtime result FACT, 2026-06-04: live bus sweep capture
+`/srv/forge/android/meizu_m6/captures/20260604-175603-m6-tps65132-bus-sweep-711HEBSR277K5`
+proved the bias chip responds on Linux adapter 0. The pstore file
+`pstore-after-return/pstore/console-ramoops` shows the generated adapter-3
+test failing (`ret=-22`) at lines 468-477, then a manually instantiated
+adapter-0 client at line 2177, and successful writes
+`ret=2 ... adapter=0` at lines 2213 and 2216. Deleting that test client then
+hit a NULL dereference in `tps65132_remove` after the driver recursively called
+`i2c_unregister_device()` from its `.remove` path.
+
+PATCH HISTORY, GROUPED M6 DISPLAY/TPS CHECKPOINT, 2026-06-04: safe post-boot
+LCM reinit, full LCM table timing diagnostics, TPS65132 bus0 binding, and
+TPS65132 remove fix.
+
+Hypothesis: the M6 panel path had two independent proven blockers. First, the
+post-boot `m6_lcm_reinit` command was useful but too unsafe when it ran full
+LCM reset/init while the trigger loop and DDP path were active, causing OVL
+underflow / abnormal SOF or earlier crashes. Second, the TPS65132 bias client
+was generated on the wrong I2C bus even though stock/source code and live
+probing prove the hardware is on adapter 0. A safe stop/reset/init/start
+sequence plus a bus0 DT override should make Linux-side reset/bias/init
+observable and stable after Android is already up.
+
+Evidence: the safe-reinit artifact and capture listed above closed the
+post-boot reinit stability problem. The bus sweep pstore listed above closed
+the TPS bus location and remove-crash problems. The tested bus0 artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-tps-bus0-dts-removefix/boot-m6-tps-bus0-dts-removefix.img`
+has sha256
+`c88c634e6006ca59b71f48c6c870e66dca23aab9b821d0f673e2026dbd669485`;
+readback in
+`/srv/forge/android/meizu_m6/captures/20260604-182046-m6-tps-bus0-reinit-711HEBSR277K5`
+matches that hash with `cmp_exit=0`. Decompiled DTB in the artifact has the
+active `i2c_lcd_bias@3e` under `i2c@11007000`; runtime capture
+`/srv/forge/android/meizu_m6/captures/20260604-181456-m6-tps-bus0-dts-removefix-711HEBSR277K5/sysfs/i2c.txt`
+shows `/sys/bus/i2c/devices/0-003e i2c_lcd_bias`. The controlled reinit
+capture `20260604-182046-m6-tps-bus0-reinit-711HEBSR277K5` logs
+`M6 LCM tps65132 write ... ret=2 ... adapter=0`, completes
+`M6 LCM debug reinit: end ret=0`, and keeps SurfaceFlinger/FB/RDMA alive.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c`
+  (**PROPER-FIX**) registers the LCM pinctrl platform driver before `mtkfb`
+  and makes pinctrl state selection checked/logged instead of dereferencing
+  missing state pointers.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`
+  (**BOOT-UNBLOCK + DIAGNOSTIC**) makes `primary_display_m6_lcm_reinit()`
+  stop the CMDQ trigger loop, wait/stop/reset the path, run `disp_lcm_init`,
+  restart the path, retrigger video mode, and restart the trigger loop with
+  boundary markers.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`
+  (**PROPER-FIX + DIAGNOSTIC**) fixes the `m6_lcm_reinit` parser length and
+  wraps DSI BIST enable with the same manual display lock used by disable.
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+  (**DIAGNOSTIC + PROPER-FIX**) logs every init-table entry with elapsed time,
+  logs TPS client replacement, and removes the recursive unregister from
+  `tps65132_remove`.
+- `kernel-3.18/arch/arm64/boot/dts/meizu_m6.dts` (**PROPER-FIX**) disables
+  stale generated `i2c_lcd_bias@3e` nodes under the wrong buses and binds the
+  bias device under `&i2c0`.
+- `BRINGUP_STATE.md` records the required evidence and rollback/verification
+  route for this grouped checkpoint.
+
+Why each file changed: `mtkfb.c` owned the missing-pinctrl crash boundary seen
+while exercising Linux LCM init. `primary_display.c` and `disp_debug.c` own the
+manual debugfs reinit/BIST control surface. The LCM driver owns the bias client
+and init-table observability. `meizu_m6.dts` is the compiled DT source that
+selects which Linux adapter probes `mediatek,i2c_lcd_bias`; the live bus sweep
+proved adapter 0 is the hardware truth and adapter 3/4 are wrong for this
+panel bias chip.
+
+Expected next marker: with boot sha256
+`c88c634e6006ca59b71f48c6c870e66dca23aab9b821d0f673e2026dbd669485`, Android
+should boot to `sys.boot_completed=1`, runtime sysfs should expose
+`/sys/bus/i2c/devices/0-003e`, and `echo m6_lcm_reinit:1 > /d/mtkfb` should
+log TPS writes `ret=2 adapter=0`, init table entries through `0x11` and `0x29`,
+`M6 LCM debug reinit: end ret=0`, no transfer timeout, and no
+`tps65132_remove` crash. If the physical panel remains black, the next display
+frontier is not TPS bias; it is DSI command/readback or video-stream/panel
+acceptance.
+
+Current next blocker FACT: after the bus0 fix, controlled capture
+`/srv/forge/android/meizu_m6/captures/20260604-182046-m6-tps-bus0-reinit-711HEBSR277K5`
+still logs `M6 LCM ATA expected=00 b4 02 1c read=00 00 00 00 ret=0` after the
+successful reset/bias/init sequence. DSI BIST registers toggle
+`BIST_PATTERN=0xff0000`, `BIST_CON=0x200040`, `self_pat=1`, and `dsi0`
+interrupts advance from all-zero to nonzero (`73/1/4/2` in the after sample),
+while SurfaceFlinger still reports a `720x1280` built-in screen,
+`powerMode=2`, `isDisplayOn=1`, HWC target, and flips. INFERENCE: TPS bias and
+post-boot reinit sequencing are no longer the earliest known blockers. The next
+patch should add DSI/PHY/DCS read/write diagnostics around ATA and init command
+submission, and should use physical BIST visibility as the branch point:
+visible BIST means scanout/input path; invisible BIST means DSI/PHY/panel
+output.
+
+Rollback condition: revert the DTS bus0 override if a verified boot of this
+exact artifact binds `i2c_lcd_bias` somewhere other than adapter 0 or regresses
+before ADB/SurfaceFlinger. Revert the reinit sequencing only if the verified
+artifact regresses before issuing `m6_lcm_reinit` or if the command causes a
+new panic/no-ADB state. Revert the `tps65132_remove` change only if a normal
+driver unbind path proves it must unregister the already-removing client, which
+would contradict the Linux I2C driver model and the observed recursive
+remove crash.
+
+Verification commands:
+
+```bash
+git diff --check
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-tps-bus0-dts-removefix/SHA256SUMS
+grep -n -E 'i2c_lcd_bias|11007000|11011000' /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-tps-bus0-dts-removefix/meizu_m6.dts.decompiled
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 exec-out 'dd if=/dev/block/mmcblk0p21 bs=2048 count=4328 2>/dev/null' > /tmp/m6-readback.img
+head -c "$(stat -c%s /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-tps-bus0-dts-removefix/boot-m6-tps-bus0-dts-removefix.img)" /tmp/m6-readback.img | sha256sum
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'ls -l /sys/bus/i2c/devices/0-003e; readlink -f /sys/bus/i2c/devices/0-003e'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo 255 > /sys/class/leds/lcd-backlight/brightness; echo m6_lcm_reinit:1 > /d/mtkfb; sleep 2; echo ata > /d/mtkfb; cat /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 LCM debug reinit|M6 LCM tps65132 write|M6 LCM ATA|bist-post|transfer timeout|transfer error" | tail -220'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /proc/interrupts | grep -E "mtk_cmdq|ovl0|rdma0|dsi0|mali"; dumpsys SurfaceFlinger | grep -E "Built-in Screen|powerMode|isDisplayOn|flips="'
+```

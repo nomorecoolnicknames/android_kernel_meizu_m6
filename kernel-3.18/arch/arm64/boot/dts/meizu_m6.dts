@@ -1063,6 +1063,9 @@ hw-dev-detect@0{
 };
 
 &i2c1 {
+	i2c_lcd_bias@3e {
+		status = "disabled";
+	};
 	gsensor@18 {
 		compatible = "mediatek,gsensor2";
 		reg = <0x18>;
@@ -1100,6 +1103,21 @@ hw-dev-detect@0{
 		status = "disabled";
 	};
 };
+
+&i2c3 {
+	i2c_lcd_bias@3e {
+		status = "disabled";
+	};
+};
+
+&i2c0 {
+	i2c_lcd_bias@3e {
+		compatible = "mediatek,i2c_lcd_bias";
+		reg = <0x3e>;
+		status = "okay";
+	};
+};
+
 &ext_buck_vmd1 {
 	pinctrl-names = "default", "vmd1_sel_low", "vmd1_sel_high";
 

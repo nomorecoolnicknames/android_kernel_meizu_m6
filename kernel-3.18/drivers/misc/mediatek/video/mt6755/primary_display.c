@@ -5891,21 +5891,63 @@ CMDQ_SWITCH primary_display_cmdq_enabled(void)
 int primary_display_m6_lcm_reinit(unsigned int force_power)
 {
 	int ret;
+	int wait_ret;
+	int was_video;
+	CMDQ_SWITCH use_cmdq;
 
 	if (!pgc || !pgc->plcm) {
 		DISPERR("M6 LCM debug reinit: no primary LCM handle\n");
 		return -1;
 	}
 
-	DISPERR("M6 LCM debug reinit: start force=%u state=%d video=%d cmdq=%d\n",
-		force_power, primary_get_state(), primary_display_is_video_mode(),
-		primary_display_cmdq_enabled());
+	was_video = primary_display_is_video_mode();
+	use_cmdq = primary_display_cmdq_enabled();
+	DISPERR("M6 LCM debug reinit: start force=%u state=%d video=%d cmdq=%d busy=%d\n",
+		force_power, primary_get_state(), was_video, use_cmdq,
+		dpmgr_path_is_busy(pgc->dpmgr_handle));
 
 	_primary_path_lock(__func__);
+	if (use_cmdq) {
+		DISPERR("M6 LCM debug reinit: stop trigger loop begin\n");
+		_cmdq_stop_trigger_loop();
+		DISPERR("M6 LCM debug reinit: stop trigger loop end\n");
+	}
+	if (dpmgr_path_is_busy(pgc->dpmgr_handle)) {
+		DISPERR("M6 LCM debug reinit: wait frame before stop begin\n");
+		wait_ret = dpmgr_wait_event_timeout(pgc->dpmgr_handle,
+			DISP_PATH_EVENT_FRAME_DONE, HZ * 1);
+		DISPERR("M6 LCM debug reinit: wait frame before stop ret=%d busy=%d\n",
+			wait_ret, dpmgr_path_is_busy(pgc->dpmgr_handle));
+	}
+	DISPERR("M6 LCM debug reinit: stop path begin\n");
+	dpmgr_path_stop(pgc->dpmgr_handle, CMDQ_DISABLE);
+	DISPERR("M6 LCM debug reinit: stop path end busy=%d\n",
+		dpmgr_path_is_busy(pgc->dpmgr_handle));
+	if (dpmgr_path_is_busy(pgc->dpmgr_handle)) {
+		wait_ret = dpmgr_wait_event_timeout(pgc->dpmgr_handle,
+			DISP_PATH_EVENT_FRAME_DONE, HZ * 1);
+		DISPERR("M6 LCM debug reinit: wait frame after stop ret=%d busy=%d\n",
+			wait_ret, dpmgr_path_is_busy(pgc->dpmgr_handle));
+	}
+	DISPERR("M6 LCM debug reinit: reset path begin\n");
+	dpmgr_path_reset(pgc->dpmgr_handle, CMDQ_DISABLE);
+	DISPERR("M6 LCM debug reinit: reset path end busy=%d\n",
+		dpmgr_path_is_busy(pgc->dpmgr_handle));
 	ret = disp_lcm_init(pgc->plcm, force_power ? 1 : 0);
-	if (!ret && primary_display_is_video_mode()) {
+	DISPERR("M6 LCM debug reinit: lcm init ret=%d\n", ret);
+	DISPERR("M6 LCM debug reinit: start path begin\n");
+	dpmgr_path_start(pgc->dpmgr_handle, CMDQ_DISABLE);
+	DISPERR("M6 LCM debug reinit: start path end busy=%d\n",
+		dpmgr_path_is_busy(pgc->dpmgr_handle));
+	if (!ret && was_video) {
 		DISPERR("M6 LCM debug reinit: trigger video path after init\n");
-		dpmgr_path_trigger(pgc->dpmgr_handle, NULL, primary_display_cmdq_enabled());
+		dpmgr_path_trigger(pgc->dpmgr_handle, NULL, CMDQ_DISABLE);
+	}
+	if (use_cmdq) {
+		DISPERR("M6 LCM debug reinit: start trigger loop begin\n");
+		_cmdq_start_trigger_loop();
+		DISPERR("M6 LCM debug reinit: start trigger loop end\n");
+		cmdqCoreSetEvent(CMDQ_EVENT_DISP_WDMA0_EOF);
 	}
 	_primary_path_unlock(__func__);
 
