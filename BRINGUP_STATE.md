@@ -38,6 +38,54 @@ physical panel remains black; rollback only if the fresh verified DCS sweep
 capture contradicts the frontier by proving an earlier boot/display regression
 or by showing the DSI/panel read boundary is already healthy.
 
+## 2026-06-05 DCS sweep sidecar audit
+
+STATE / READ-ONLY AUDIT, 2026-06-05: independent display sidecar reviewed the
+current physical-display frontier while the source-built flash watcher was
+still polling with no visible `711HEBSR277K5`.
+
+FACT: `/srv/forge/android/export/display_bringup_refs` is not present in this
+workspace, so the next display decision must use local source, `AGENTS_DISPLAY`,
+this state file, and the next verified capture. FACT: the active package is
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-sourcebuilt-softenc-latinime-system-flash`,
+with boot sha256 `6dca836c3e854890f0ce28cb5ebb83af8e12e601144064ae7dbee70c1873fcc6`
+and system sha256 `26ab41d792d93b95266c226449ff36d8ed8652fbf6ff321de27fc09cd1f52378`.
+
+INFERENCE: the next capture question is whether verified boot `6dca836c...`
+and system `26ab41d...` reach ADB/SurfaceFlinger and whether the DCS sweep
+proves one of four states: general BTA/read transport failure, valid packet
+headers with zero RX payload, selective `0x2A`/`0x2B` failure with other panel
+registers nonzero, or healthy panel reads with failure moving to HS video /
+lane / timing / BIST visibility.
+
+Branching for the next postboot capture:
+
+- Missing `M6 LCM ATA dcs[...]` and DSI wrapper/core read logs: the capture did
+  not exercise `echo ata > /d/mtkfb`, or boot/runtime regressed before the
+  display diagnostic.
+- `DSI Read Fail`, wait `ret<=0`, ACK/error packet, or unrecognized packet:
+  investigate DSI command mode, BTA, and LP read readiness.
+- Valid packet headers and `read_count>0`, but all registers zero or unchanged:
+  inspect DSI RX FIFO / payload copy path and panel read state.
+- `0x04`, `0x0A`, or `0xDA`-`0xDC` nonzero while `0x2A`/`0x2B` stay zero:
+  panel responds; focus on init page/window/address-state, not PQ/TPS.
+- DCS reads healthy but physical panel remains black: move frontier to HS video
+  acceptance, lane/timing, or BIST visibility; do not branch back to
+  framebuffer/SF/HWC/PQ without contradictory evidence.
+
+Commands after the source-built helper prints `POSTBOOT_CAPTURE=...`:
+
+```bash
+CAP=/srv/forge/android/meizu_m6/captures/<postboot-dir>
+cat "$CAP/boot-readback-sha256.txt" "$CAP/flash-readback.txt" 2>/dev/null
+rg -n 'M6 LCM ATA dcs|M6 LCM ATA expected|M6 DSI wrapper read|M6 DSI core read wait|M6 DSI core read packet|DSI Read Fail|packet_type|read_count' \
+  "$CAP"/ata-dsi-markers.txt "$CAP"/display-marker-tail.txt "$CAP"/dmesg.txt 2>/dev/null
+rg -n 'sys.boot_completed|init.svc.surfaceflinger|Built-in Screen|powerMode=2|isDisplayOn=1|HWC_FRAMEBUFFER_TARGET|dsi0|rdma0|ovl0' \
+  "$CAP"/boot-state.txt "$CAP"/surfaceflinger.txt "$CAP"/dumpsys-display.txt "$CAP"/interrupts-display.txt 2>/dev/null
+rg -n 'screenrecord|scrcpy|OMX.google.h264|SoftVideoEncoderOMXComponent|M6 softenc isolation|media.codec' \
+  "$CAP"/sourcebuilt-runtime-analysis.txt "$CAP"/screenrecord-720x1280.txt "$CAP"/media-screen-marker-tail.txt 2>/dev/null
+```
+
 ## 2026-06-04 OVL/M4U endpoint correlation diagnostic
 
 PATCH HISTORY, DIAGNOSTIC, 2026-06-04: correlate OVL endpoint math with the
