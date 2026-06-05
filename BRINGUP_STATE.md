@@ -4548,3 +4548,40 @@ adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo 255 > /sys/class/leds/lcd
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 LCM debug reinit|M6 LCM tps65132 write|M6 LCM ATA|bist-post|transfer timeout|transfer error" | tail -220'
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'cat /proc/interrupts | grep -E "mtk_cmdq|ovl0|rdma0|dsi0|mali"; dumpsys SurfaceFlinger | grep -E "Built-in Screen|powerMode|isDisplayOn|flips="'
 ```
+
+## 2026-06-05 Guarded clean-system + DSI-core capture watcher
+
+Operational FACT: local tmux watcher `m6-dsi-diag-flash-20260605` is running
+from
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-core-read-bounded`
+with:
+
+```bash
+ADB_PORT=15039 WAIT_SECONDS=7200 POLL_SECONDS=5 ./m6_wait_capture_flash_clean_runtime_diag.sh
+```
+
+Watcher log:
+`/srv/forge/android/meizu_m6/captures/m6-dsi-diag-flash-20260605-watch.log`.
+
+Current status at watcher start: `15039` was not listening, so the helper only
+logged `port=15039 no-listener` and did not flash anything. `15038` is not an
+M6 endpoint in this session; it is occupied by the separate nx549j watcher and
+returns ADB protocol fault for M6 use. The helper is guarded by both the port
+listener check and `adb -s 711HEBSR277K5 get-state == device` before it captures
+preflash evidence or writes partitions.
+
+Intended next evidence: when the user's reverse tunnel
+`ssh -N -o ExitOnForwardFailure=yes -R 127.0.0.1:15039:127.0.0.1:5037 n8n@100.87.104.62`
+appears and serial `711HEBSR277K5` is `device`, the helper should capture
+preflash state, write clean runtime `system-clean-no-video-le.raw.img`, write
+`boot-m6-dsi-core-read-bounded.img`, verify readback SHA256 for both boot and
+system, reboot, then capture postboot `M6 DSI core read` / `M6 LCM ATA` /
+display state.
+
+Rollback/stop condition: stop the tmux session if a different serial appears
+on `15039`, if the helper reports a readback hash mismatch, or if the user wants
+to flash a different artifact set. Stop command:
+
+```bash
+tmux kill-session -t m6-dsi-diag-flash-20260605
+```
