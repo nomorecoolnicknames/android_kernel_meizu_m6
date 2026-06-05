@@ -1,5 +1,289 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-04 bounded DSI core read summary diagnostic
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-04: add bounded core DCS-read summary
+markers after the wrapper-level read-count artifact.
+
+Hypothesis: the current display frontier is inside the DSI read/packet path,
+not PQ, TPS bias, or reset sequencing. The latest ADB-good TPS/bus0 capture
+shows reinit completing, TPS writes returning `ret=2` on adapter 0, init
+reaching `0x11`/`0x29`, RDMA/BIST activity present, and ATA still reading
+`00 00 00 00`. The safe wrapper artifact only proves the wrapper return count
+and final buffer; if that shows `read_count=0` or sentinel data, the next
+question is whether `DSI_dcs_read_lcm_reg_v2()` receives a read-ready wait,
+which packet type is decoded, and what RX registers contain before copying
+into the LCM buffer.
+
+Evidence: current ADB-good capture
+`/srv/forge/android/meizu_m6/captures/20260604-182046-m6-tps-bus0-reinit-711HEBSR277K5`
+has matching boot/readback sha256
+`c88c634e6006ca59b71f48c6c870e66dca23aab9b821d0f673e2026dbd669485`; its
+`dmesg-focus-after.txt` logs `M6 LCM init ... tps reg0 ret=2`, `tps reg1
+ret=2`, init table completion, `M6 LCM debug reinit: end ret=0`, and then
+`M6 LCM ATA expected=00 b4 02 1c read=00 00 00 00 ret=0`. Display-side audit
+confirmed `DISP_OPT_BYPASS_PQ=1`, so PQ is already isolated.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`
+adds two bounded `M6 DSI core read ...` log lines for the first 32 core reads:
+one immediately after the read-ready wait, and one after packet decoding or an
+unrecognized packet return. It does not add `DSI_DumpRegisters()` calls, new
+waits, reset-policy changes, or extra DSI transactions.
+
+Why each file changed: `ddp_dsi.c` owns the low-level DCS read path used by
+the ILI ATA/readback test. The previous heavy core diagnostic was too risky
+and caused a no-ADB regression before pstore was captured. This patch keeps
+the next evidence to plain state logging: wait return, INTSTA/TRIG/START/CMDQ,
+RX0..RX3, mode/busy, decoded packet type, returned count, retry count, and the
+first four copied bytes.
+
+Expected next marker: after rebuilding/flashing this diagnostic boot image and
+running `echo ata > /d/mtkfb`, dmesg should contain paired
+`M6 DSI wrapper read ...`, `M6 DSI core read wait ...`, `M6 DSI core read
+packet ...`, and `M6 LCM ATA ... read_count=...` lines. If `wait ret` is 0 or
+negative, the next branch is read-ready/interrupt/command-mode state. If the
+packet type is ACK/error `0x02` or unrecognized, inspect DSI command/read
+sequencing. If packet type and count are valid but bytes are zero, move to
+panel-side command/page/read sequencing.
+
+Rollback condition: revert this diagnostic if the rebuilt image fails before
+ADB/boot_completed, if pstore shows DSI read diagnostics triggering a reset
+loop, or if the log volume disrupts normal display/runtime capture. Do not
+promote it to a proper fix; it is evidence only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c BRINGUP_STATE.md
+rg -n 'M6 DSI core read wait|M6 DSI core read packet|DSI_dcs_read_lcm_reg_v2_wrapper_DSI0' kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c
+# build exact target after current ROM build finishes:
+# ./<existing kernel build command for this tree>
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; dmesg | grep -E "M6 DSI wrapper read|M6 DSI core read|M6 LCM ATA|DSI Read Fail" | tail -120'
+```
+
+Build/artifact result: branch `work/m6-rdma0-disp-decpq-20260531` built
+successfully in
+`/srv/forge/work/m6-source-kernel-manual-20260520/out` with:
+
+```bash
+make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+```
+
+The exported diagnostic artifact is
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-core-read-bounded/boot-m6-dsi-core-read-bounded.img`,
+sha256 `5f011eaea1e04fc4a4101d1a129b7acb5545ec3333a8b93311761e6928e1c4a2`,
+size `8863744`. Kernel payload `Image.gz-dtb` sha256 is
+`2d7c0214147502ce5fb1d0d237c798ded49433018ac6e6a7ec2fe0afaa47bdfa`;
+matching `System.map` sha256 is
+`8bbcfa1e4b99b13b3355e652c44599bcb34c032f54d4b837a90493acffc7941c`;
+matching `config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`;
+the reused ADB-working ramdisk sha256 is
+`e82c6695614132e8759b9ee96ee5b9e9efdaf8df96d1ef0c32c5dae8b5e16332`.
+`build-verify.log` sha256 is
+`87c5d4f75d8282bf76bb3dfbe5ed966c6185a908d25fb66ae6039062be1fca7d`.
+`sha256sum -c SHA256SUMS` passed.
+
+`abootimg -i` preserved the safe-wrapper boot geometry: page size `2048`, boot
+name `1552631950`, addresses `0x40080000/0x45000000/0x44000000`, and cmdline
+`bootopt=64S3,32N2,64N2 androidboot.selinux=permissive
+binder.devices=binder,hwbinder,vndbinder`. Marker extraction from the final
+payload confirms `M6 DSI core read wait`, `M6 DSI core read packet`,
+`M6 DSI wrapper read`, `M6 LCM ATA expected`, `M6 DDP timeout`, and
+`DISP_OPT_BYPASS_PQ`.
+
+FACT: At artifact creation time, `127.0.0.1:15039` was free and
+`127.0.0.1:15038` still had only the old reverse listener. The M6 serial
+`711HEBSR277K5` was not visible through a valid ADB server, so the artifact is
+not yet flashed/readback-verified. Flash only after a fresh reverse tunnel is
+visible, and capture boot partition hash before interpreting the new DSI
+markers.
+
+Next flash/capture command once `711HEBSR277K5` is visible:
+
+```bash
+ADB_PORT=15039 /srv/forge/android/export/meizu_m6_artifacts/20260604-223750-m6-los15-runtime-clean-systemimage/m6_clean_runtime_wait_capture_flash.sh --flash
+adb -H 127.0.0.1 -P 15039 -s 711HEBSR277K5 push /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-core-read-bounded/boot-m6-dsi-core-read-bounded.img /dev/block/platform/mtk-msdc.0/by-name/boot
+adb -H 127.0.0.1 -P 15039 -s 711HEBSR277K5 shell sync
+adb -H 127.0.0.1 -P 15039 -s 711HEBSR277K5 reboot
+```
+
+## 2026-06-04 DSI read diagnostic no-ADB rollback
+
+FACT: Commit `e944550ed2f` is the last committed checkpoint before this DSI
+read diagnostic iteration. The follow-up diagnostic artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-dcs-read-diag/boot-m6-dsi-dcs-read-diag.img`
+has sha256 `2ff635df9865ed108f7da0eadb6528d2a4800b1f906cae3a8727fb378e5f2f52`.
+It was flashed to `/dev/block/platform/mtk-msdc.0/by-name/boot` with
+`adb push` because large `adb exec-in dd`/`cat` writes over the current tunnel
+left a mismatching tail. Clean readback
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-dcs-read-diag/boot-readback-adbpush-clean.img`
+matched `2ff635df9865ed108f7da0eadb6528d2a4800b1f906cae3a8727fb378e5f2f52`.
+
+FACT: After reboot from the verified `2ff635df...` boot image, ADB did not
+return for 180 poll iterations in
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-dcs-read-diag/reboot-wait-20260604-184517.txt`.
+The follow-up watcher is
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-dcs-read-diag/wait-capture-after-noadb-*.txt`.
+No pstore/last_kmsg evidence has been captured yet, so the exact failing stage
+is still unknown.
+
+INFERENCE: The failed `2ff635df...` artifact is not safe to keep as the next
+display test image until pstore proves whether the no-ADB regression is caused
+by the heavy core `DSI_dcs_read_lcm_reg_v2()` register-snapshot diagnostic or
+by an unrelated boot/runtime issue. The previous committed TPS/bus0 artifact
+`c88c634e6006ca59b71f48c6c870e66dca23aab9b821d0f673e2026dbd669485`
+had returned ADB and boot_completed before this test.
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-04: reduce DSI read instrumentation to
+wrapper-level read-count logging after the verified no-ADB regression.
+
+Hypothesis: the broad core DCS read diagnostic in `2ff635df...` has too much
+blast radius for the next boot test because it adds extra register reads and
+`dsi_m6_dump_snapshot()` calls inside the low-level DCS read function. Keeping
+only bounded wrapper begin/end logs plus the ILI ATA `read_count` marker should
+preserve the DCS return-value evidence needed for manual `ata` tests while
+removing the highest-risk diagnostic path.
+
+Evidence: verified boot readback for `2ff635df...` matched before reboot, then
+ADB did not return for 180 polls. Source inspection shows the active
+`ili9881p_hd_dsi_txd` driver exposes `.compare_id` and `.ata_check`, and the
+heavy diagnostic patched the shared core `DSI_dcs_read_lcm_reg_v2()` function.
+The safer artifact is
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-readcount-wrapper-safe/boot-m6-dsi-readcount-wrapper-safe.img`
+sha256 `7961fab28e48b615288ad7b17348d373ab61bbca2bdaf05a34bfd80c3d69b157`;
+matching `Image.gz-dtb` sha256 is
+`1567c98d61cba22d883e994d71bd55d10806b671b4ae98bf290b56ae4de22e5f`,
+`System.map` sha256 is
+`38aa046bfce096907de3e6554103ce5c83e595629a6d0a07c963c6cc4de01d55`, and
+`config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+initializes the ATA read buffer and logs `read_count`; `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`
+initializes a DSI read compare counter and adds bounded wrapper begin/end logs,
+without extra core DSI register snapshots.
+
+Why each file changed: the LCM file owns the manual ATA readback marker that
+distinguishes zero-filled buffers from an actual zero-length read; the DSI file
+owns the wrapper that can report `ret` and returned bytes without changing the
+core read state machine or adding new register-dump calls.
+
+Expected next marker: after flashing `7961fab...`, Android should return to
+the prior ADB/boot_completed frontier. Manual `echo ata > /d/mtkfb` should log
+`M6 DSI wrapper read begin`, `M6 DSI wrapper read end`, and `M6 LCM ATA
+... read_count=...`. If the panel still returns zeros, the next diagnostic
+frontier is DSI command/read response rather than TPS bias or safe reinit.
+
+Rollback condition: if `7961fab...` also causes no-ADB with a verified boot
+readback, stop testing DSI read diagnostics and restore the previous committed
+`c88c634e...` TPS/bus0 artifact before adding earlier boot-stage markers or
+reading pstore.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-readcount-wrapper-safe && sha256sum -c SHA256SUMS
+(gzip -cd /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-readcount-wrapper-safe/Image.gz-dtb 2>/dev/null || true) | strings | grep -E 'M6 DSI wrapper read|M6 DSI read\[|M6 LCM ATA expected'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 push /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-readcount-wrapper-safe/boot-m6-dsi-readcount-wrapper-safe.img /dev/block/platform/mtk-msdc.0/by-name/boot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell sync
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 reboot
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; dmesg | grep -E "M6 DSI wrapper read|M6 LCM ATA|DSI Read Fail" | tail -80'
+```
+
+FACT: As of the next continuation check, `adb -H 127.0.0.1 -P 15038 devices -l`
+showed no attached devices. Recovery flashable boot-only packages were prepared
+under
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-recovery-bootonly-packages/`
+for the next physical recovery window:
+`restore-c88c/m6-restore-c88c-tps-bus0-bootonly-20260604-unsigned.zip` sha256
+`c3010370c0c4b32a1e1488e8205ac104f5e6ab65c58793ee0e483b726b950e3a`, embedded
+boot sha256 `c88c634e6006ca59b71f48c6c870e66dca23aab9b821d0f673e2026dbd669485`;
+and `safe-7961/m6-dsi-readcount-wrapper-safe-bootonly-20260604-unsigned.zip`
+sha256 `21a45d662d0fe3f2ac425a11acbf7c725c5f0d0b93e8e5577b914fdcada2a993`,
+embedded boot sha256
+`7961fab28e48b615288ad7b17348d373ab61bbca2bdaf05a34bfd80c3d69b157`.
+Package manifest:
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-recovery-bootonly-packages/MANIFEST.md`.
+The reusable wait/capture script
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-recovery-bootonly-packages/m6_wait_capture_then_flash.sh`
+has sha256 `e3e2541b7bc815b71c03fa9f1bdb64b4ca9152ccf50a67f282e6e4c579f9a165`;
+`bash -n` passed, and `WAIT_SECONDS=0` correctly exits without flashing when
+the device is absent. The script now captures display/runtime screen markers
+in addition to pstore and boot readback: `logcat-tail.txt`,
+`surfaceflinger.txt`, `dumpsys-display.txt`, `dumpsys-window.txt`,
+`service-list.txt`, `framebuffer-backlight.txt`, `interrupts-display.txt`,
+`debugfs-display.txt`, and `screencap.png`.
+
+FACT: Signed recovery boot-only packages were added with Temurin 8 and LOS15
+testkeys. Signer inputs were
+`/srv/forge/android/meizu_m6/rom-lineage-15.1-meizu_m6-experimental/out/host/linux-x86/framework/signapk.jar`
+sha256 `ad6f19d58421f413d1178a3a4e7f8bd684a73f2587b0a571fc2710a5eebeb259`,
+`testkey.x509.pem` sha256
+`a4384ba815b9499a5ce349b4e33c1755278873fe2eac150a068823f526e6dbde`, and
+`testkey.pk8` sha256
+`495675d32e89a149d5abe191f4e9c0e218b9068714e9b53a7c91e164a0741a23`.
+Signed restore zip:
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-recovery-bootonly-packages/restore-c88c/m6-restore-c88c-tps-bus0-bootonly-20260604-signed.zip`
+sha256 `a371a6ebfa74cec7506541a204214b887ae9cb16c0a42c2de2c5e3d1ec0ab67b`;
+embedded boot sha256 remains
+`c88c634e6006ca59b71f48c6c870e66dca23aab9b821d0f673e2026dbd669485`.
+Signed safe zip:
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-recovery-bootonly-packages/safe-7961/m6-dsi-readcount-wrapper-safe-bootonly-20260604-signed.zip`
+sha256 `34c464e65ab7b44452d08bc64f20f0f4733f152256cf75734769f5fa13300cc8`;
+embedded boot sha256 remains
+`7961fab28e48b615288ad7b17348d373ab61bbca2bdaf05a34bfd80c3d69b157`.
+`zip -T` passed for both signed packages.
+
+FACT: After the user reported the phone was returned, the remote ADB server at
+`127.0.0.1:15038` answered `host-features`, but
+`adb -H 127.0.0.1 -P 15038 devices -l` still listed no devices and
+`adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 get-state` returned
+`error: device '711HEBSR277K5' not found`. No new capture was possible from
+that empty device list.
+
+INFERENCE: Once `7961fab...` is tested, the next display branch depends on the
+new `read_count` marker. If `read_count=0` or the buffer stays at the sentinel
+`a5 a5 a5 a5`, the next patch should be a bounded DIAGNOSTIC inside
+`DSI_dcs_read_lcm_reg_v2()` for the first few ATA reads only: wait return,
+`MODE`, `START`, `STA`, `INTEN`, `INTSTA`, `CMDQ_SIZE`, `CMDQ0/1`, RX words,
+packet type, and receive count. If `read_count>0` but data is still
+`00 00 00 00`, the next branch should be a controlled multi-DCS read after
+manual reinit for `0x2A`, `0x2B`, `0x0A`, `0x0B`, `0x0C`, `0x0D`, `0xDA`,
+`0xDB`, and `0xDC`, because TPS bus0 and manual reinit were already verified
+in `/srv/forge/android/meizu_m6/captures/20260604-182046-m6-tps-bus0-reinit-711HEBSR277K5/dmesg-focus-after.txt`.
+
+FACT: Current non-display runtime blockers to re-check after ADB returns are
+recorded in the ROM state and captures, not in this kernel tree. Evidence
+entry points:
+`/srv/forge/android/meizu_m6/rom-lineage-15.1-meizu_m6-experimental/BRINGUP_STATE.md`,
+`/srv/forge/android/meizu_m6/docs/2026-06-01_m6_pure64_scrcpy_non_display_runtime_fixes.md`,
+`/srv/forge/android/meizu_m6/captures/20260603-1130-m6-runtime-unblock-minimal-android-711HEBSR277K5/`,
+and
+`/srv/forge/android/meizu_m6/captures/20260604-181456-m6-tps-bus0-dts-removefix-711HEBSR277K5/`.
+Sidecar audit found `boot_completed=1`, `surfaceflinger=running`,
+`zygote=running`, `input` published, and storage cleanup no longer the main
+blocker. Remaining non-display re-checks are `media.codec` availability for
+scrcpy video, `webview_zygote32` restarting despite pure64 properties, and
+RIL/`conn_launcher` crashes.
+
+Runtime re-check commands after `711HEBSR277K5` is visible:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A shell 'getprop sys.boot_completed; getprop dev.bootcomplete; getprop ro.zygote; getprop ro.product.cpu.abilist32; getprop persist.media.treble_omx'
+$A shell 'getprop init.svc.surfaceflinger; getprop init.svc.zygote; getprop init.svc.webview_zygote32; getprop init.svc.ril-daemon; getprop init.svc.conn_launcher'
+$A shell 'service check input; service list | grep -E "input|window|activity|SurfaceFlinger|display|media.codec|media.player|media.extractor"'
+$A shell 'dumpsys media.codec 2>&1 | head -80'
+$A shell 'df -h /data /cache; du -sk /data/core /data/media /data/media/0 2>/dev/null'
+$A logcat -d | grep -E 'webview_zygote32|abilist32|media.codec|Failed to initialize video/avc|rild|mtk-ril|libril|conn_launcher' | tail -200
+```
+
 ## 2026-05-21 source display resumes from stock-prebuilt proof
 
 FACT: New stock-good reference capture is `/home/n8n/forge-work/debug/0b13c8c6-d194-431f-a397-f852e3aae7d9/25e8d559-1fc0-4bca-a512-30f52f1e4687/browser-bootdiag-1779358816135.tar`, sha256 `b9e741dadb4cda6c9e83e482a1d962c1b0d21f70dca1b07372254e0cfcc0c9b9`, extracted at `/tmp/m6_1779358816135`. Runtime identity is `78c034cde8`, `ro.forge.meizu.kernel=stock-7.1.2.0G-prebuilt-3.18.35`, and `Linux 3.18.35+`. The local stock-prebuilt boot reference is `/srv/forge/android/export/meizu_m6_artifacts/20260521-stock-parity-78c034cde8/boot.img` sha256 `cd959b6db468d06578d82bbb853aa783852ede441eae918abc8ccba1308a9565`, but the capture lacks raw boot partition so exact flashed boot hash is not proven.

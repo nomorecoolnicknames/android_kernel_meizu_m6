@@ -95,6 +95,7 @@ static LCM_UTIL_FUNCS lcm_util;
 #include <linux/io.h>
 #include <linux/platform_device.h>
 #include <linux/jiffies.h>
+#include <linux/string.h>
 
 
 #ifndef CONFIG_FPGA_EARLY_PORTING
@@ -1079,6 +1080,7 @@ static unsigned int lcm_ata_check(unsigned char *buffer)
 
 	unsigned int data_array[3];
 	unsigned char read_buf[4];
+	unsigned int read_count;
 
 	LCM_LOGI("ATA check size = 0x%x,0x%x,0x%x,0x%x\n", x0_MSB, x0_LSB, x1_MSB, x1_LSB);
 	data_array[0] = 0x0005390A;	/* HS packet */
@@ -1089,16 +1091,18 @@ static unsigned int lcm_ata_check(unsigned char *buffer)
 	data_array[0] = 0x00043700;	/* read id return two byte,version and id */
 	dsi_set_cmdq(data_array, 1, 1);
 
-	read_reg_v2(0x2A, read_buf, 4);
+	memset(read_buf, 0xA5, sizeof(read_buf));
+	read_count = read_reg_v2(0x2A, read_buf, 4);
 
 	if ((read_buf[0] == x0_MSB) && (read_buf[1] == x0_LSB)
 	    && (read_buf[2] == x1_MSB) && (read_buf[3] == x1_LSB))
 		ret = 1;
 	else
 		ret = 0;
-	LCM_LOGI("M6 LCM ATA expected=%02x %02x %02x %02x read=%02x %02x %02x %02x ret=%u\n",
+	LCM_LOGI("M6 LCM ATA expected=%02x %02x %02x %02x read=%02x %02x %02x %02x read_count=%u ret=%u\n",
 		x0_MSB, x0_LSB, x1_MSB, x1_LSB,
-		read_buf[0], read_buf[1], read_buf[2], read_buf[3], ret);
+		read_buf[0], read_buf[1], read_buf[2], read_buf[3],
+		read_count, ret);
 
 	x0 = 0;
 	x1 = FRAME_WIDTH - 1;

@@ -2158,7 +2158,7 @@ int DSI_read_cmp(unsigned int index, DSI_RX_DATA_REG *read_data,
 	int ret = 0;
 	int i = 0;
 	unsigned char packet_type;
-	uint32_t recv_data_cnt;
+	uint32_t recv_data_cnt = 0;
 	LCM_DSI_PARAMS *dsi_params = NULL;
 	unsigned char buffer[20];
 
@@ -2272,6 +2272,14 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 	static const long WAIT_TIMEOUT = 2 * HZ;	/* 2 sec */
 	long ret;
 	int timeout = 0;
+	static unsigned int m6_core_read_count;
+	unsigned int m6_core_seq = 0;
+	bool m6_core_dump = false;
+
+	if (m6_core_read_count < 32) {
+		m6_core_seq = ++m6_core_read_count;
+		m6_core_dump = true;
+	}
 
 	for (d = DSI_MODULE_BEGIN(module); d <= DSI_MODULE_END(module); d++) {
 		if (DSI_REG[d]->DSI_MODE_CTRL.MODE) {
@@ -2369,6 +2377,19 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 			    wait_event_interruptible_timeout(_dsi_dcs_read_wait_queue[d],
 							     waitRDDone, WAIT_TIMEOUT);
 			waitRDDone = false;
+			if (m6_core_dump)
+				DISPERR("M6 DSI core read wait #%u d=%d cmd=0x%x ret=%ld intsta=0x%08x trig=0x%08x start=0x%08x cmdq=0x%08x rx=%08x/%08x/%08x/%08x mode=%u busy=%u\n",
+					m6_core_seq, d, cmd, ret,
+					AS_UINT32(&DSI_REG[d]->DSI_INTSTA),
+					AS_UINT32(&DSI_REG[d]->DSI_TRIG_STA),
+					AS_UINT32(&DSI_REG[d]->DSI_START),
+					AS_UINT32(&DSI_REG[d]->DSI_CMDQ_SIZE),
+					AS_UINT32(&DSI_REG[d]->DSI_RX_DATA0),
+					AS_UINT32(&DSI_REG[d]->DSI_RX_DATA1),
+					AS_UINT32(&DSI_REG[d]->DSI_RX_DATA2),
+					AS_UINT32(&DSI_REG[d]->DSI_RX_DATA3),
+					DSI_REG[d]->DSI_MODE_CTRL.MODE,
+					DSI_REG[d]->DSI_INTSTA.BUSY);
 			if (ret > 0) {
 				do {
 					timeout++;
@@ -2512,8 +2533,24 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 			} else {
 				DISPMSG("read return type is non-recognite, type = 0x%x\n",
 					  packet_type);
+				if (m6_core_dump)
+					DISPERR("M6 DSI core read packet #%u d=%d cmd=0x%x type=0x%x recv=%u retry_left=%u data=%02x %02x %02x %02x\n",
+						m6_core_seq, d, cmd, packet_type,
+						recv_data_cnt, max_try_count,
+						buffer_size > 0 && buffer ? buffer[0] : 0,
+						buffer_size > 1 && buffer ? buffer[1] : 0,
+						buffer_size > 2 && buffer ? buffer[2] : 0,
+						buffer_size > 3 && buffer ? buffer[3] : 0);
 				return 0;
 			}
+			if (m6_core_dump)
+				DISPERR("M6 DSI core read packet #%u d=%d cmd=0x%x type=0x%x recv=%u retry_left=%u data=%02x %02x %02x %02x\n",
+					m6_core_seq, d, cmd, packet_type,
+					recv_data_cnt, max_try_count,
+					buffer_size > 0 && buffer ? buffer[0] : 0,
+					buffer_size > 1 && buffer ? buffer[1] : 0,
+					buffer_size > 2 && buffer ? buffer[2] : 0,
+					buffer_size > 3 && buffer ? buffer[3] : 0);
 		} while (packet_type == 0x02);
 		/* / here: we may receive a ACK packet which packet type is 0x02 (incdicates some error happened) */
 		/* / therefore we try re-read again until no ACK packet */
@@ -3080,7 +3117,25 @@ void DSI_set_cmdq_wrapper_DSIDual(unsigned int *pdata, unsigned int queue_size,
 
 unsigned int DSI_dcs_read_lcm_reg_v2_wrapper_DSI0(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)
 {
-	return DSI_dcs_read_lcm_reg_v2(DISP_MODULE_DSI0, NULL, cmd, buffer, buffer_size);
+	unsigned int ret;
+	static unsigned int m6_wrapper_count;
+	bool m6_dump = false;
+
+	if (m6_wrapper_count < 64) {
+		m6_dump = true;
+		m6_wrapper_count++;
+		DISPERR("M6 DSI wrapper read begin #%u cmd=0x%x size=%u buffer=%p\n",
+			m6_wrapper_count, cmd, buffer_size, buffer);
+	}
+	ret = DSI_dcs_read_lcm_reg_v2(DISP_MODULE_DSI0, NULL, cmd, buffer, buffer_size);
+	if (m6_dump)
+		DISPERR("M6 DSI wrapper read end #%u cmd=0x%x ret=%u data=%02x %02x %02x %02x\n",
+			m6_wrapper_count, cmd, ret,
+			buffer_size > 0 && buffer ? buffer[0] : 0,
+			buffer_size > 1 && buffer ? buffer[1] : 0,
+			buffer_size > 2 && buffer ? buffer[2] : 0,
+			buffer_size > 3 && buffer ? buffer[3] : 0);
+	return ret;
 }
 
 unsigned int DSI_dcs_read_lcm_reg_v2_wrapper_DSI1(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)
