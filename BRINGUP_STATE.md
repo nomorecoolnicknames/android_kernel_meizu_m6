@@ -4683,3 +4683,125 @@ to flash a different artifact set. Stop command:
 ```bash
 tmux kill-session -t m6-dsi-diag-flash-20260605
 ```
+
+## 2026-06-05 DCS read sweep diagnostic + guarded watcher
+
+Patch category: **DIAGNOSTIC**.
+
+Supersedes the older `m6-dsi-diag-flash-20260605` /
+`m6-ovl-m4u-endpoint-flash-20260605` waiting runs. Those sessions never saw
+`127.0.0.1:15039` and did not flash. The current active watcher is:
+
+```bash
+tmux ls
+# m6-dcs-read-sweep-flash-20260605
+tail -f /srv/forge/android/meizu_m6/captures/m6-dcs-read-sweep-flash-20260605-watch.log
+```
+
+Artifact:
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dcs-read-sweep-diag`.
+
+Important hashes:
+
+- boot image:
+  `6dca836c3e854890f0ce28cb5ebb83af8e12e601144064ae7dbee70c1873fcc6`
+  `boot-m6-dcs-read-sweep-diag.img`
+- `Image.gz-dtb`:
+  `7a85e7daaf82e2736d551ddada0c1b96752aa422b6659beb22ab261d2b0af219`
+- `System.map`:
+  `73fba0150a47f65dc741984bb7b5fc31e4be5ff3c6e4ab67101aa2432ce287e7`
+- helper:
+  `d944d0f553b42d54bfce06b8f991324822fcc79de31fd182a20d448fa7d960a5`
+  `m6_wait_capture_flash_clean_runtime_diag.sh`
+
+Hypothesis: current evidence places the physical-black-screen frontier after
+SurfaceFlinger/HWC/RDMA/TPS/reinit and at DSI command/read response or panel
+acceptance. The prior verified capture had nonblack screencap, active display
+IRQs, backlight 255, successful TPS writes on adapter 0, successful manual LCM
+reset/init through `0x11` and `0x29`, and DSI BIST registers toggling, but ATA
+still read `00 00 00 00`. Stock LK contains the `ili9881p_hd_dsi_txd` candidate
+used by this kernel, so the next proof must distinguish "panel responds to
+other DCS/status/ID reads but not 0x2A" from "DSI BTA/read payload is generally
+dead" and from "wrong page/state/variant after init".
+
+Evidence:
+
+- Verified runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260604-182046-m6-tps-bus0-reinit-711HEBSR277K5`
+  with boot readback matching
+  `/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-tps-bus0-dts-removefix/boot-m6-tps-bus0-dts-removefix.img`.
+- That capture had `sys.boot_completed=1`, SurfaceFlinger running, nonblack
+  `720x1280` screencap, `DISP_OPT_BYPASS_PQ=1`, active `mtk_cmdq` / `ovl0` /
+  `rdma0` / `dsi0` interrupts, TPS writes `ret=2 adapter=0`, and
+  `M6 LCM debug reinit: end ret=0`.
+- The same capture logged ATA failure after that successful path:
+  `M6 LCM ATA expected=00 b4 02 1c read=00 00 00 00`.
+- The DSI core read path returned a valid DCS long-read packet header in the
+  older ATA dump (`packet_type 0x1c`, long packet size 4), but payload copied
+  from RX data was zeros.
+- Stock LK raw strings in
+  `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/lk.img`
+  include `ili9881p_hd_dsi_txd`, `ili9881c_hd_dsi_txd`, and
+  `s6d7aa6_hd720_dsi_vdo_hlt`; current defconfig/DTS select
+  `ili9881p_hd_dsi_txd`, matching one stock candidate but not proving panel
+  acceptance.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+  adds bounded post-ATA read-only DCS diagnostics. The helper reads `0x04`,
+  `0x09`, `0x0A`, `0x0B`, `0x0C`, `0x0D`, `0x2A`, `0x2B`, `0xDA`, `0xDB`,
+  and `0xDC`, logs `M6 LCM ATA dcs[%u] ... read_count=%u`, and stops after
+  eight ATA invocations.
+- `BRINGUP_STATE.md` records the diagnostic patch, artifact identity, watcher,
+  expected next markers, and rollback route.
+
+Why each file changed: the LCM driver owns the `echo ata > /d/mtkfb` panel
+readback path, and DSI read wrappers already emit core packet diagnostics. A
+single bounded read sweep there gives the next capture enough information to
+separate DSI BTA/read transport failure from a narrower 0x2A/window/page-state
+problem without changing panel init behavior. The state file changed because
+this is a flashable diagnostic checkpoint with a live guarded watcher.
+
+Expected next marker: after the watcher flashes boot sha256
+`6dca836c3e854890f0ce28cb5ebb83af8e12e601144064ae7dbee70c1873fcc6`, the
+postboot capture should include `M6 LCM ATA dcs[1]` lines for the listed DCS
+registers plus the existing `M6 DSI wrapper read`, `M6 DSI core read wait`,
+`M6 DSI core read packet`, `M6 LCM ATA expected`, `M6 OVL diag end`, and
+`M6 M4U disp tf bypass` markers. If all DCS reads return valid packet headers
+with zero payload, inspect DSI RX payload extraction / lane/panel state. If ID
+or power/status registers return nonzero but `0x2A` stays zero, focus on
+init-table page/window sequencing. If reads time out or ACK/error, focus on
+DSI BTA/LP timing or panel reset/power acceptance.
+
+Rollback condition: revert this diagnostic if the verified artifact regresses
+before ADB/SurfaceFlinger or if the added read sweep causes repeated DSI reset
+or timeout that was absent from the previous verified boot. Otherwise keep it
+until one fresh capture classifies the DSI/panel read boundary.
+
+Verification commands:
+
+```bash
+git diff --check
+env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+cd /srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dcs-read-sweep-diag
+sha256sum -c SHA256SUMS
+bash -n m6_wait_capture_flash_clean_runtime_diag.sh
+ADB_PORT=15039 WAIT_SECONDS=7200 POLL_SECONDS=5 ./m6_wait_capture_flash_clean_runtime_diag.sh
+```
+
+Transport status at creation time: `127.0.0.1:15039` had no listener, so the
+new watcher only logged `port=15039 no-listener` and did not flash. The helper
+is guarded by both the port listener check and `adb -s 711HEBSR277K5 get-state
+== device`.
+
+Runtime sidecar blocker snapshot, not part of this display patch:
+
+- `sys.boot_completed`, `input`, and `clipboard` are closed in current captures.
+- Current non-display blockers to revalidate on the next fresh boot are
+  H.264/scrcpy media encoder fence timeout, pure64 `webview_zygote32`
+  restart/noise, and LatinIME `libjni_latinimegoogle.so` alias/loading noise.

@@ -1066,6 +1066,48 @@ static unsigned int lcm_esd_check(void)
 	return FALSE;
 }
 
+#ifndef BUILD_LK
+struct m6_lcm_dcs_diag_read {
+	unsigned char cmd;
+	unsigned char len;
+	const char *name;
+};
+
+static void lcm_m6_diag_read_dcs_registers(void)
+{
+	static const struct m6_lcm_dcs_diag_read reads[] = {
+		{ 0x04, 3, "display_id" },
+		{ 0x09, 4, "display_status" },
+		{ 0x0A, 1, "power_mode" },
+		{ 0x0B, 1, "madctl" },
+		{ 0x0C, 1, "pixel_format" },
+		{ 0x0D, 1, "image_mode" },
+		{ 0x2A, 4, "column_addr" },
+		{ 0x2B, 4, "page_addr" },
+		{ 0xDA, 1, "id1" },
+		{ 0xDB, 1, "id2" },
+		{ 0xDC, 1, "id3" },
+	};
+	static unsigned int diag_count;
+	unsigned char read_buf[4];
+	unsigned int read_count;
+	unsigned int i;
+
+	if (diag_count >= 8)
+		return;
+
+	diag_count++;
+	for (i = 0; i < ARRAY_SIZE(reads); i++) {
+		memset(read_buf, 0xA5, sizeof(read_buf));
+		read_count = read_reg_v2(reads[i].cmd, read_buf, reads[i].len);
+		LCM_LOGI("M6 LCM ATA dcs[%u] name=%s cmd=0x%02x len=%u read=%02x %02x %02x %02x read_count=%u\n",
+			diag_count, reads[i].name, reads[i].cmd, reads[i].len,
+			read_buf[0], read_buf[1], read_buf[2], read_buf[3],
+			read_count);
+	}
+}
+#endif
+
 static unsigned int lcm_ata_check(unsigned char *buffer)
 {
 #ifndef BUILD_LK
@@ -1103,6 +1145,7 @@ static unsigned int lcm_ata_check(unsigned char *buffer)
 		x0_MSB, x0_LSB, x1_MSB, x1_LSB,
 		read_buf[0], read_buf[1], read_buf[2], read_buf[3],
 		read_count, ret);
+	lcm_m6_diag_read_dcs_registers();
 
 	x0 = 0;
 	x1 = FRAME_WIDTH - 1;
