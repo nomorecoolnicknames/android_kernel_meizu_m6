@@ -4690,16 +4690,27 @@ Patch category: **DIAGNOSTIC**.
 
 Supersedes the older `m6-dsi-diag-flash-20260605` /
 `m6-ovl-m4u-endpoint-flash-20260605` waiting runs. Those sessions never saw
-`127.0.0.1:15039` and did not flash. The current active watcher is:
+`127.0.0.1:15039` and did not flash. 2026-06-05T01:08-05:00 update: the
+original `m6-dcs-read-sweep-flash-20260605` watcher was also stopped before it
+ever saw `15039`, because the paired clean system image was updated with the
+LatinIME optional-JNI cleanup. The current active watcher is:
 
 ```bash
 tmux ls
-# m6-dcs-read-sweep-flash-20260605
-tail -f /srv/forge/android/meizu_m6/captures/m6-dcs-read-sweep-flash-20260605-watch.log
+# m6-dcs-read-sweep-latinime-flash-20260605
+tail -f /srv/forge/android/meizu_m6/captures/m6-dcs-read-sweep-latinime-flash-20260605-watch.log
 ```
 
 Artifact:
-`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dcs-read-sweep-diag`.
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dcs-read-sweep-latinime-system-flash`.
+
+Paired clean system image:
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-los15-clean-system-latinime-jni/system-clean-no-video-le-latinime-jni.raw.img`
+sha256 `593fef6bbb111c214b22b0e7da05f0344842221ff4cec96a9cb97b94af7d8ac3`.
+This raw image keeps the clean codec state (`media_codecs_google_video.xml`,
+no `media_codecs_google_video_le.xml`) and contains LatinIME APK sha256
+`5db90ae9ecaee7f6616b769f0596d4d667886b5c537e12bf1bf9dc2b9dce00d2` from
+ROM checkpoint `8f61e1f`.
 
 Important hashes:
 
@@ -4711,7 +4722,7 @@ Important hashes:
 - `System.map`:
   `73fba0150a47f65dc741984bb7b5fc31e4be5ff3c6e4ab67101aa2432ce287e7`
 - helper:
-  `d944d0f553b42d54bfce06b8f991324822fcc79de31fd182a20d448fa7d960a5`
+  `a1dd28007e2e0e90829530a1000b04efc32fae57e0438a1858273fc5388f30b8`
   `m6_wait_capture_flash_clean_runtime_diag.sh`
 
 Hypothesis: current evidence places the physical-black-screen frontier after
@@ -4788,7 +4799,7 @@ env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/ker
   ARCH=arm64 \
   CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
   -j8 Image.gz-dtb
-cd /srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dcs-read-sweep-diag
+cd /srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dcs-read-sweep-latinime-system-flash
 sha256sum -c SHA256SUMS
 bash -n m6_wait_capture_flash_clean_runtime_diag.sh
 ADB_PORT=15039 WAIT_SECONDS=7200 POLL_SECONDS=5 ./m6_wait_capture_flash_clean_runtime_diag.sh
@@ -4803,5 +4814,7 @@ Runtime sidecar blocker snapshot, not part of this display patch:
 
 - `sys.boot_completed`, `input`, and `clipboard` are closed in current captures.
 - Current non-display blockers to revalidate on the next fresh boot are
-  H.264/scrcpy media encoder fence timeout, pure64 `webview_zygote32`
-  restart/noise, and LatinIME `libjni_latinimegoogle.so` alias/loading noise.
+  H.264/scrcpy media encoder fence timeout and pure64 `webview_zygote32`
+  restart/noise. The LatinIME `libjni_latinimegoogle.so` alias/loading noise
+  has a source checkpoint and is included in the paired 2026-06-05 system raw;
+  the next boot must verify the logcat marker is gone.
