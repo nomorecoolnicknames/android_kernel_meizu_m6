@@ -1,5 +1,43 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-05 Display frontier audit before source-built flash
+
+STATE / EVIDENCE CHECKPOINT, 2026-06-05: read-only audit of the latest
+verified ADB-good display capture before the source-built softenc/LatinIME
+system flash.
+
+Evidence:
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260604-182046-m6-tps-bus0-reinit-711HEBSR277K5`.
+- Boot artifact identity is verified: capture `boot-hashes.txt` matches
+  `/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-tps-bus0-dts-removefix/boot-m6-tps-bus0-dts-removefix.img`
+  and readback sha256 `c88c634e6006ca59b71f48c6c870e66dca23aab9b821d0f673e2026dbd669485`.
+- Runtime display userspace is alive in that capture: `sys.boot_completed=1`,
+  `surfaceflinger=running`, built-in screen `720x1280`, `powerMode=2`, and
+  framebuffer flips are present.
+- Framebuffer/composition is not a black-buffer problem: `screencap-after.png`
+  exists and SurfaceFlinger reports GLES/Mali plus `HWC_FRAMEBUFFER_TARGET`.
+- Display kernel path still fails at panel/read acceptance: TPS bus0 writes
+  return `ret=2`, LCM reinit ends `ret=0`, DSI BIST registers toggle
+  `self_pat=1`, but ATA still logs
+  `M6 LCM ATA expected=00 b4 02 1c read=00 00 00 00 ret=0`.
+
+INFERENCE: the first still-open display frontier remains DSI DCS/BTA read
+response or panel command acceptance. The latest evidence does not support
+another PQ, TPS bus, SurfaceFlinger, HWC, or framebuffer-content patch before
+the already-built DCS-read sweep diagnostic is flashed and captured.
+
+Expected next marker: the active source-built watcher should flash
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-sourcebuilt-softenc-latinime-system-flash/boot-m6-dcs-read-sweep-diag.img`
+and collect a postboot capture containing `M6 LCM ATA dcs[...]`,
+`M6 DSI wrapper read`, `M6 DSI core read wait`, and
+`M6 DSI core read packet` lines.
+
+Rollback condition: do not rollback this conclusion solely because the
+physical panel remains black; rollback only if the fresh verified DCS sweep
+capture contradicts the frontier by proving an earlier boot/display regression
+or by showing the DSI/panel read boundary is already healthy.
+
 ## 2026-06-04 OVL/M4U endpoint correlation diagnostic
 
 PATCH HISTORY, DIAGNOSTIC, 2026-06-04: correlate OVL endpoint math with the
