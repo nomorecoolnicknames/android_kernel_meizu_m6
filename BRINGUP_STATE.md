@@ -4722,8 +4722,13 @@ Important hashes:
 - `System.map`:
   `73fba0150a47f65dc741984bb7b5fc31e4be5ff3c6e4ab67101aa2432ce287e7`
 - helper:
-  `a1dd28007e2e0e90829530a1000b04efc32fae57e0438a1858273fc5388f30b8`
+  `c9721021443c4cb45d0a35f38ea81b3378e11dc237e608f3d87c19204547fad8`
   `m6_wait_capture_flash_clean_runtime_diag.sh`
+  The postboot capture path now also runs a 3-second
+  `screenrecord --time-limit 3 --size 720x1280` smoke test and saves
+  `screenrecord-720x1280.txt`, `screenrecord-720x1280.mp4` when created,
+  `screenrecord-pull.txt`, `media-screen-marker-tail.txt`, and
+  `surfaceflinger-latency.txt`.
 
 Hypothesis: current evidence places the physical-black-screen frontier after
 SurfaceFlinger/HWC/RDMA/TPS/reinit and at DSI command/read response or panel
