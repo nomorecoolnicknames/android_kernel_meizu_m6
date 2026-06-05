@@ -307,10 +307,23 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 		unsigned int con_value)
 {
 	static unsigned int m6_ovl_diag_count;
+	unsigned long visible_span = 0;
+	unsigned long visible_end = final_addr;
+	unsigned long pitch_span = 0;
+	unsigned long pitch_end = final_addr;
 	unsigned int idx;
 
 	if (!is_module_ovl(module) || m6_ovl_diag_count >= 72)
 		return;
+
+	if (cfg->dst_h && adjusted_dst_w && bpp)
+		visible_span = (cfg->dst_h - 1) * cfg->src_pitch + adjusted_dst_w * bpp;
+	if (visible_span)
+		visible_end = final_addr + visible_span - 1;
+	if (cfg->dst_h && cfg->src_pitch)
+		pitch_span = cfg->dst_h * cfg->src_pitch;
+	if (pitch_span)
+		pitch_end = final_addr + pitch_span;
 
 	idx = m6_ovl_diag_count++;
 	DISPERR("M6 OVL diag cfg[%u]: mod=%s L%u global=%u en=%u source=%u fmt=%s/0x%x bpp=%u sec=%u alpha=%u/%u const=%d key=%u/0x%x con=0x%x\n",
@@ -324,6 +337,10 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 		cfg->src_y, cfg->src_w, cfg->src_h, cfg->dst_x, cfg->dst_y,
 		cfg->dst_w, cfg->dst_h, cfg->src_pitch, adjusted_src_x,
 		adjusted_dst_w);
+	DISPERR("M6 OVL diag end[%u]: mod=%s L%u final=0x%lx visible_span=0x%lx visible_last=0x%lx next=0x%lx pitch_span=0x%lx pitch_end=0x%lx fault_if_next=0x%lx\n",
+		idx, m6_ovl_module_name(module), local_layer, final_addr,
+		visible_span, visible_end, visible_end + 1, pitch_span,
+		pitch_end, pitch_end);
 }
 
 static bool m6_ovl_scan_diag_sample(unsigned int *count)

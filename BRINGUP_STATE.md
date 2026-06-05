@@ -1,5 +1,103 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-04 OVL/M4U endpoint correlation diagnostic
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-04: correlate OVL endpoint math with the
+display M4U translation-fault bypass path.
+
+Hypothesis: the latest display capture proves a real OVL0 layer handoff, but
+the visible black screen is not yet explained by the display M4U fault alone.
+The fault appears exactly at the first address after the allocated/visible OVL
+layer span, and the existing M4U ISR already treats display faults within the
+next 4 KiB as bypassable. The next boot must prove whether the OVL programmed
+address/span and the M4U bypass event are the same endpoint event before
+promoting any MVA-size, OVL pitch, or M4U behavior change.
+
+Evidence: capture
+`/srv/forge/android/meizu_m6/captures/20260604-181456-m6-tps-bus0-dts-removefix-711HEBSR277K5`
+shows OVL0 using `phy=0x1200000`, 720x1280 RGBA8888, pitch 2880 bytes, and
+layer size `0x384000`. The same capture later logs `M4Ufault: port=DISP_OVL0,
+mva=0x1984000` and `M4Ubypass disp TF, valid mva=0x1600000, size=0x384000,
+mva_end=0x1984000`. Source inspection confirms `ddp_ovl.c` writes the
+non-secure OVL layer address without a size parameter, while `m4u_hw.c`
+queries `fault_mva - 1`, computes `valid_mva_end = valid_mva + valid_size`,
+and bypasses display TF only when `fault_mva < valid_mva_end + SZ_4K`.
+
+Files changed: `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c`
+extends the existing bounded M6 OVL diagnostic with `visible_span`,
+`visible_last`, `next`, `pitch_span`, and `pitch_end` endpoint fields.
+`kernel-3.18/drivers/misc/mediatek/m4u/mt6755/m4u_hw.c` adds a bounded
+`M6 M4U disp tf bypass[...]` marker inside the already-existing display TF
+bypass branch.
+
+Why each file changed: `ddp_ovl.c` owns the OVL layer config values needed to
+derive the final programmed address and the exact endpoint a display prefetch
+could touch. `m4u_hw.c` owns the translation-fault evidence and can report the
+faulting port, fault MVA, valid MVA range, delta, layer, write flag, and raw
+fault id at the moment the driver decides to bypass the display TF. Both edits
+are bounded log-only diagnostics; they add no new register writes, waits,
+reset policy, route changes, or fake-success behavior.
+
+Expected next marker: after flashing
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-ovl-m4u-endpoint-diag/boot-m6-ovl-m4u-endpoint-diag.img`
+and collecting a fresh boot, dmesg should contain paired `M6 OVL diag end[...]`
+and `M6 M4U disp tf bypass[...]` lines. If the M4U `fault` equals the OVL
+`next` or `pitch_end` for the active layer, treat the TF as a likely
+prefetch/guard-page symptom and continue down the display pipeline
+(MUTEX/RDMA/DSI/panel state) instead of changing M4U mappings. If the fault is
+outside the logged OVL endpoint, investigate the layer address/size/MVA owner
+before making behavior changes.
+
+Rollback condition: revert this diagnostic if it causes no-ADB/no-boot with a
+verified matching boot partition readback, if the markers flood logs past the
+bounded counters, or if the next capture proves the display M4U fault is
+unrelated to the OVL endpoint and earlier display hardware state is the real
+frontier. Do not promote this diagnostic to a proper fix; it is evidence only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c kernel-3.18/drivers/misc/mediatek/m4u/mt6755/m4u_hw.c BRINGUP_STATE.md
+rg -n 'M6 OVL diag end|M6 M4U disp tf bypass' kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c kernel-3.18/drivers/misc/mediatek/m4u/mt6755/m4u_hw.c
+env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+cd /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-ovl-m4u-endpoint-diag
+sha256sum -c SHA256SUMS
+bash -n m6_wait_capture_flash_clean_runtime_diag.sh
+ADB_PORT=15039 ./m6_wait_capture_flash_clean_runtime_diag.sh
+```
+
+Build/artifact result: branch `work/m6-rdma0-disp-decpq-20260531` built
+successfully in `/srv/forge/work/m6-source-kernel-manual-20260520/out`.
+The exported diagnostic artifact is
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-ovl-m4u-endpoint-diag/boot-m6-ovl-m4u-endpoint-diag.img`,
+sha256 `04819714adc193c603a7a9d574911b5e6bb125ea188c7a89e2f0c4627860ad1b`,
+size `8863744`. Kernel payload `Image.gz-dtb` sha256 is
+`4446ff5113ffd71f6d46228c346260257c5c32c05c3cb9c726385d3b65c1d8a3`;
+matching `System.map` sha256 is
+`03629ecab433a19c5ef62bd0ed57e2aa7c2f35e7b79f24086128ff7969c98b1e`;
+matching `config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+`abootimg -i` preserved page size `2048`, boot name `1552631950`, addresses
+`0x40080000/0x45000000/0x44000000`, and cmdline `bootopt=64S3,32N2,64N2
+androidboot.selinux=permissive binder.devices=binder,hwbinder,vndbinder`.
+
+FACT: At artifact creation/checkpoint time, `127.0.0.1:15039` had no listener,
+so this artifact is not yet flashed/readback-verified. The old watcher for the
+bounded DSI artifact must be stopped before the next reverse tunnel appears,
+then replaced with the helper from this artifact directory.
+
+Recommended watcher:
+
+```bash
+tmux kill-session -t m6-dsi-diag-flash-20260605
+tmux new-session -d -s m6-ovl-m4u-endpoint-flash-20260605 'cd /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-ovl-m4u-endpoint-diag && ADB_PORT=15039 WAIT_SECONDS=7200 POLL_SECONDS=5 ./m6_wait_capture_flash_clean_runtime_diag.sh 2>&1 | tee /srv/forge/android/meizu_m6/captures/m6-ovl-m4u-endpoint-flash-20260605-watch.log'
+```
+
 ## 2026-06-04 bounded DSI core read summary diagnostic
 
 PATCH HISTORY, DIAGNOSTIC, 2026-06-04: add bounded core DCS-read summary

@@ -2051,6 +2051,7 @@ irqreturn_t MTK_M4U_isr(int irq, void *dev_id)
 				unsigned int valid_mva = 0;
 				unsigned int valid_size = 0;
 				unsigned int valid_mva_end = 0;
+				static unsigned int m6_disp_tf_bypass_count;
 
 				m4u_query_mva_info(fault_mva-1, 0, &valid_mva, &valid_size);
 				if (0 != valid_mva && 0 != valid_size)
@@ -2059,6 +2060,16 @@ irqreturn_t MTK_M4U_isr(int irq, void *dev_id)
 				if (0 != valid_mva_end && fault_mva < valid_mva_end+SZ_4K) {
 					M4UMSG("bypass disp TF, valid mva=0x%x, size=0x%x, mva_end=0x%x\n",
 						valid_mva, valid_size, valid_mva_end);
+					if (m6_disp_tf_bypass_count < 96) {
+						M4UMSG("M6 M4U disp tf bypass[%u]: port=%s fault=0x%x valid=0x%x size=0x%x end=0x%x delta=0x%x layer=%d wr=%d id=0x%x\n",
+							m6_disp_tf_bypass_count,
+							m4u_get_port_name(m4u_port),
+							fault_mva, valid_mva,
+							valid_size, valid_mva_end,
+							fault_mva - valid_mva_end,
+							layer, write, regval);
+						m6_disp_tf_bypass_count++;
+					}
 					bypass_DISP_TF = 1;
 				}
 			}
