@@ -113,6 +113,23 @@ adb -H 127.0.0.1 -P 15039 -s 711HEBSR277K5 shell sync
 adb -H 127.0.0.1 -P 15039 -s 711HEBSR277K5 reboot
 ```
 
+FACT: A safer one-shot helper now exists at
+`/srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-core-read-bounded/m6_wait_capture_flash_clean_runtime_diag.sh`,
+sha256 `6a8cd94a4992ee841a323b274893c441f0cc09a2f73e668ef41dfed5663a63ae`.
+It waits for a real listener on `15039` before using ADB, captures preflash
+runtime/display evidence, writes `system-clean-no-video-le.raw.img` and
+`boot-m6-dsi-core-read-bounded.img` without an intermediate reboot, verifies
+readback hashes for both partitions, reboots, and captures postboot
+runtime/display/ATA markers. `bash -n` passed; `WAIT_SECONDS=0` correctly
+exits without flashing when `15039` has no listener. Prefer this helper over
+the four manual commands above for the next device cycle.
+
+One-shot command:
+
+```bash
+ADB_PORT=15039 /srv/forge/android/export/meizu_m6_artifacts/20260604-m6-dsi-core-read-bounded/m6_wait_capture_flash_clean_runtime_diag.sh
+```
+
 ## 2026-06-04 DSI read diagnostic no-ADB rollback
 
 FACT: Commit `e944550ed2f` is the last committed checkpoint before this DSI
