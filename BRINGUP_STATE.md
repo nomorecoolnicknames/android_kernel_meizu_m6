@@ -5310,6 +5310,16 @@ address `0x44000000`, and cmdline
 `sha256sum -c SHA256SUMS` passed and `cmp Image.gz-dtb verify-unpack/zImage`
 passed inside the artifact directory.
 
+Current device readback before flashing the diagnostic: capture
+`/srv/forge/android/meizu_m6/captures/20260606-075201-m6-current-boot-readback-711HEBSR277K5`
+read `/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot` and trimmed
+the readback to `8863744` bytes. FACT: device boot partition sha256 is still
+`e4c317d025440efa5e04f158b255b4b127ce6e5c0848a149ccecefbbab6eabbd`
+(`20260605-m6-dsi-sleep-clock-diag-boot`), not the new diagnostic
+`c5689acac835038709943e8e3ccee77b03c5cb24b1bd2af14c7cda7b18edd09c`.
+Therefore `M6 gpio[...]` and TPS readback markers are not expected on the
+currently running kernel until this boot-only artifact is flashed.
+
 Expected next marker: after flashing the rebuilt boot and running
 `m6_lcm_reinit:1`, dmesg should contain `M6 gpio[...]` lines for
 `vsp-pullhigh`, `vsn-pullhigh`, and `rst-pullhigh`, plus
