@@ -1,5 +1,72 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-05 DSI sleep/clock diagnostic capture result
+
+STATE / EVIDENCE CHECKPOINT, 2026-06-05: the DSI sleep/clock diagnostic boot
+was flashed, readback-verified, and captured on `711HEBSR277K5`.
+
+FACT: boot-only artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dsi-sleep-clock-diag-boot/boot-m6-dsi-sleep-clock-diag.img`
+was written to the boot partition and verified in preflash capture
+`/srv/forge/android/meizu_m6/captures/20260605-203006-m6-preflash-dsi-sleep-clock-diagboot-711HEBSR277K5`;
+local and remote readback sha256 both equal
+`e4c317d025440efa5e04f158b255b4b127ce6e5c0848a149ccecefbbab6eabbd`.
+The postboot capture is
+`/srv/forge/android/meizu_m6/captures/20260605-203136-m6-postboot-dsi-sleep-clock-diagboot-711HEBSR277K5`;
+its boot readback again matches `e4c317d025440efa5e04f158b255b4b127ce6e5c0848a149ccecefbbab6eabbd`.
+
+FACT: the postboot capture was taken early enough that `boot-state.txt` still
+had `sys.boot_completed=` and `bootanim=running`, but live follow-up under
+`live-after-bootcompleted/` shows `sys.boot_completed=1`, `bootanim=stopped`,
+`surfaceflinger=running`, and `input/window/activity` services present.
+`screenrecord-720x1280.mp4` is non-empty (`6065` bytes), and the late
+`screencap-keepawake.png` shows the Android lockscreen.
+
+FACT: DSI/panel reads are healthy while the primary display is ALIVE. In
+`ata-sweep-1.txt` / `mtkfb-after-ata-1-reg_dsi.txt`, DSI reads run with
+`power=1 ulps=0 dsi_e/p=1/1 dig_e/p=1/1`, wait return `ret=200`, and decoded
+packets. Panel responses include display ID `15 20 00`, display status
+`80 03 06 00`, power mode `9c`, pixel format `07`, ID1 `15`, ID2 `20`, and
+ID3 `00`. `0x2a` and `0x2b` return four bytes but still report
+`00 00 00 00`, so address-window reads are not useful as the primary health
+signal on this panel.
+
+FACT: DSI read timeouts happen after userspace blanks the framebuffer. At
+`74.664386`, `surfaceflinger` calls `M6 mtkfb blank: mode=4`; the primary path
+then logs `suspend-begin`, `suspend-after-lcm`, `power-off-entry`, DSI clock
+disable, `ALIVE -> SLEPT`, `ulps=1`, and DSI engine/digital clocks
+`0/1`. ATA/DCS reads after that state show `power=0 ulps=1`, register reads
+stuck at `0x30870`, `DSI Read Fail`, and sentinel `a5` data. These timeouts
+are sleep-state evidence, not proof of a broken DSI transport while awake.
+
+FACT: live screen-off evidence matched the kernel suspend: before wake,
+`mAwake=false`, `mScreenOnFully=false`, backlight brightness `0`, and
+`screencap-before-wake.png` was all black. After `input keyevent 224`,
+brightness `180`, and `screen_off_timeout=2147483647`, the kernel logs
+`SLEPT -> ALIVE`, DSI clocks return to `1/1`, backlight is `180/255`, and
+`screencap-keepawake.png` shows the lockscreen.
+
+INFERENCE: PQ is no longer the active display frontier. The panel, DSI read
+transport, SurfaceFlinger, framebuffer, and backlight control are all working
+when the display is awake. If the human still sees a physically black panel
+while `screencap-keepawake.png` shows the lockscreen and backlight reads
+`180`, the next frontier is physical video visibility/backlight wiring or a
+panel video-mode issue, not DCS read timeout. If the human sees the lockscreen,
+the display bring-up frontier should move to normal ROM polish and persistent
+runtime defaults rather than more PQ/DSI-read patches.
+
+Runtime keep-awake commands used after the capture:
+
+```bash
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'settings put system screen_off_timeout 2147483647; svc power stayon true; input keyevent 224; settings put system screen_brightness 180'
+```
+
+FLASH TOOLING NOTE: Android userspace on this build uses toolbox `dd`; it does
+not accept `conv=fsync` or `bs=4M`. Large `adb exec-in dd ...` also produced a
+partial boot write. The reliable boot write path is: `adb push` boot image to
+`/data/local/tmp`, verify remote sha256, remote `dd if=/data/local/tmp/... of=/dev/block/mmcblk0p21 bs=4096`,
+`sync`, then host readback with `bs=4096` and trim/hash to the boot image size.
+
 ## 2026-06-05 DSI sleep/clock frontier diagnostic
 
 PATCH HISTORY, DIAGNOSTIC, 2026-06-05: trace the exact boundary where the
