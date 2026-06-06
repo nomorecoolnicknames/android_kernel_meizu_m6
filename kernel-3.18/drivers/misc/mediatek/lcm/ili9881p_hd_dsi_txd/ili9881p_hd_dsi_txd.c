@@ -206,6 +206,24 @@ int tps65132_write_bytes(unsigned char addr, unsigned char value)
 		client->adapter ? client->adapter->nr : -1);
 	return ret;
 }
+
+static int tps65132_read_byte(unsigned char addr)
+{
+	int ret = 0;
+	struct i2c_client *client = tps65132_i2c_client;
+
+	if (!client) {
+		LCM_LOGI("M6 LCM tps65132 read blocked addr=0x%02x client=NULL\n",
+			addr);
+		return -1;
+	}
+
+	ret = i2c_smbus_read_byte_data(client, addr);
+	LCM_LOGI("M6 LCM tps65132 read addr=0x%02x ret=%d client=0x%x/%s adapter=%d\n",
+		addr, ret, client->addr, client->name,
+		client->adapter ? client->adapter->nr : -1);
+	return ret;
+}
 #endif
 
 static int __init tps65132_iic_init(void)
@@ -928,6 +946,10 @@ static void lcm_init(void)
 		LCM_LOGI("ili9881p_hd_dsi_txd----tps6132----cmd=%0x--i2c write success----\n", cmd);
 	LCM_LOGI("M6 LCM init seq=%u tps reg1 ret=%d value=0x%02x\n",
 		seq, ret, data);
+#if !defined(BUILD_LK) && !defined(CONFIG_ARCH_MT6797)
+	tps65132_read_byte(0x00);
+	tps65132_read_byte(0x01);
+#endif
 
 #endif
 	LCM_LOGI("M6 LCM init seq=%u reset=1 delay=1ms\n", seq);

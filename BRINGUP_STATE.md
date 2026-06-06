@@ -5239,3 +5239,106 @@ adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; sleep 1; 
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo dsipattern:0x00ff0000 > /d/mtkfb; sleep 8; echo dsipattern:0x0000ff00 > /d/mtkfb; sleep 8; echo dsipattern:0x000000ff > /d/mtkfb; sleep 8; echo dsipattern:0x00000000 > /d/mtkfb'
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 DSI snapshot\\[bist|enable dsi pattern|BIST_PATTERN|BIST_CON" | tail -160'
 ```
+
+## 2026-06-06 physical-black GPIO/TPS readback diagnostic
+
+Patch category: **DIAGNOSTIC**. No register, GPIO, pinctrl, DCS, timing, route,
+or power behavior is changed by this patch.
+
+Hypothesis: FACT: fresh live capture
+`/srv/forge/android/meizu_m6/captures/20260606-live-physical-black-dsi-bist2`
+shows Android boot complete, SurfaceFlinger running, `LCM Driver=[ili9881p_hd_dsi_txd]`,
+`State=Alive`, `PathMode:DIRECT_LINK`, `DISP_OPT_BYPASS_PQ=1`, and RDMA0
+transfer at about 60.82 fps. FACT: the same capture shows healthy DCS reads:
+`display_id=15 20 00`, `display_status=80 03 06 00`, `power_mode=9c`,
+`pixel_format=07`, `id1=15`, `id2=20`, and `id3=00`. FACT: DSI self-pattern
+write markers for white/red/green/blue set `self_pat=1` and report DSI video
+period, but the physical LCD remains black per human observation. HYPOTHESIS:
+the open frontier is no longer userspace, PQ, RDMA, or DCS command transport;
+it is panel-side physical visibility, most likely one of bias/reset/backlight
+enable state, TPS65132 applied voltage state, MIPI lane electrical/timing
+state, or an LK-only side effect missing from Linux reinit.
+
+Evidence: current source routes M6 LCM bias/reset through
+`lcm_pinctl_gpio_output()` in `mtkfb.c`, mapping VSP to GPIO17, VSN to GPIO90,
+and reset to GPIO158. The current LCM backlight path is DTS `led_mode=<4>`
+(`MT65XX_LED_MODE_CUST_LCM`) and sends DCS `0x51`; live sysfs brightness `255`
+therefore proves the DCS brightness request, not a separate LED rail. Live
+`/d/gpio` only exposes GPIO12 and GPIO101, with GPIO12 low, so it cannot prove
+the actual VSP/VSN/RST state selected by the LCM pinctrl path. TPS writes
+currently log only `i2c_master_send ret=2`, which proves transfer completion
+but not readback of reg0/reg1.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c` adds bounded
+  read-only GPIO state markers after LCM pinctrl probe/select for GPIO17,
+  GPIO90, GPIO158, GPIO12, and GPIO101.
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+  adds TPS65132 reg0/reg1 readback markers after the existing bias writes.
+- `BRINGUP_STATE.md` records the diagnostic evidence, expected markers,
+  rollback condition, and verification commands.
+
+Why each file changed: `mtkfb.c` owns the M6-specific pinctrl helper actually
+called by `set_gpio_lcd_enp()`, `set_gpio_lcd_enn()`, and `SET_RESET_PIN()`,
+so it is the lowest point that can correlate requested VSP/VSN/RST states with
+actual MTK GPIO mode/dir/out/in reads. The active LCM driver owns TPS65132
+write sequencing, so it can read reg0/reg1 immediately after writes without
+guessing from userspace debugfs.
+
+Build/artifact result: `Image.gz-dtb` built successfully from
+`/srv/forge/work/m6-source-kernel-manual-20260520/out` using the documented
+`-j8 Image.gz-dtb` command. Boot-only artifact:
+`/srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-gpio-tps-diag/boot-m6-physical-black-gpio-tps-diag.img`.
+Artifact sha256 identities:
+
+- `boot-m6-physical-black-gpio-tps-diag.img`:
+  `c5689acac835038709943e8e3ccee77b03c5cb24b1bd2af14c7cda7b18edd09c`
+- `Image.gz-dtb`:
+  `41d589c7deed8dbe72cbea7a1f2b25da334ae2cb8822b94857cc418c975385f9`
+- `System.map`:
+  `12af68250308681197d89b92ca24116bf7ad3e86759d43167b10437a2aab2129`
+- `kernel.config`:
+  `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`
+- `verify-unpack/zImage`:
+  `41d589c7deed8dbe72cbea7a1f2b25da334ae2cb8822b94857cc418c975385f9`
+
+`abootimg -i` reports unchanged boot geometry: page size `2048`, boot name
+`1552631950`, kernel address `0x40080000`, ramdisk address `0x45000000`, tags
+address `0x44000000`, and cmdline
+`bootopt=64S3,32N2,64N2 androidboot.selinux=permissive binder.devices=binder,hwbinder,vndbinder`.
+`sha256sum -c SHA256SUMS` passed and `cmp Image.gz-dtb verify-unpack/zImage`
+passed inside the artifact directory.
+
+Expected next marker: after flashing the rebuilt boot and running
+`m6_lcm_reinit:1`, dmesg should contain `M6 gpio[...]` lines for
+`vsp-pullhigh`, `vsn-pullhigh`, and `rst-pullhigh`, plus
+`M6 LCM tps65132 read addr=0x00 ret=15` and `addr=0x01 ret=15` if the bias IC
+readback matches the programmed `0x0f`. If VSP/VSN/RST or TPS readback is
+wrong while DCS `power_mode=9c` remains healthy, the next patch should target
+the proven pinctrl/TPS boundary. If all physical power/reset evidence is
+healthy and the screen is still black during BIST, continue below DSI controller
+self-pattern toward MIPI TX electrical/timing/lane parity with stock LK.
+
+Rollback condition: revert this diagnostic if the verified boot regresses
+before ADB/SurfaceFlinger, if GPIO read markers flood logs beyond the LCM
+init/resume/reinit path, or if TPS readback causes an I2C failure that was not
+present with write-only TPS diagnostics. Do not promote this patch to a fix;
+it is evidence only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+cd /srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-gpio-tps-diag
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack/zImage
+abootimg -i boot-m6-physical-black-gpio-tps-diag.img
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_lcm_reinit:1 > /d/mtkfb; sleep 2; echo ata > /d/mtkfb; dmesg | grep -E "M6 gpio\\[|M6 LCM tps65132 read|M6 LCM ATA dcs|M6 DSI snapshot\\[bist" | tail -220'
+```

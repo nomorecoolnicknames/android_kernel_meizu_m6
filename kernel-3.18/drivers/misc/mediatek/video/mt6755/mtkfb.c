@@ -38,6 +38,7 @@
 #include <linux/io.h>
 #include "ion_drv.h"
 #include <mt-plat/dma.h>
+#include <mt-plat/mt_gpio.h>
 /* #include <mach/irqs.h> */
 #include <linux/dma-mapping.h>
 #include <linux/compat.h>
@@ -2880,6 +2881,24 @@ struct pinctrl_state *lcm_pinctl_vsp_high, *lcm_pinctl_vsp_low, *lcm_pinctl_vsn_
 static int lcm_pinctl_gpio_probe(struct platform_device *pdev);
 void lcm_pinctl_gpio_output(int pin, int level) ;
 
+static void m6_lcm_gpio_dump_one(const char *tag, unsigned long pin)
+{
+	printk(KERN_ERR
+	       "[lcm_pinctl] M6 gpio[%s] pin=%lu mode=%d dir=%d out=%d in=%d pull_en=%d pull_sel=%d\n",
+	       tag, pin, mt_get_gpio_mode(pin), mt_get_gpio_dir(pin),
+	       mt_get_gpio_out(pin), mt_get_gpio_in(pin),
+	       mt_get_gpio_pull_enable(pin), mt_get_gpio_pull_select(pin));
+}
+
+static void m6_lcm_gpio_dump(const char *tag)
+{
+	m6_lcm_gpio_dump_one(tag, 17);
+	m6_lcm_gpio_dump_one(tag, 90);
+	m6_lcm_gpio_dump_one(tag, 158);
+	m6_lcm_gpio_dump_one(tag, 12);
+	m6_lcm_gpio_dump_one(tag, 101);
+}
+
 static int lcm_pinctl_gpio_probe(struct platform_device *pdev)
 {
 	int ret;
@@ -2930,6 +2949,7 @@ static int lcm_pinctl_gpio_probe(struct platform_device *pdev)
 
 	
 	printk ("[lcm_pinctl %d] mt_lcm_pinctl_pinctrl----------\n", pdev->id);
+	m6_lcm_gpio_dump("probe");
 	return 0;
 }
 
@@ -2942,11 +2962,13 @@ static int lcm_pinctl_select_state_checked(const char *name,
 		printk(KERN_ERR
 		       "[lcm_pinctl] M6 output skipped: state=%s pctrl=%p state_ptr=%p\n",
 		       name, lcm_pinctl_pinctrl, state);
+		m6_lcm_gpio_dump(name);
 		return -ENODEV;
 	}
 
 	ret = pinctrl_select_state(lcm_pinctl_pinctrl, state);
 	printk(KERN_ERR "[lcm_pinctl] M6 output state=%s ret=%d\n", name, ret);
+	m6_lcm_gpio_dump(name);
 	return ret;
 }
 
