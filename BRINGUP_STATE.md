@@ -5570,6 +5570,109 @@ gzip -cd Image.gz-dtb 2>/tmp/m6-led-dcs-gzip.err | strings | grep -E 'M6 LED pat
 # WAIT_SECONDS=7200 POLL_SECONDS=5 ./m6_wait_capture_flash_physical_black_led_dcs_diag.sh
 ```
 
+## 2026-06-06 guarded PWM dump diagnostic refresh
+
+Patch category: **DIAGNOSTIC**. No LED mode, PWM enable, PMIC setting, panel
+command, GPIO, DSI timing, or boot behavior is changed by this patch. This
+refresh supersedes the previous `led-dcs` artifact as the preferred next flash
+because it keeps the same LED/DCS markers and adds a guard for unsafe PWM debug
+dumps.
+
+Hypothesis: FACT: read-only capture
+`/srv/forge/android/meizu_m6/captures/20260606-091630-m6-currentboot-pwm-reg-dump-711HEBSR277K5`
+attempted `/d/dispsys dump_reg:13` on the then-running old boot and the device
+disappeared. FACT: follow-up capture
+`/srv/forge/android/meizu_m6/captures/20260606-091932-m6-after-dispsys-pwm-dump-disconnect-711HEBSR277K5`
+shows `ro.boot.bootreason=wdt_by_pass_pwk`; pstore records
+`Unable to handle kernel NULL pointer dereference`, `PC is at
+pwm_dump_reg+0x19c/0x2b4`, then `ddp_dump_reg+0xdc/0x15c` and
+`ddp_process_dbg_opt+0xafc/0x10b0`. HYPOTHESIS: `DISPSYS_PWM0_BASE` is NULL
+or otherwise unmapped for the debug dump path; raw `/d/dispsys dump_reg:13`
+must not be used on old kernels. A guard is required before adding PWM register
+dumps to the capture helper.
+
+Evidence: current `ddp_hal.h` enum maps `DISP_MODULE_PWM0` to module ID `13`
+and `DISP_MODULE_PWM1` to `23`; the earlier side-audit suggestion to try `12`
+would have dumped `UFOE`, not PWM. The same follow-up boot logs
+`[PWM] backlight is on (1023), ddp_pwm power:(1)`, but source inspection of
+`drivers/misc/mediatek/video/common/aal20/ddp_pwm.c` shows this can be dummy
+status when `g_pwm_led_mode != MT65XX_LED_MODE_CUST_BLS_PWM`; it is not proof
+of a physical PWM backlight branch.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dump.c` now checks the
+  PWM register base before reading `PWM_EN`, `PWM_CON_0`, `PWM_CON_1`, or
+  `PWM_DEBUG`; if the base is NULL it logs `DISP PWM%d base is NULL` and
+  returns.
+- `BRINGUP_STATE.md` records the pstore evidence, enum correction, artifact
+  identity, expected markers, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dump.c` is the exact debugfs path that crashed via
+`/d/dispsys dump_reg:13`. Guarding the read-only dump path keeps future capture
+helpers from rebooting the device while still preserving evidence: either the
+PWM base is missing, or the dump prints real `PWM_EN`/`PWM_CON` values.
+
+Build/artifact result: `Image.gz-dtb` built successfully from
+`/srv/forge/work/m6-source-kernel-manual-20260520/out` using the documented
+`-j8 Image.gz-dtb` command. Preferred boot-only artifact:
+`/srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-led-dcs-pwmguard-diag/boot-m6-physical-black-led-dcs-pwmguard-diag.img`.
+Artifact sha256 identities:
+
+- `boot-m6-physical-black-led-dcs-pwmguard-diag.img`:
+  `0e9ba01b34559b03026818e7c9dec02f283d77ab174c75614b9b9c95c261e78d`
+- `Image.gz-dtb`:
+  `a6547b3a8635d07ef346a995c8d468070457ff54feadfd73016dce37291250e2`
+- `System.map`:
+  `38406138698fedb88bd55faa0b9b770b6c550ec3f41d88b8c4d1e92a7f3bf1fb`
+- `kernel.config`:
+  `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`
+- `ramdisk.img`:
+  `e82c6695614132e8759b9ee96ee5b9e9efdaf8df96d1ef0c32c5dae8b5e16332`
+- `SHA256SUMS`:
+  `6cc926cfac6f8d23903c69bf770b90fa80630b6f34bdc532586351d9e85f8bd6`
+- `m6_wait_capture_flash_physical_black_led_dcs_pwmguard_diag.sh`:
+  `d1d65cfc4a498e5d664c1a51e6f3702a3457787bd87182b5e27e87b00de1ce88`
+
+`sha256sum -c SHA256SUMS` passed, `cmp Image.gz-dtb verify-unpack/zImage`
+passed, `cmp ramdisk.img verify-unpack/ramdisk.img` passed, `bash -n` passed
+for the helper, and payload strings include `M6 LED path`, `M6 LED drv path`,
+`brightness`, `ctrl_display`, `cabc`, `M6 gpio[`, `M6 LCM tps65132 read`, and
+`DISP PWM%d base is NULL`.
+
+Expected next marker: after explicit human flash confirmation, use the
+`pwmguard` helper, not the older `led-dcs` helper. Postboot capture should show
+the LED/DCS markers listed in the previous section plus guarded
+`/d/dispsys dump_reg:13` and `dump_reg:23` output. If the PWM base is still
+unmapped, dmesg should contain `DISP PWM0 base is NULL` and/or
+`DISP PWM1 base is NULL` without a reboot. If the base is mapped, capture should
+contain `PWM_EN`, `PWM_CON_0`, `PWM_CON_1`, and `PWM_DEBUG`.
+
+Rollback condition: revert this diagnostic if the verified boot regresses before
+ADB/SurfaceFlinger or if guarded `/d/dispsys dump_reg:13` still causes panic.
+Do not use this guard as evidence that PWM is working; it only makes the dump
+path safe.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dump.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+cd /srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-led-dcs-pwmguard-diag
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack/zImage
+cmp ramdisk.img verify-unpack/ramdisk.img
+bash -n m6_wait_capture_flash_physical_black_led_dcs_pwmguard_diag.sh
+gzip -cd Image.gz-dtb 2>/tmp/m6-pwmguard-gzip.err | strings | grep -E 'M6 LED path|M6 LED drv path|brightness|ctrl_display|cabc|M6 gpio\[|M6 LCM tps65132 read|DISP PWM%d base is NULL'
+# Flash only after explicit human confirmation:
+# WAIT_SECONDS=7200 POLL_SECONDS=5 ./m6_wait_capture_flash_physical_black_led_dcs_pwmguard_diag.sh
+```
+
 ## 2026-06-06 runtime/SF watchdog side audit
 
 Patch category: **DIAGNOSTIC / STATE-ONLY**. No source changed for this runtime
