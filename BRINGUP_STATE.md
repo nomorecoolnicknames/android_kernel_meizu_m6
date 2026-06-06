@@ -5450,3 +5450,162 @@ sha256sum -c SHA256SUMS
 # Flash only after explicit human confirmation:
 # WAIT_SECONDS=7200 POLL_SECONDS=5 ./m6_wait_capture_flash_physical_black_gpio_tps_diag.sh
 ```
+
+## 2026-06-06 physical-black LED/DCS route diagnostic
+
+Patch category: **DIAGNOSTIC**. No LED mode, PWM, PMIC, GPIO, DSI timing,
+panel command, or boot behavior is changed by this patch.
+
+Hypothesis: FACT: live capture
+`/srv/forge/android/meizu_m6/captures/20260606-085612-m6-live-backlight-probe-711HEBSR277K5`
+shows Linux can call the active `ili9881p_hd_dsi_txd` backlight hook and send
+DCS brightness command `0x51` with `dcs51=0xff` after a sysfs brightness write
+to `255`; the physical LCD still remained black by human observation. FACT:
+current M6 DTS routes `lcd-backlight` through `led_mode=<4>`, which is
+`MT65XX_LED_MODE_CUST_LCM`, so the normal Linux brightness path bypasses the
+PWM and PMIC backlight helpers unless another path calls them. HYPOTHESIS: the
+next capture must prove whether the active Linux path is only CUST_LCM/DCS or
+whether an unexpected PWM/PMIC branch is used, and must prove whether the panel
+retains DCS `0x51`/`0x53`/`0x55` values after the reinit/ATA probe. Do not
+change `led_mode` to PWM/PMIC until this read-only split is captured.
+
+Evidence: `dmesg-backlight-probe-tail.txt` in the live capture contains
+`lcm_setbacklight_cmdq ... level = 255` followed by
+`M6 LCM backlight ... request=255 dcs51=0xff min=20 count=19 delta=235`.
+The earlier scrcpy/physical-black capture
+`/srv/forge/android/meizu_m6/captures/20260606-080219-m6-scrcpy-image-physical-black-live`
+shows SurfaceFlinger composition, framebuffer content, RDMA transfer, PQ bypass,
+and healthy DCS ID/status reads. A read-only side audit of stock `lk.img` found
+strings for `enable backlight after show bootlogo!`, `backlight_set_pwm`,
+`brightness_set_pwm`, PMIC backlight text, and the active `ili9881p_hd_dsi_txd`
+LCM strings, but raw disassembly was not reliable enough to prove that stock M6
+actually takes a PWM/PMIC branch. Strings alone are not evidence to change DTS.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+  extends the existing bounded ATA read sweep with DCS `0x51` as `brightness`,
+  `0x53` as `ctrl_display`, and `0x55` as `cabc`.
+- `kernel-3.18/drivers/misc/mediatek/leds/mt6755/leds.c` adds bounded
+  `lcd-backlight` markers around class-direct/AAL and CUST PWM/LCM/BLS-PWM route
+  decisions.
+- `kernel-3.18/drivers/misc/mediatek/leds/leds_drv.c` adds bounded
+  `lcd-backlight` markers around the common LED wrapper and high-resolution
+  backlight entrypoints.
+- `BRINGUP_STATE.md` records the live evidence, side-audit result, artifact
+  identity, expected markers, rollback condition, and verification commands.
+
+Why each file changed: the active LCM driver is the only safe place to read
+panel DCS register state using the already-working ATA/debugfs path. The
+MT6755 LED HAL file owns the route decision that distinguishes CUST_LCM from
+CUST_PWM/CUST_BLS_PWM at runtime. The common LED wrapper owns the sysfs and
+high-resolution backlight entrypoints before they reach the MT6755 LED HAL, so
+both files are needed to prove whether a brightness write was transformed or
+routed away before the LCM hook.
+
+Build/artifact result: `Image.gz-dtb` built successfully from
+`/srv/forge/work/m6-source-kernel-manual-20260520/out` using the documented
+`-j8 Image.gz-dtb` command. Boot-only artifact:
+`/srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-led-dcs-diag/boot-m6-physical-black-led-dcs-diag.img`.
+Artifact sha256 identities:
+
+- `boot-m6-physical-black-led-dcs-diag.img`:
+  `1eee7865c1c5b09e111c22f269a043fa2447c1e490cebdd3d5c5c7a0e3c41e9e`
+- `Image.gz-dtb`:
+  `a7fa6ccf3ad5c74277664232f70e39bb9bbf6ab44ba16195846e77fda93b1b5b`
+- `System.map`:
+  `b6bf684dec6084773ba4203fbf5b8884ba6a1c29e2aa05a5de42c882a2c5a384`
+- `kernel.config`:
+  `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`
+- `ramdisk.img`:
+  `e82c6695614132e8759b9ee96ee5b9e9efdaf8df96d1ef0c32c5dae8b5e16332`
+- `SHA256SUMS`:
+  `201c855828dd1b61a34b6ed300ada27dd344ff30f777d56740901c4f72145931`
+- `m6_wait_capture_flash_physical_black_led_dcs_diag.sh`:
+  `1cfca6f5d87c2d75c95c0db10bf742ee875b54cb58f6fa43dc8df0385ce98849`
+
+`abootimg -i` reports unchanged boot geometry: page size `2048`, boot name
+`1552631950`, kernel address `0x40080000`, ramdisk address `0x45000000`, tags
+address `0x44000000`, and cmdline
+`bootopt=64S3,32N2,64N2 androidboot.selinux=permissive binder.devices=binder,hwbinder,vndbinder`.
+`sha256sum -c SHA256SUMS` passed, `cmp Image.gz-dtb verify-unpack/zImage`
+passed, `cmp ramdisk.img verify-unpack/ramdisk.img` passed, and `bash -n`
+passed for the flash/capture helper.
+
+Expected next marker: after explicit human flash confirmation, flash
+`boot-m6-physical-black-led-dcs-diag.img` and run the helper capture. The
+postboot capture should contain `M6 LED path[class-direct]` and
+`M6 LED path[cust-lcm]` with `mode=4` if Linux still routes through CUST_LCM.
+If `M6 LED path[cust-pwm]`, `disp_pwm_set_backlight`, `mt_backlight_set_pwm`,
+or `mt_brightness_set_pmic` appears, that is the first evidence that a PWM/PMIC
+path is active. After `m6_lcm_reinit:1` plus `ata`, dmesg should contain
+`M6 LCM ATA dcs[...] name=brightness cmd=0x51`, `name=ctrl_display cmd=0x53`,
+and `name=cabc cmd=0x55`. If `brightness` reads back `ff` and GPIO/TPS markers
+are healthy while the physical LCD remains black, continue to MIPI TX/HS
+lane/electrical/timing parity or an LK-only backlight enable side effect.
+
+Rollback condition: revert this diagnostic if the verified boot regresses before
+ADB/SurfaceFlinger, if the LED markers flood logs beyond bounded brightness
+transitions, or if the added DCS `0x51`/`0x53`/`0x55` reads introduce DSI read
+timeouts/panel resets not present in the previous ATA sweep. Do not promote this
+patch to a fix; it is evidence only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c kernel-3.18/drivers/misc/mediatek/leds/mt6755/leds.c kernel-3.18/drivers/misc/mediatek/leds/leds_drv.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+cd /srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-led-dcs-diag
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack/zImage
+cmp ramdisk.img verify-unpack/ramdisk.img
+bash -n m6_wait_capture_flash_physical_black_led_dcs_diag.sh
+gzip -cd Image.gz-dtb 2>/tmp/m6-led-dcs-gzip.err | strings | grep -E 'M6 LED path|M6 LED drv path|brightness|ctrl_display|cabc|M6 gpio\[|M6 LCM tps65132 read'
+# Flash only after explicit human confirmation:
+# WAIT_SECONDS=7200 POLL_SECONDS=5 ./m6_wait_capture_flash_physical_black_led_dcs_diag.sh
+```
+
+## 2026-06-06 runtime/SF watchdog side audit
+
+Patch category: **DIAGNOSTIC / STATE-ONLY**. No source changed for this runtime
+audit in this section.
+
+FACT: runtime side audit of the
+`20260606-080219-m6-scrcpy-image-physical-black-live` capture found the first
+framework boot did reach enough UI to launch Trebuchet, then Trebuchet ANR/death
+triggered a system_server watchdog. The ANR lock chain is: a WMS animation
+thread holds `WindowHashMap` while blocked in
+`SurfaceComposerClient::createSurface()` binder work; an AMS binder thread holds
+`ActivityManagerService` while waiting for the same `WindowHashMap` during
+`ActivityManagerService.handleAppDiedLocked()` / `appDiedLocked()` /
+`LocalService.setHasOverlayUi`; this blocks ActivityManager, android.ui,
+android.fg, and android.display. After system_server restarts, logs stop near
+`SystemServer: WaitForDisplay`; `mSystemReady=false`, `mDisplayReady=false`,
+and services such as `settings` may be absent even though the stale
+`sys.boot_completed=1` property remains.
+
+INFERENCE: this runtime blocker is separate from the physical LCD black split.
+SurfaceFlinger/FB/RDMA/DCS evidence is already enough to continue physical
+display diagnostics, but a ROM/framework patch will likely be needed to keep
+system_server stable after Trebuchet/app-death or SF `createSurface` stalls.
+
+Expected next marker: a runtime patch should first add DIAGNOSTIC timing/lock
+markers around AMS app-death handling, WMS `mWindowMap` hold time in
+`createSurfaceControl`/`continueSurfaceLayout`, and SurfaceFlinger
+`createSurface` binder latency. A proper fix candidate is to avoid calling WMS
+surface-layout work while holding the AMS monitor during app death, or to move
+the overlay-ui/app-death side effect async/outside the lock, but only after
+fresh timing markers prove the exact stall.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/captures/20260606-080219-m6-scrcpy-image-physical-black-live
+grep -n "WindowHashMap\|SurfaceComposerClient::createSurface\|handleAppDiedLocked\|appDiedLocked\|SET_HAS_OVERLAY_UI" anr/anr_2026-06-06-09-06-38-695
+grep -E "WATCHDOG KILLING|WaitForDisplay|Display device added|Display device changed state|system_server" logcat-boot-timeline-tail.txt logcat-watchdog-blockers-tail.txt
+```
