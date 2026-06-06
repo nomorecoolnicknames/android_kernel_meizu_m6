@@ -5352,3 +5352,101 @@ cmp Image.gz-dtb verify-unpack/zImage
 abootimg -i boot-m6-physical-black-gpio-tps-diag.img
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_lcm_reinit:1 > /d/mtkfb; sleep 2; echo ata > /d/mtkfb; dmesg | grep -E "M6 gpio\\[|M6 LCM tps65132 read|M6 LCM ATA dcs|M6 DSI snapshot\\[bist" | tail -220'
 ```
+
+## 2026-06-06 scrcpy-image / physical-black live split
+
+Patch category: **DIAGNOSTIC / STATE-ONLY**. No source or device boot was
+changed in this checkpoint.
+
+FACT: the user reported that scrcpy shows an image while the physical LCD is
+black. Fresh live capture:
+`/srv/forge/android/meizu_m6/captures/20260606-080219-m6-scrcpy-image-physical-black-live`.
+FACT: the capture's clean boot readback
+`current-boot-readback-8863744.img` is sha256
+`e4c317d025440efa5e04f158b255b4b127ce6e5c0848a149ccecefbbab6eabbd`, matching
+the old `/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dsi-sleep-clock-diag-boot`
+boot and not the pending GPIO/TPS diagnostic boot sha256
+`c5689acac835038709943e8e3ccee77b03c5cb24b1bd2af14c7cda7b18edd09c`.
+Therefore `M6 gpio[...]` and `M6 LCM tps65132 read` markers are still not
+expected on the running device.
+
+FACT: SurfaceFlinger still has a built-in 720x1280 display, `isDisplayOn=1`,
+refresh `57.820002 fps`, GLES `Mali-T860`, launcher/statusbar/wallpaper
+layers, and an `HWC_FRAMEBUFFER_TARGET` in
+`surfaceflinger-compact.txt`. FACT: `/d/mtkfb` in the same capture reports
+`LCM Driver=[ili9881p_hd_dsi_txd]`, `State=Alive`, `PathMode:DIRECT_LINK`,
+`DISP_OPT_BYPASS_PQ=1`, and RDMA0 transfer around `60.72 fps`. FACT: direct
+read of `/dev/graphics/fb0` into `fb0-head-4m.raw` returned 4 MiB with
+sha256 `508e5c1af3d87986fc1485478cffce84bcbbe898e2604c78de087e1effb2fd50`;
+`fb0-head-sample-words.txt` begins with repeated `ff00ff00`, so framebuffer
+memory is not all black/zero. FACT: `ata-after-user-physical-black.txt` shows
+DCS command transport remains healthy: `display_id=15 20 00`,
+`display_status=80 03 06 00`, `power_mode=9c`, `pixel_format=07`, `id1=15`,
+`id2=20`, and `id3=00`.
+
+INFERENCE: the current physical-black symptom is not explained by empty
+SurfaceFlinger composition, empty framebuffer memory, PQ, RDMA inactivity, or
+dead DCS LP command transport. HYPOTHESIS: the next physical frontier remains
+panel-side visibility: VSP/VSN/RST pin state, TPS65132 reg0/reg1 readback,
+backlight/LED routing, or MIPI TX/HS lane/electrical/timing state. This is
+exactly what the already-built GPIO/TPS diagnostic boot is designed to split.
+
+FACT: this same capture also proves a separate runtime blocker. The first
+system_server PID `676` completed normal boot enough to launch Trebuchet, but
+`logcat-events-boot-tail.txt` and `logcat-watchdog-blockers-tail.txt` show a
+Trebuchet `TIME_TICK` ANR at `09:05:10`, followed by
+`*** WATCHDOG KILLING SYSTEM PROCESS` at `09:06:41`. FACT: after zygote
+started system_server PID `3478`, `logcat-boot-timeline-tail.txt` stops after
+`SystemServer: WaitForDisplay`; DisplayManager added the built-in display with
+`state UNKNOWN`, but no later `Display device changed state: ON` is present.
+FACT: current `dumpsys power` reports `mBootCompleted=false`,
+`mSystemReady=false`, `mDisplayReady=false`, and `Display Power: state=UNKNOWN`;
+`init.svc.bootanim=running` while `sys.boot_completed=1`, so
+`sys.boot_completed=1` is stale/misleading after the system_server restart.
+
+FACT: `anr/anr_2026-06-06-09-06-38-695` identifies the watchdog lock chain:
+`android.anim` thread 26 holds `WindowHashMap` while blocked in
+`SurfaceComposerClient::createSurface()` via binder to SurfaceFlinger;
+`Binder:676_A` thread 89 holds `ActivityManagerService` while waiting for the
+same `WindowHashMap` in `WindowManagerService.continueSurfaceLayout()` during
+`ActivityManagerService.handleAppDiedLocked()` / `appDiedLocked()`. That in
+turn blocks ActivityManager, android.ui, android.fg, and android.display
+threads on the AMS monitor. Current binder state still shows SurfaceFlinger
+PID `410` with active incoming transactions from the restarted system_server
+and bootanimation.
+
+INFERENCE: there are two active fronts, and they should not be conflated:
+physical LCD black despite live FB/DCS evidence, and framework/SF watchdog
+after the first userspace boot. HYPOTHESIS: the watchdog class is a
+SurfaceFlinger/binder/createSurface stall or WMS/AMS lock-order hazard exposed
+by an app death during display/window relayout; a separate runtime patch may be
+needed even after the physical panel is fixed. A subagent was assigned the
+read-only runtime/SF source audit so the main display loop can continue on the
+panel frontier.
+
+Expected next marker: after explicit human flash confirmation, flash
+`/srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-gpio-tps-diag/boot-m6-physical-black-gpio-tps-diag.img`
+and collect `M6 gpio[...]` plus `M6 LCM tps65132 read` markers. If GPIO17/90/158
+or TPS reg0/reg1 readback is wrong, patch that proven boundary. If GPIO/TPS are
+correct and physical LCD is still black while FB/DCS remain healthy, move to
+MIPI TX/HS lane/electrical/timing parity and stock LK handoff/backlight-side
+effects. For runtime, inspect the subagent's SF/watchdog findings before
+editing framework or vendor display userspace.
+
+Rollback condition: none for this state-only checkpoint. Do not use
+`sys.boot_completed=1` alone as a success criterion for this boot after the
+observed system_server watchdog/restart.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/captures/20260606-080219-m6-scrcpy-image-physical-black-live
+sha256sum current-boot-readback-8863744.img fb0-head-4m.raw
+grep -E "power_mode|display_id|display_status|pixel_format|id[123]" ata-after-user-physical-black.txt
+grep -E "WATCHDOG KILLING|WaitForDisplay|Display device added|Display device changed state" logcat-boot-timeline-tail.txt logcat-watchdog-blockers-tail.txt
+grep -n "WindowHashMap\\|SurfaceComposerClient::createSurface\\|handleAppDiedLocked\\|appDiedLocked" anr/anr_2026-06-06-09-06-38-695
+cd /srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-gpio-tps-diag
+sha256sum -c SHA256SUMS
+# Flash only after explicit human confirmation:
+# WAIT_SECONDS=7200 POLL_SECONDS=5 ./m6_wait_capture_flash_physical_black_gpio_tps_diag.sh
+```
