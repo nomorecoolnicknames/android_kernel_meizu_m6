@@ -5073,3 +5073,169 @@ Runtime sidecar blocker snapshot, not part of this display patch:
   restart/noise. The LatinIME `libjni_latinimegoogle.so` alias/loading noise
   has a source checkpoint and is included in the paired 2026-06-05 system raw;
   the next boot must verify the logcat marker is gone.
+
+## 2026-06-06 DCS sleep-out/display-on packet isolation
+
+Patch category: **ISOLATION + DIAGNOSTIC**.
+
+Hypothesis: FACT: current boot partition readback in
+`/srv/forge/android/meizu_m6/captures/20260606-043843-m6-live-scrcpy-ok-physical-black`
+matches
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dsi-sleep-clock-diag-boot/boot-m6-dsi-sleep-clock-diag.img`
+sha256 `e4c317d025440efa5e04f158b255b4b127ce6e5c0848a149ccecefbbab6eabbd`.
+FACT: Android and composition are alive in that capture: `sys.boot_completed=1`,
+`Display Power: state=ON`, `mScreenState=ON`, `mScreenBrightness=180`,
+SurfaceFlinger built-in display `720x1280` has `powerMode=2`, `isDisplayOn=1`,
+and RDMA0 transfer is about 60 fps. FACT: physical LCD is still black per user
+observation while scrcpy shows the rendered image.
+
+Evidence: FACT: DCS transport is alive after the manual Linux reinit because
+`0x04` / `0xDA` / `0xDB` read `15 20`, but the same fresh dmesg shows bad panel
+power state after reinit: `M6 LCM ATA dcs[6] name=display_status ... read=00 01
+02 00`, `name=power_mode ... read=08`, and `name=pixel_format ... read=07`.
+Earlier LK-handoff captures had `power_mode=9c` with the same selected
+`ili9881p_hd_dsi_txd` panel. FACT: source audit shows the active Linux init
+tail sends `0x11` and `0x29` through `dsi_set_cmdq_V22()` with `count=1`, which
+the MTK DSI core encodes as DCS short packet with one parameter (`0x15`) instead
+of the zero-parameter DCS short packet (`0x05`). HYPOTHESIS: the stock raw table
+conversion preserved a padding zero byte as a payload, so Linux's force-init
+never actually issues valid zero-parameter Sleep Out / Display On packets for
+this panel.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`
+  changes only the active init tail entries for `0x11` and `0x29` from
+  `count=1, payload 0x00` to `count=0`.
+- `BRINGUP_STATE.md` records the capture identity, evidence, expected next
+  marker, rollback condition, and verification commands.
+
+Why each file changed: the LCM driver owns the selected panel command sequence.
+`0x11` and `0x29` are the narrowest behavior boundary that directly explains
+the observed bad DCS `power_mode=08` after otherwise successful reset, TPS bias,
+init table submission, backlight command, and live DCS ID reads. The state file
+is the required durable handoff for this isolation checkpoint.
+
+Expected next marker: after flashing the rebuilt boot image, Android should
+still reach `sys.boot_completed=1`. Running `echo m6_lcm_reinit:1 > /d/mtkfb`
+followed by `echo ata > /d/mtkfb` should log init table entries
+`cmd=0x11 count=0` and `cmd=0x29 count=0`. If the hypothesis is right, DCS
+`power_mode` should move away from `08` toward the earlier healthy `9c`,
+`display_status` should no longer be `00 01 02 00`, and the physical panel may
+light or show the DSI BIST/Android frame.
+
+Rollback condition: revert this isolation if the verified boot regresses before
+ADB/SurfaceFlinger, if DCS reads start timing out where the current artifact
+returns valid `15 20` ID bytes, or if `m6_lcm_reinit:1` still leaves
+`power_mode=08` and no physical image while no other marker changes.
+
+Verification commands:
+
+```bash
+git diff --check
+env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_lcm_reinit:1 > /d/mtkfb; sleep 2; echo ata > /d/mtkfb; dmesg | grep -E "M6 LCM table\\[init\\].*cmd=0x(11|29)|M6 LCM ATA dcs|M6 DSI wrapper read end" | tail -160'
+```
+
+Runtime result: **rejected and rolled back**. The rebuilt boot image
+`/srv/forge/android/export/meizu_m6_artifacts/20260606-m6-dcs-zero-param-sleepout/boot-m6-dcs-zero-param-sleepout.img`
+sha256 `6b04421eb1cd118588dbab13c05a47d9ba856298af7e0efbc253edaf721979fd`
+was flashed to serial `711HEBSR277K5`, read back before reboot, and read back
+again after Android boot; both readbacks matched byte-for-byte. Capture:
+`/srv/forge/android/meizu_m6/captures/20260606-044921-m6-zero-param-sleepout-flash`.
+FACT: Android still booted (`sys.boot_completed=1`, SurfaceFlinger running,
+bootanim stopped). FACT: the init-table markers prove the changed commands
+were sent: `M6 LCM table[init] idx=67 cmd=0x11 count=0` and
+`idx=69 cmd=0x29 count=0`. FACT: after `m6_lcm_reinit:1`, every DCS/ATA read
+timed out with `read_count=0` and sentinel `a5 a5 a5 a5`, including
+`display_id`, `display_status`, `power_mode`, `pixel_format`, and ID registers.
+This is a regression from the prior verified boot, where DCS ID reads returned
+`15 20` and only panel power/status were bad. The source change was therefore
+manually reverted to the stock/preserved `count=1, payload 0x00` entries. Next
+work should treat `0x11/0x29` zero-parameter conversion as rejected for this
+MTK video-mode path unless stock LK proves a different packet encoding at the
+DSI controller level.
+
+## 2026-06-06 awake DCS and DSI BIST screen markers
+
+Patch category: **DIAGNOSTIC**. No kernel behavior change was kept in this
+checkpoint; this section records live-device evidence after rolling back the
+rejected zero-parameter DCS isolation.
+
+Hypothesis: the black physical LCD report must be split into two states. FACT:
+after the rejected zero-param boot was rolled back, the device was flashed back
+to
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dsi-sleep-clock-diag-boot/boot-m6-dsi-sleep-clock-diag.img`
+sha256 `e4c317d025440efa5e04f158b255b4b127ce6e5c0848a149ccecefbbab6eabbd`.
+Capture:
+`/srv/forge/android/meizu_m6/captures/20260606-rollback-from-zero-param-to-dsi-sleep-clock-diag`.
+The pre-reboot and postboot boot readbacks matched byte-for-byte, and Android
+booted as kernel `#16 SMP PREEMPT Fri Jun 5 20:02:39 CDT 2026`. FACT: normal
+Android idle/DOZE can make the physical display black by design: at
+`20260606-wake-screen-after-rollback/before-wake-power.txt`, `Display Power:
+state=OFF`, `mGlobalDisplayState=OFF`, `mScreenState=OFF`, and backlight
+brightness `0`. The matching dmesg shows `M6 mtkfb blank: mode=4`, LCM suspend,
+bias `ENN/ENP` off, DSI clocks off, and display state `SLEPT`.
+
+Evidence: after `svc power stayon true`, long `screen_off_timeout`, and
+`input keyevent 224`, the same boot resumed cleanly. Capture:
+`/srv/forge/android/meizu_m6/captures/20260606-wake-screen-after-rollback`.
+FACT: `after-wake-power.txt` shows `Display Power: state=ON`,
+`mGlobalDisplayState=ON`, `mScreenState=ON`, `mScreenBrightness=180`, backlight
+brightness `180`, and `ata_flag=1`. FACT: `/d/mtkfb` reports `State=Alive`,
+`PathMode:DIRECT_LINK`, `DISP_OPT_BYPASS_PQ=1`, and RDMA0 transfer around 61
+fps. FACT: the normal resume path ran `lcm_init seq=2` and the DCS status after
+awake `echo ata > /d/mtkfb` moved to the known healthy panel state:
+`display_id=15 20 00`, `display_status=80 03 06 00`, `power_mode=9c`,
+`pixel_format=07`, `id1=15`, `id2=20`, `id3=00`. This means the current stock
+`count=1` Linux resume path can bring the panel out of sleep at the DCS level.
+
+Screen-marker evidence: with display still ON/Alive, `dsipattern` was run for
+solid red, green, and blue. The kernel markers prove the DSI self-pattern path
+was enabled in video mode:
+
+- red: `enable dsi pattern: 0x00ff0000`, then
+  `M6 DSI snapshot[bist-post-enable] ... BIST_PATTERN=0xff0000
+  BIST_CON=0x200040 self_pat=1 ... STATE7=0x2020/Video data period`;
+- green: `enable dsi pattern: 0x0000ff00`, then `BIST_PATTERN=0xff00
+  BIST_CON=0x200040 self_pat=1`;
+- blue: `enable dsi pattern: 0x000000ff`, then `BIST_PATTERN=0xff
+  BIST_CON=0x200040 self_pat=1`;
+- off: `dsipattern:0x00000000` cleared `BIST_CON=0x0` while DSI remained in
+  video data period.
+
+Why this matters: scrcpy/SurfaceFlinger is no longer the decisive display
+frontier. In the awake state, Android composition, RDMA transfer, DSI video
+mode, DCS status, backlight sysfs, and DSI BIST register enable are all
+internally consistent. If the human sees the DSI BIST colors, the remaining bug
+is above or at source-buffer/composition routing. If the physical LCD stays
+black even during verified DSI BIST with `power_mode=9c`, the next frontier is
+below the DSI controller's self-pattern register write: panel-side power/reset,
+lane mapping, MIPI TX electrical state, timing polarity/ranges, or a hidden
+stock LK power/PHY side effect.
+
+Expected next marker: keep the device awake during physical display tests with
+`svc power stayon true`, `settings put system screen_off_timeout 2147483647`,
+and `input keyevent 224`. A positive visual result is any visible solid color
+during one of the `dsipattern` windows. A negative visual result is a fully
+black physical LCD while the saved logs show `Display Power: state=ON`,
+`power_mode=9c`, `BIST_CON=0x200040 self_pat=1`, and DSI `STATE7` in video data
+period.
+
+Rollback condition: none for source code; the zero-param code was already
+rolled back and the BIST was disabled after the live test. If future captures
+show the display went black only after `mScreenState=OFF` or `State=Sleep`,
+classify that as Android power policy/idle, not a panel bring-up regression.
+
+Verification commands:
+
+```bash
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'svc power stayon true; settings put system screen_off_timeout 2147483647; input keyevent 224'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo ata > /d/mtkfb; sleep 1; dmesg | grep -E "M6 LCM ATA dcs|M6 DSI wrapper read end" | tail -120'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo dsipattern:0x00ff0000 > /d/mtkfb; sleep 8; echo dsipattern:0x0000ff00 > /d/mtkfb; sleep 8; echo dsipattern:0x000000ff > /d/mtkfb; sleep 8; echo dsipattern:0x00000000 > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 DSI snapshot\\[bist|enable dsi pattern|BIST_PATTERN|BIST_CON" | tail -160'
+```
