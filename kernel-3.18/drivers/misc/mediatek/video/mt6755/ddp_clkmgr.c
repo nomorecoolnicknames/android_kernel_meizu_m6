@@ -16,6 +16,7 @@
 #include "disp_log.h"
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/clk-provider.h>
 #include <linux/types.h>
 #include <mt-plat/sync_write.h>
 #include "ddp_reg.h"
@@ -137,6 +138,22 @@ int ddp_clk_set_parent(eDDP_CLK_ID id, eDDP_CLK_ID parent)
 		return -1;
 	}
 	return clk_set_parent(ddp_clk[id], ddp_clk[parent]);
+}
+
+unsigned int ddp_clk_get_enable_count(eDDP_CLK_ID id)
+{
+	if (id >= MAX_DISP_CLK_CNT || ddp_clk[id] == NULL)
+		return 0xffffffff;
+
+	return __clk_get_enable_count(ddp_clk[id]);
+}
+
+unsigned int ddp_clk_get_prepare_count(eDDP_CLK_ID id)
+{
+	if (id >= MAX_DISP_CLK_CNT || ddp_clk[id] == NULL)
+		return 0xffffffff;
+
+	return __clk_get_prepare_count(ddp_clk[id]);
 }
 
 int ddp_set_mipi26m(int en)

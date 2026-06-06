@@ -231,6 +231,53 @@ static display_primary_path_context *_get_context(void)
 	return &g_context;
 }
 
+static const char *primary_m6_state_name(DISP_POWER_STATE state)
+{
+	switch (state) {
+	case DISP_ALIVE:
+		return "ALIVE";
+	case DISP_SLEPT:
+		return "SLEPT";
+	case DISP_BLANK:
+		return "BLANK";
+	case DISP_FREEZE:
+		return "FREEZE";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static void primary_m6_power_marker(const char *tag)
+{
+	static unsigned int count;
+	unsigned int dsi_e = 0xffffffff;
+	unsigned int dsi_p = 0xffffffff;
+	unsigned int dig_e = 0xffffffff;
+	unsigned int dig_p = 0xffffffff;
+	unsigned int mtcmos_e = 0xffffffff;
+	unsigned int mtcmos_p = 0xffffffff;
+
+	if (count >= 96)
+		return;
+
+	count++;
+#ifndef CONFIG_MTK_CLKMGR
+	dsi_e = ddp_clk_get_enable_count(DISP1_DSI_ENGINE);
+	dsi_p = ddp_clk_get_prepare_count(DISP1_DSI_ENGINE);
+	dig_e = ddp_clk_get_enable_count(DISP1_DSI_DIGITAL);
+	dig_p = ddp_clk_get_prepare_count(DISP1_DSI_DIGITAL);
+	mtcmos_e = ddp_clk_get_enable_count(DISP_MTCMOS_CLK);
+	mtcmos_p = ddp_clk_get_prepare_count(DISP_MTCMOS_CLK);
+#endif
+	DISPERR("M6 primary power[%s] #%u state=%s(0x%x) session=%d mode=%d mutex=%p handle=%p ulps=%u dsi_e/p=%u/%u dig_e/p=%u/%u mtcmos_e/p=%u/%u cg=0x%x/0x%x\n",
+		tag, count, primary_m6_state_name(pgc->state), pgc->state,
+		pgc->session_mode, pgc->mode, pgc->mutex_locker,
+		pgc->dpmgr_handle, is_mipi_enterulps(),
+		dsi_e, dsi_p, dig_e, dig_p, mtcmos_e, mtcmos_p,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1));
+}
+
 static void _primary_path_lock(const char *caller)
 {
 	dprec_logger_start(DPREC_LOGGER_PRIMARY_MUTEX, 0, 0);
@@ -359,6 +406,11 @@ static DISP_POWER_STATE primary_set_state(DISP_POWER_STATE new_state)
 	DISP_POWER_STATE old_state = pgc->state;
 
 	pgc->state = new_state;
+	primary_m6_power_marker("set-state");
+	DISPERR("M6 primary state: %s(0x%x) -> %s(0x%x) caller=%pS\n",
+		primary_m6_state_name(old_state), old_state,
+		primary_m6_state_name(new_state), new_state,
+		__builtin_return_address(0));
 	DISPDBG("%s %d to %d\n", __func__, old_state, new_state);
 	wake_up(&display_state_wait_queue);
 	return old_state;
@@ -4041,6 +4093,7 @@ int primary_display_suspend(void)
 	int event_ret;
 
 	DISPMSG("primary_display_suspend begin\n");
+	primary_m6_power_marker("suspend-begin");
 	MMProfileLogEx(ddp_mmp_get_events()->primary_suspend, MMProfileFlagStart, 0, 0);
 	primary_display_idlemgr_kick((char *)__func__, 1);
 
@@ -4113,8 +4166,10 @@ int primary_display_suspend(void)
 	MMProfileLogEx(ddp_mmp_get_events()->primary_suspend, MMProfileFlagPulse, 0, 3);
 
 	DISPDBG("[POWER]primary display path stop[begin]\n");
+	primary_m6_power_marker("suspend-before-path-stop");
 	dpmgr_path_stop(pgc->dpmgr_handle, CMDQ_DISABLE);
 	DISPMSG("[POWER]primary display path stop[end]\n");
+	primary_m6_power_marker("suspend-after-path-stop");
 	MMProfileLogEx(ddp_mmp_get_events()->primary_suspend, MMProfileFlagPulse, 0, 4);
 
 	if (dpmgr_path_is_busy(pgc->dpmgr_handle)) {
@@ -4130,6 +4185,7 @@ int primary_display_suspend(void)
 	DISPDBG("[POWER]lcm suspend[begin]\n");
 	disp_lcm_suspend(pgc->plcm);
 	DISPMSG("[POWER]lcm suspend[end]\n");
+	primary_m6_power_marker("suspend-after-lcm");
 	MMProfileLogEx(ddp_mmp_get_events()->primary_suspend, MMProfileFlagPulse, 0, 6);
 	DISPDBG("[POWER]primary display path Release Fence[begin]\n");
 	primary_suspend_release_fence();
@@ -4144,10 +4200,12 @@ int primary_display_suspend(void)
 		set_enterulps(1);
 
 	DISPMSG("[POWER]dpmanager path power off[end]\n");
+	primary_m6_power_marker("suspend-after-path-power-off");
 	MMProfileLogEx(ddp_mmp_get_events()->primary_suspend, MMProfileFlagPulse, 0, 8);
 
 done:
 	primary_set_state(DISP_SLEPT);
+	primary_m6_power_marker("suspend-end");
 	_primary_path_unlock(__func__);
 	disp_sw_mutex_unlock(&(pgc->capture_lock));
 	_primary_path_switch_dst_unlock();
@@ -4180,6 +4238,7 @@ int primary_display_resume(void)
 	int use_cmdq, i;
 
 	DISPMSG("primary_display_resume begin\n");
+	primary_m6_power_marker("resume-begin");
 	MMProfileLogEx(ddp_mmp_get_events()->primary_resume, MMProfileFlagStart, 0, 0);
 
 	_primary_path_lock(__func__);
@@ -4245,6 +4304,7 @@ int primary_display_resume(void)
 		set_enterulps(0);
 
 	DISPMSG("dpmanager path power on[end]\n");
+	primary_m6_power_marker("resume-after-path-power-on");
 	DISPDBG("dpmanager path reset[begin]\n");
 	dpmgr_path_reset(pgc->dpmgr_handle, CMDQ_DISABLE);
 	DISPDBG("dpmanager path reset[end]\n");
@@ -4325,6 +4385,7 @@ int primary_display_resume(void)
 	DISPDBG("[POWER]lcm resume[begin]\n");
 	disp_lcm_resume(pgc->plcm);
 	DISPMSG("[POWER]lcm resume[end]\n");
+	primary_m6_power_marker("resume-after-lcm");
 
 	MMProfileLogEx(ddp_mmp_get_events()->primary_resume, MMProfileFlagPulse, 0, 4);
 	if (dpmgr_path_is_busy(pgc->dpmgr_handle)) {
@@ -4342,6 +4403,7 @@ int primary_display_resume(void)
 		dpmgr_path_start(pgc->ovl2mem_path_handle, CMDQ_DISABLE);
 
 	DISPDBG("[POWER]dpmgr path start[end]\n");
+	primary_m6_power_marker("resume-after-path-start");
 
 	MMProfileLogEx(ddp_mmp_get_events()->primary_resume, MMProfileFlagPulse, 0, 6);
 	if (dpmgr_path_is_busy(pgc->dpmgr_handle)) {
@@ -4428,6 +4490,7 @@ int primary_display_resume(void)
 		DSI_ForceConfig(0);
 done:
 	primary_set_state(DISP_ALIVE);
+	primary_m6_power_marker("resume-end");
 #ifdef CONFIG_TRUSTONIC_TRUSTED_UI
 	switch_set_state(&disp_switch_data, DISP_ALIVE);
 #endif

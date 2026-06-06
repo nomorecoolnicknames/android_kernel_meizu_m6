@@ -32,6 +32,7 @@
 #include "ddp_dsi.h"
 #include "ddp_mmp.h"
 #include "disp_helper.h"
+#include "disp_lowpower.h"
 #include "ddp_reg.h"
 #include "disp_debug.h"
 #include "mtkfb_debug.h"
@@ -222,6 +223,58 @@ unsigned int data_lane3 = 0;/*MIPITX_DSI_DATA_LANE3*/
 unsigned int data_lane2 = 0;/*MIPITX_DSI_DATA_LANE2*/
 unsigned int data_lane1 = 0;/*MIPITX_DSI_DATA_LANE1*/
 unsigned int data_lane0 = 0;/*MIPITX_DSI_DATA_LANE0*/
+
+static void dsi_m6_clkstate_marker(const char *tag, DISP_MODULE_ENUM module)
+{
+	static unsigned int count;
+	unsigned int start = 0;
+	unsigned int intsta = 0;
+	unsigned int mode = 0;
+	unsigned int txrx = 0;
+	unsigned int ps = 0;
+	unsigned int dsi_e = 0xffffffff;
+	unsigned int dsi_p = 0xffffffff;
+	unsigned int dig_e = 0xffffffff;
+	unsigned int dig_p = 0xffffffff;
+	unsigned int mtcmos_e = 0xffffffff;
+	unsigned int mtcmos_p = 0xffffffff;
+
+	if (count >= 192)
+		return;
+
+	count++;
+
+	if ((module == DISP_MODULE_DSI0 || module == DISP_MODULE_DSIDUAL) && DSI_REG[0]) {
+		start = AS_UINT32(&DSI_REG[0]->DSI_START);
+		intsta = AS_UINT32(&DSI_REG[0]->DSI_INTSTA);
+		mode = AS_UINT32(&DSI_REG[0]->DSI_MODE_CTRL);
+		txrx = AS_UINT32(&DSI_REG[0]->DSI_TXRX_CTRL);
+		ps = AS_UINT32(&DSI_REG[0]->DSI_PSCTRL);
+	}
+
+#ifndef CONFIG_MTK_CLKMGR
+	dsi_e = ddp_clk_get_enable_count(DISP1_DSI_ENGINE);
+	dsi_p = ddp_clk_get_prepare_count(DISP1_DSI_ENGINE);
+	dig_e = ddp_clk_get_enable_count(DISP1_DSI_DIGITAL);
+	dig_p = ddp_clk_get_prepare_count(DISP1_DSI_DIGITAL);
+	mtcmos_e = ddp_clk_get_enable_count(DISP_MTCMOS_CLK);
+	mtcmos_p = ddp_clk_get_prepare_count(DISP_MTCMOS_CLK);
+#endif
+	DISPERR("M6 DSI clkstate[%s] #%u module=%d power=%d ulps=%u dsi_e/p=%u/%u dig_e/p=%u/%u mtcmos_e/p=%u/%u start=0x%x intsta=0x%x mode=0x%x txrx=0x%x ps=0x%x cg=0x%x/0x%x swrst=0x%x/%x lcm_rst=0x%x route=0x%x/%x mutex0=0x%x/%x/%x\n",
+		tag, count, module, s_isDsiPowerOn, is_mipi_enterulps(),
+		dsi_e, dsi_p, dig_e, dig_p, mtcmos_e, mtcmos_p,
+		start, intsta, mode, txrx, ps,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_SW0_RST_B),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_SW1_RST_B),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_LCM_RST_B),
+		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF));
+}
 
 atomic_t PMaster_enable = ATOMIC_INIT(0);
 
@@ -2280,6 +2333,8 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 		m6_core_seq = ++m6_core_read_count;
 		m6_core_dump = true;
 	}
+	if (m6_core_dump)
+		dsi_m6_clkstate_marker("read-entry", module);
 
 	for (d = DSI_MODULE_BEGIN(module); d <= DSI_MODULE_END(module); d++) {
 		if (DSI_REG[d]->DSI_MODE_CTRL.MODE) {
@@ -2367,6 +2422,8 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 
 			DSI_OUTREG32(cmdq, &DSI_REG[d]->DSI_START, 0);
 			DSI_OUTREG32(cmdq, &DSI_REG[d]->DSI_START, 1);
+			if (m6_core_dump)
+				dsi_m6_clkstate_marker("read-start", module);
 
 			/* / the following code is to */
 			/* / 1: wait read ready */
@@ -2377,6 +2434,8 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 			    wait_event_interruptible_timeout(_dsi_dcs_read_wait_queue[d],
 							     waitRDDone, WAIT_TIMEOUT);
 			waitRDDone = false;
+			if (m6_core_dump)
+				dsi_m6_clkstate_marker("read-wait", module);
 			if (m6_core_dump)
 				DISPERR("M6 DSI core read wait #%u d=%d cmd=0x%x ret=%ld intsta=0x%08x trig=0x%08x start=0x%08x cmdq=0x%08x rx=%08x/%08x/%08x/%08x mode=%u busy=%u\n",
 					m6_core_seq, d, cmd, ret,
@@ -2416,6 +2475,8 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 			} else if (ret == 0) {
 				/* wait read ready timeout */
 				DISPERR("DSI Read Fail: dsi wait read ready timeout\n");
+				if (m6_core_dump)
+					dsi_m6_clkstate_marker("read-timeout", module);
 				DSI_DumpRegisters(module, 2);
 
 				/* /do necessary reset here */
@@ -3869,6 +3930,7 @@ int ddp_dsi_power_on(DISP_MODULE_ENUM module, void *cmdq_handle)
 	int ret = 0;
 
 	DISPFUNC();
+	dsi_m6_clkstate_marker("power-on-entry", module);
 
 	/* DSI_DumpRegisters(module,1); */
 	if (!s_isDsiPowerOn) {
@@ -3891,6 +3953,7 @@ int ddp_dsi_power_on(DISP_MODULE_ENUM module, void *cmdq_handle)
 					pr_warn("DISP/DSI " "DSI power manager API return FALSE\n");
 			}
 			s_isDsiPowerOn = true;
+			dsi_m6_clkstate_marker("power-on-ipoh", module);
 			DISPMSG("ipoh dsi power on return\n");
 			return DSI_STATUS_OK;
 		}
@@ -3927,9 +3990,11 @@ int ddp_dsi_power_on(DISP_MODULE_ENUM module, void *cmdq_handle)
 		DSI_EnableClk(module, NULL);
 
 		DSI_Reset(module, NULL);
+		dsi_m6_clkstate_marker("power-on-after-reset", module);
 #endif
 		s_isDsiPowerOn = true;
 	}
+	dsi_m6_clkstate_marker("power-on-exit", module);
 	/* DSI_DumpRegisters(module,1); */
 #ifdef CONFIG_LOG_JANK
       LOG_JANK_D(JLID_KERNEL_LCD_POWER_ON, "%s", "JL_KERNEL_LCD_POWER_ON");
@@ -3945,6 +4010,7 @@ int ddp_dsi_power_off(DISP_MODULE_ENUM module, void *cmdq_handle)
 	unsigned int value = 0;
 
 	DISPFUNC();
+	dsi_m6_clkstate_marker("power-off-entry", module);
 	/* DSI_DumpRegisters(module,1); */
 
 	if (s_isDsiPowerOn) {
@@ -3972,6 +4038,7 @@ int ddp_dsi_power_off(DISP_MODULE_ENUM module, void *cmdq_handle)
 		DSI_OUTREGBIT(NULL, DSI_TXRX_CTRL_REG, DSI_REG[0]->DSI_TXRX_CTRL, LANE_NUM, 0);
 		/* disable clock */
 		DSI_DisableClk(module, NULL);
+		dsi_m6_clkstate_marker("power-off-before-clk-disable", module);
 
 		if (module == DISP_MODULE_DSI0 || module == DISP_MODULE_DSIDUAL) {
 #ifdef CONFIG_MTK_CLKMGR
@@ -3991,10 +4058,12 @@ int ddp_dsi_power_off(DISP_MODULE_ENUM module, void *cmdq_handle)
 #else
 		ddp_set_mipi26m(0);
 #endif
+		dsi_m6_clkstate_marker("power-off-after-clk-disable", module);
 
 #endif
 		s_isDsiPowerOn = false;
 	}
+	dsi_m6_clkstate_marker("power-off-exit", module);
 	/* DSI_DumpRegisters(module,1); */
 	return DSI_STATUS_OK;
 }

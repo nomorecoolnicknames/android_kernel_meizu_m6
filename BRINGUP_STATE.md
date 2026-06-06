@@ -1,5 +1,102 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-05 DSI sleep/clock frontier diagnostic
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-05: trace the exact boundary where the
+display path enters sleep/ULPS and drops DSI clocks before DCS/ATA reads.
+
+Hypothesis: the current black-panel frontier is not PQ, HWC, framebuffer
+content, or media userspace. Fresh captures show Android boot complete,
+SurfaceFlinger and screenrecord alive, `DISP_OPT_BYPASS_PQ=1`, and the LCM
+driver selected, while every DCS sweep read returns timeout/sentinel data after
+the primary display reports `State=Sleep`, `is_mipi_enterulps()` blocks
+debugfs register dumps, and DSI engine/digital clock enable counts are zero.
+The next capture must prove who requests blank/suspend and at which boundary
+DSI power/clock state changes relative to ATA reads.
+
+Evidence: current boot identity was verified by trimmed readback in
+`/srv/forge/android/meizu_m6/captures/20260605-identity-current-boot-711HEBSR277K5/boot-identity-sha256.txt`;
+the first `8863744` bytes of the boot partition match
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-sourcebuilt-softenc-latinime-system-flash/boot-m6-dcs-read-sweep-diag.img`
+sha256 `6dca836c3e854890f0ce28cb5ebb83af8e12e601144064ae7dbee70c1873fcc6`.
+Fresh DCS sweep capture
+`/srv/forge/android/meizu_m6/captures/20260605-192639-m6-display-dcs-sweep-current-711HEBSR277K5`
+shows `DSI Read Fail: dsi wait read ready timeout`, wrapper `ret=0`, and
+`read_count=0` / `a5 a5 a5 a5` sentinel data for `0x04`, `0x09`, `0x0a`,
+`0x0b`, `0x0c`, `0x0d`, `0x2a`, `0x2b`, `0xda`, `0xdb`, and `0xdc`.
+Live display capture
+`/srv/forge/android/meizu_m6/captures/20260605-194925-m6-live-dsi-mtcmos-frontier-711HEBSR277K5`
+shows `sys.boot_completed=1`, `surfaceflinger=running`,
+`Service input: found`, `Service media.codec: found`, DSI engine/digital
+`clk_enable_count=0`, debugfs `idlemgr disable mtcmos now, all the regs may
+0x00000000`, `LCM Driver=[ili9881p_hd_dsi_txd]`, `State=Sleep`,
+`RDMA0 Transfer ... 60.77 fps`, and `DISP_OPT_BYPASS_PQ Value: [1]`.
+
+Files changed: `ddp_clkmgr.h` exposes read-only display clock count helpers.
+`ddp_clkmgr.c` implements those helpers with `__clk_get_enable_count()` and
+`__clk_get_prepare_count()`. `ddp_dsi.c` adds bounded `M6 DSI clkstate[...]`
+markers around DCS read start/wait/timeout and DSI power on/off. `mtkfb.c`
+logs `M6 mtkfb blank` at fb blank requests. `primary_display.c` adds bounded
+`M6 primary state` and `M6 primary power[...]` markers around state changes,
+suspend, and resume.
+
+Why each file changed: clock counts must be read at the display-driver
+boundary that owns the clocks, not inferred from stale debugfs text. `ddp_dsi.c`
+owns both the DCS read timeout and DSI power transition points, so it can
+correlate `s_isDsiPowerOn`, ULPS state, DSI registers, MMSYS route/mutex
+registers, and clock counts. `mtkfb.c` owns the fb blank entrypoint that can
+explain why the primary display becomes slept even though userspace is alive.
+`primary_display.c` owns the state machine and suspend/resume sequencing that
+turns display path activity into `DISP_SLEPT`. All edits are bounded log-only
+diagnostics with no new waits, resets, register writes, fake-ready path, or
+PQ/display bypass behavior.
+
+Expected next marker: after flashing
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dsi-sleep-clock-diag-boot/boot-m6-dsi-sleep-clock-diag.img`,
+the postboot capture should contain `M6 mtkfb blank`, `M6 primary state`,
+`M6 primary power[...]`, and `M6 DSI clkstate[...]` lines before and after
+the repeated `/d/mtkfb` `ata` sweeps. If the blank/state transition appears
+before ATA, the next fix should target the earliest proven blank/suspend
+request or policy. If DSI clocks are enabled during read but DCS still times
+out, continue into BTA/read-ready/panel command-mode sequencing.
+
+Rollback condition: revert this diagnostic if the verified boot image regresses
+before ADB/SurfaceFlinger, if markers flood beyond their bounded counters, or
+if pstore/last_kmsg proves the new read-only markers trigger a reset/panic.
+Do not promote this patch to a proper fix; it is evidence only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_clkmgr.h kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_clkmgr.c kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+cd /srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dsi-sleep-clock-diag-boot
+sha256sum -c SHA256SUMS
+WAIT_SECONDS=21600 POLL_SECONDS=5 ./m6_wait_capture_flash_dsi_sleep_clock_diag_autoport.sh
+CAP=/srv/forge/android/meizu_m6/captures/<postboot-dir>
+rg -n 'M6 mtkfb blank|M6 primary power|M6 primary state|M6 DSI clkstate|M6 LCM ATA|M6 DSI wrapper read|M6 DSI core read|DSI Read Fail|idlemgr disable mtcmos|State=Sleep' "$CAP"
+```
+
+Build/artifact result: branch `work/m6-rdma0-disp-decpq-20260531` built
+successfully in `/srv/forge/work/m6-source-kernel-manual-20260520/out`.
+The exported boot-only diagnostic artifact is
+`/srv/forge/android/export/meizu_m6_artifacts/20260605-m6-dsi-sleep-clock-diag-boot/boot-m6-dsi-sleep-clock-diag.img`,
+sha256 `e4c317d025440efa5e04f158b255b4b127ce6e5c0848a149ccecefbbab6eabbd`,
+size `8863744`. Kernel payload `Image.gz-dtb` sha256 is
+`57e3e7c876c1794a4cdf612b2bb9bd6b246e05a57b4109e747e152e2cc5ebb3f`;
+matching `System.map` sha256 is
+`e04b21200794b3051053ea197ae8831806a340caa5d0d81bf1fed75003512ff2`;
+matching `kernel.config` sha256 is
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+`abootimg -i` preserved page size `2048`, boot name `1552631950`, addresses
+`0x40080000/0x45000000/0x44000000`, and cmdline `bootopt=64S3,32N2,64N2
+androidboot.selinux=permissive binder.devices=binder,hwbinder,vndbinder`.
+
 ## 2026-06-05 Display frontier audit before source-built flash
 
 STATE / EVIDENCE CHECKPOINT, 2026-06-05: read-only audit of the latest

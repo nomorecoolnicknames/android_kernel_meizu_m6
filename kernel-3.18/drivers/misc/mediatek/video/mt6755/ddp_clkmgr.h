@@ -75,6 +75,8 @@ int ddp_clk_set_parent(eDDP_CLK_ID id, eDDP_CLK_ID parent);
 int ddp_set_clk_handle(struct clk *pclk, unsigned int n);
 int ddp_parse_apmixed_base(void);
 int ddp_set_mipi26m(int en);
+unsigned int ddp_clk_get_enable_count(eDDP_CLK_ID id);
+unsigned int ddp_clk_get_prepare_count(eDDP_CLK_ID id);
 
 #endif				/* CONFIG_MTK_CLKMGR */
 

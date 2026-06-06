@@ -295,6 +295,8 @@ static void mtkfb_blank_suspend(void)
 #if defined(CONFIG_PM_AUTOSLEEP)
 static int mtkfb_blank(int blank_mode, struct fb_info *info)
 {
+	DISPERR("M6 mtkfb blank: mode=%d bypass=%d sleep=%d\n",
+		blank_mode, bypass_blank, primary_display_is_sleepd());
 	switch (blank_mode) {
 	case FB_BLANK_UNBLANK:
 	case FB_BLANK_NORMAL:
