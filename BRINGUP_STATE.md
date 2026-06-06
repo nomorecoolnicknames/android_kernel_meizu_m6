@@ -1,5 +1,68 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-06 scrcpy-visible physical-black awake capture
+
+STATE / EVIDENCE CHECKPOINT, 2026-06-06: the user reported that scrcpy shows
+the rendered Android image while the physical LCD remains black. A fresh
+read-only awake capture was collected from `711HEBSR277K5`.
+
+FACT: capture
+`/srv/forge/android/meizu_m6/captures/20260606-093239-m6-live-awake-physical-black-711HEBSR277K5`
+was taken after forcing `screen_off_timeout=2147483647`,
+`screen_brightness=255`, `svc power stayon true`, and wake key input.
+`getprop` in that capture shows `sys.boot_completed=1`,
+`init.svc.surfaceflinger=running`, and `ro.boot.bootreason=wdt_by_pass_pwk`.
+
+FACT: Android display policy and SurfaceFlinger consider the panel awake and
+compositing. `dumpsys-power.txt` shows `mWakefulness=Awake` and
+`Display Power: state=ON`; `dumpsys-display.txt` shows
+`mGlobalDisplayState=ON`, built-in screen state `ON`, and
+`screenBrightness=255`; `dumpsys-window-policy.txt` shows
+`mScreenOnEarly=true mScreenOnFully=true`; `surfaceflinger.txt` shows
+`powerMode=2`, `isDisplayOn=1`, `layerStack=0`, `flips=1310`, and `numLayers=3`.
+
+FACT: framebuffer/userspace content is not all-black. `screencap.png` is a
+valid `720 x 1280` PNG with sha256
+`8241c2547409cbd98a36bb19ed90dcf77894afbe5fe6f57b74cdb507cd8add9f`.
+The first 16 KiB of `/dev/graphics/fb0` were captured as `fb0-head.bin`,
+sha256 `3d558540e8c59a9e6915aaa700c8d714c8927167920bf0bcf84c4ece2589f368`.
+
+FACT: kernel display path is alive while the physical panel is still black.
+`mtkfb-after-ata.txt` shows `LCM Driver=[ili9881p_hd_dsi_txd]`,
+`State=Alive`, `PathMode:DIRECT_LINK`, `RDMA0 Transfer` about `61.06 fps`,
+and `DISP_OPT_BYPASS_PQ=1`.
+
+FACT: DSI LP command/read path is healthy in the same awake capture.
+The ATA-triggered DCS sweep returns panel identity and status:
+`display_id=15 20 00`, `display_status=80 03 06 00`,
+`power_mode=9c`, `pixel_format=07`, `id1=15`, `id2=20`, and `id3=00`.
+`0x2a` and `0x2b` still read `00 00 00 00`, matching prior captures where
+those address-window reads were not useful as the primary health signal.
+
+FACT: userspace brightness request reaches the LCM backlight callback.
+`backlight-sysfs.txt` shows `255/255`. `dmesg.txt` shows
+`M6 LCM backlight ... request=170 dcs51=0xaa` and later
+`M6 LCM backlight ... request=255 dcs51=0xff`. It also shows TPS65132 bias
+writes returning `ret=2` for registers `0x00` and `0x01`.
+
+INFERENCE: this capture again rejects framebuffer content, SurfaceFlinger,
+HWC power policy, generic sleep/doze state, PQ, and DSI LP DCS command/read
+transport as the first physical-black frontier. The next evidence-backed
+frontier is the real physical visibility path: LED/backlight electrical route,
+DDP PWM module mapping, panel bias/reset state after resume, or MIPI HS video
+acceptance/timing/lane state.
+
+NEXT ACTION: the built but not-yet-flashed diagnostic boot remains the correct
+next physical-display test:
+`/srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-led-dcs-pwmguard-diag/boot-m6-physical-black-led-dcs-pwmguard-diag.img`,
+sha256 `0e9ba01b34559b03026818e7c9dec02f283d77ab174c75614b9b9c95c261e78d`.
+It adds LED route, DCS `0x51/0x53/0x55`, GPIO/TPS, and PWM debugfs guard
+readbacks. Do not flash it without explicit human `шей` confirmation.
+
+Rollback condition: none for this checkpoint; it is a read-only capture
+summary. If a later verified capture shows physical image with the same boot
+state, this physical-black conclusion can be retired.
+
 ## 2026-06-05 DSI sleep/clock diagnostic capture result
 
 STATE / EVIDENCE CHECKPOINT, 2026-06-05: the DSI sleep/clock diagnostic boot
