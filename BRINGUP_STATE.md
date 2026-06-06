@@ -1,5 +1,50 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-06 display awake capture after mediaserver hotfix
+
+STATE / EVIDENCE CHECKPOINT, 2026-06-06: after the live
+`/system/etc/init/mediaserver.rc` hotfix, the phone was rebooted, forced awake
+with brightness 255, and a fresh read-only display capture was taken from
+`711HEBSR277K5`.
+
+FACT: capture
+`/srv/forge/android/meizu_m6/captures/20260606-1356-m6-display-awake-after-mediahotfix-711HEBSR277K5`
+shows `sys.boot_completed=1`, `mWakefulness=Awake`, display power state `ON`,
+global display state `ON`, power request `policy=BRIGHT`, and
+`screenBrightness=255`.
+
+FACT: Android composition remains live. `surfaceflinger.txt` shows the built-in
+screen at `720x1280`, `powerMode=2`, `isDisplayOn=1`, `flips=1190`, refresh
+about `57.66 fps`, HWC present but disabled, and GLES framebuffer-target
+composition. `screencap-display-awake.png` is a valid 720x1280 Android UI PNG,
+sha256 `b79d4e141ef2248e4df52606c8f70a76b6a2347ddb30b2decc3bb0310b06021f`.
+
+FACT: kernel display path and clocks are alive. `mtkfb-key-strings.txt` shows
+`LCM Driver=[ili9881p_hd_dsi_txd]`, `State=Alive`, `PathMode:DIRECT_LINK`,
+`RDMA0 Transfer` about `61.20 fps`, and `DISP_OPT_BYPASS_PQ=1`.
+`clk-summary-display.txt` shows DSI engine/digital, OVL0, RDMA0, COLOR,
+DITHER, SMI common/LARB0, and `infra_disppwm` clocks enabled/prepared in the
+awake state.
+
+FACT: backlight command plumbing is alive in the current kernel. `dmesg.txt`
+shows resume at about `332s`, DSI power-on, DSI start snapshots, `[PWM]
+backlight is on (1023)`, and LCM DCS backlight command `0x51` with
+`dcs51=0xff` for requested brightness 255.
+
+INFERENCE: if the human still sees a physically black LCD for this capture,
+the current frontier is below Android composition, PQ, DDP direct-link
+construction, RDMA transfer, DSI clock gating, display PWM clock enable, and
+LCM DCS 0x51 command submission. Remaining evidence-backed candidates are
+panel LED electrical route/readback, DSI HS video acceptance, or panel
+timing/mode parity with stock/Q reference.
+
+NEXT ACTION: do not re-open PQ or generic SurfaceFlinger/scrcpy for physical
+black. The already-built diagnostic boot remains the next clean flash candidate:
+`/srv/forge/android/export/meizu_m6_artifacts/20260606-m6-physical-black-led-dcs-pwmguard-diag/boot-m6-physical-black-led-dcs-pwmguard-diag.img`,
+sha256 `0e9ba01b34559b03026818e7c9dec02f283d77ab174c75614b9b9c95c261e78d`.
+It should add LED route, DCS `0x51/0x53/0x55`, GPIO/TPS, and guarded PWM
+readbacks. Do not flash it without explicit human `шей` confirmation.
+
 ## 2026-06-06 scrcpy-visible physical-black awake capture
 
 STATE / EVIDENCE CHECKPOINT, 2026-06-06: the user reported that scrcpy shows
