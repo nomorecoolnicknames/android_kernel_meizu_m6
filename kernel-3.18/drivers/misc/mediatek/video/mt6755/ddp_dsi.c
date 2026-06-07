@@ -20,6 +20,8 @@
 #include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
+#include <linux/workqueue.h>
+#include <linux/jiffies.h>
 #include <mach/irqs.h>
 #include <linux/types.h>
 #include "disp_log.h"
@@ -1179,6 +1181,69 @@ int MIPITX_IsEnabled(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 	return ret;
 }
 
+#ifndef CONFIG_FPGA_EARLY_PORTING
+static unsigned int dsi_m6_field(uint32_t value, unsigned int shift, unsigned int width)
+{
+	return (value >> shift) & ((1U << width) - 1);
+}
+
+static void dsi_m6_dump_mipitx_decode(const char *tag)
+{
+	uint32_t txrx = INREG32(DDP_REG_BASE_DSI0 + 0x018);
+	uint32_t clock_lane = INREG32(MIPITX_BASE + 0x004);
+	uint32_t lane0 = INREG32(MIPITX_BASE + 0x008);
+	uint32_t lane1 = INREG32(MIPITX_BASE + 0x00c);
+	uint32_t lane2 = INREG32(MIPITX_BASE + 0x010);
+	uint32_t lane3 = INREG32(MIPITX_BASE + 0x014);
+	uint32_t top = INREG32(MIPITX_BASE + 0x040);
+	uint32_t pll0 = INREG32(MIPITX_BASE + 0x050);
+	uint32_t pll2 = INREG32(MIPITX_BASE + 0x058);
+	uint32_t pll_pwr = INREG32(MIPITX_BASE + 0x068);
+	uint32_t gpi_en = INREG32(MIPITX_BASE + 0x074);
+	uint32_t gpi_pull = INREG32(MIPITX_BASE + 0x078);
+	uint32_t phy_sel = INREG32(MIPITX_BASE + 0x07c);
+	uint32_t sw_ctrl = INREG32(MIPITX_BASE + 0x080);
+	uint32_t sw0 = INREG32(MIPITX_BASE + 0x084);
+	uint32_t sw1 = INREG32(MIPITX_BASE + 0x088);
+	uint32_t dbg = INREG32(MIPITX_BASE + 0x090);
+	uint32_t apb = INREG32(MIPITX_BASE + 0x094);
+
+	DISPERR("M6 DSI phydecode[%s]: txrx_lane_mask=0x%x hstx_cklp=%u dis_eot=%u bllp=%u max_rtn=0x%x mode=0x%x ps=0x%x\n",
+		tag, dsi_m6_field(txrx, 2, 4), dsi_m6_field(txrx, 16, 1),
+		dsi_m6_field(txrx, 6, 1), dsi_m6_field(txrx, 7, 1),
+		dsi_m6_field(txrx, 12, 4),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c));
+	DISPERR("M6 DSI phydecode[%s]: lane_ldo c/d0/d1/d2/d3=%u/%u/%u/%u/%u lane_b1=%u/%u/%u/%u/%u rt=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, dsi_m6_field(clock_lane, 0, 1), dsi_m6_field(lane0, 0, 1),
+		dsi_m6_field(lane1, 0, 1), dsi_m6_field(lane2, 0, 1),
+		dsi_m6_field(lane3, 0, 1), dsi_m6_field(clock_lane, 1, 1),
+		dsi_m6_field(lane0, 1, 1), dsi_m6_field(lane1, 1, 1),
+		dsi_m6_field(lane2, 1, 1), dsi_m6_field(lane3, 1, 1),
+		dsi_m6_field(clock_lane, 8, 4), dsi_m6_field(lane0, 8, 4),
+		dsi_m6_field(lane1, 8, 4), dsi_m6_field(lane2, 8, 4),
+		dsi_m6_field(lane3, 8, 4));
+	DISPERR("M6 DSI phydecode[%s]: lptx c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x lpcd=0x%x/0x%x/0x%x/0x%x/0x%x phy_map d0/d1/d2/d3/c/lprx=%u/%u/%u/%u/%u/%u\n",
+		tag, dsi_m6_field(clock_lane, 2, 3), dsi_m6_field(lane0, 2, 3),
+		dsi_m6_field(lane1, 2, 3), dsi_m6_field(lane2, 2, 3),
+		dsi_m6_field(lane3, 2, 3), dsi_m6_field(clock_lane, 5, 2),
+		dsi_m6_field(lane0, 5, 2), dsi_m6_field(lane1, 5, 2),
+		dsi_m6_field(lane2, 5, 2), dsi_m6_field(lane3, 5, 2),
+		dsi_m6_field(phy_sel, 0, 3), dsi_m6_field(phy_sel, 4, 3),
+		dsi_m6_field(phy_sel, 8, 3), dsi_m6_field(phy_sel, 12, 3),
+		dsi_m6_field(phy_sel, 16, 3), dsi_m6_field(phy_sel, 20, 3));
+	DISPERR("M6 DSI phydecode[%s]: top hs_bias=%u imp_en=%u imp=0x%x aio=0x%x pad_low=%u pll en=%u pre=%u txdiv=%u/%u pos=%u pcw=0x%x pwr_on=%u iso=%u ack=%u gpi=0x%x pull=0x%x sw=%u/0x%x/0x%x dbg=0x%x apb=0x%x\n",
+		tag, dsi_m6_field(top, 1, 1), dsi_m6_field(top, 2, 1),
+		dsi_m6_field(top, 4, 4), dsi_m6_field(top, 8, 3),
+		dsi_m6_field(top, 11, 1), dsi_m6_field(pll0, 0, 1),
+		dsi_m6_field(pll0, 1, 2), dsi_m6_field(pll0, 3, 2),
+		dsi_m6_field(pll0, 5, 2), dsi_m6_field(pll0, 7, 3),
+		dsi_m6_field(pll2, 0, 31), dsi_m6_field(pll_pwr, 0, 1),
+		dsi_m6_field(pll_pwr, 1, 1), dsi_m6_field(pll_pwr, 8, 1),
+		gpi_en, gpi_pull, dsi_m6_field(sw_ctrl, 0, 1), sw0, sw1, dbg, apb);
+}
+#endif
+
 static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void *cmdq)
 {
 	uint32_t state6;
@@ -1266,6 +1331,7 @@ static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void 
 		INREG32(MIPITX_BASE + 0x08c),
 		INREG32(MIPITX_BASE + 0x090),
 		INREG32(MIPITX_BASE + 0x094));
+	dsi_m6_dump_mipitx_decode(tag);
 #endif
 }
 
@@ -1278,6 +1344,76 @@ static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM modul
 
 	(*count)++;
 	dsi_m6_dump_snapshot(tag, module, cmdq);
+}
+
+static void dsi_m6_dump_hs_video_marker(const char *tag, DISP_MODULE_ENUM module,
+					 void *cmdq);
+static void dsi_m6_hs_video_after_1vsync_work(struct work_struct *work);
+static void dsi_m6_hs_video_after_500ms_work(struct work_struct *work);
+
+static DECLARE_DELAYED_WORK(dsi_m6_hs_video_after_1vsync_work_item,
+			    dsi_m6_hs_video_after_1vsync_work);
+static DECLARE_DELAYED_WORK(dsi_m6_hs_video_after_500ms_work_item,
+			    dsi_m6_hs_video_after_500ms_work);
+
+static void dsi_m6_dump_hs_video_marker(const char *tag, DISP_MODULE_ENUM module,
+					 void *cmdq)
+{
+	LCM_DSI_PARAMS *p = &_dsi_context[0].dsi_params;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL)
+		return;
+
+	DISPERR("M6 DSI HS video[%s]: cmdq=%p mode=%u switch=%u pll=%u lanes=%u packet=%u ps=%u size=%ux%u v=%u/%u/%u/%u h=%u/%u/%u/%u start=0x%x intsta=0x%x txrx=0x%x psctrl=0x%x vm=0x%x\n",
+		tag, cmdq, p->mode, p->switch_mode, p->PLL_CLOCK,
+		p->LANE_NUM, p->packet_size, p->PS,
+		_dsi_context[0].lcm_width, _dsi_context[0].lcm_height,
+		p->vertical_sync_active, p->vertical_backporch,
+		p->vertical_frontporch, p->vertical_active_line,
+		p->horizontal_sync_active, p->horizontal_backporch,
+		p->horizontal_frontporch, p->horizontal_active_pixel,
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130));
+
+	dsi_m6_dump_snapshot(tag, module, cmdq);
+}
+
+static void dsi_m6_dump_hs_video_limited(const char *tag, DISP_MODULE_ENUM module,
+					 void *cmdq, unsigned int *count,
+					 unsigned int limit)
+{
+	if (*count >= limit)
+		return;
+
+	(*count)++;
+	dsi_m6_dump_hs_video_marker(tag, module, cmdq);
+}
+
+static void dsi_m6_hs_video_after_1vsync_work(struct work_struct *work)
+{
+	dsi_m6_dump_hs_video_marker("after-1vsync", DISP_MODULE_DSI0, NULL);
+}
+
+static void dsi_m6_hs_video_after_500ms_work(struct work_struct *work)
+{
+	dsi_m6_dump_hs_video_marker("after-500ms", DISP_MODULE_DSI0, NULL);
+}
+
+static void dsi_m6_schedule_hs_video_delayed(void)
+{
+	static unsigned int schedule_count;
+
+	if (schedule_count >= 4)
+		return;
+
+	schedule_count++;
+	schedule_delayed_work(&dsi_m6_hs_video_after_1vsync_work_item,
+			      msecs_to_jiffies(17));
+	schedule_delayed_work(&dsi_m6_hs_video_after_500ms_work_item,
+			      msecs_to_jiffies(500));
 }
 
 void dsi_m6_dump_live(const char *tag)
@@ -2132,11 +2268,13 @@ DSI_STATUS DSI_Start(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 	static unsigned int dump_count;
 
 	if (module == DISP_MODULE_DSI0) {
-		if (dump_count < 8)
-			dsi_m6_dump_snapshot("start-before", module, cmdq);
+		dsi_m6_dump_hs_video_limited("start-before", module, cmdq,
+					     &dump_count, 8);
 		DSI_OUTREGBIT(cmdq, DSI_START_REG, DSI_REG[0]->DSI_START, DSI_START, 0);
 		DSI_OUTREGBIT(cmdq, DSI_START_REG, DSI_REG[0]->DSI_START, DSI_START, 1);
-		dsi_m6_dump_snapshot_limited("start-after", module, cmdq, &dump_count, 8);
+		dsi_m6_dump_hs_video_limited("start-after", module, cmdq,
+					     &dump_count, 16);
+		dsi_m6_schedule_hs_video_delayed();
 	}
 
 	return DSI_STATUS_OK;
@@ -3649,7 +3787,8 @@ force_config:
 
 
 done:
-	dsi_m6_dump_snapshot_limited("config-done", module, cmdq, &dump_count, 4);
+	dsi_m6_dump_hs_video_limited("config-done", module, cmdq,
+				     &dump_count, 4);
 
 	return 0;
 }

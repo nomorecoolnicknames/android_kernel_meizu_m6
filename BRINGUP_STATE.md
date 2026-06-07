@@ -1,5 +1,215 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-07 DSI HS video diagnostic patch built
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-07: task 4 of
+`/srv/forge/android/meizu_m6/.ai-factory/plans/m6-physical-black-stock-reverse-display-plan.md`
+adds bounded DSI HS-video boundary markers and delayed post-start snapshots in
+`ddp_dsi.c`. This patch is read-only instrumentation; it does not change panel
+timing, PLL, lane count, init table, TPS/reset behavior, PQ, OVL/M4U, or fence
+logic.
+
+Hypothesis: current source and stock evidence agree on panel identity, primary
+DSI params, direct-link route, PQ bypass, RDMA transfer, and backlight command
+path, but the current physical-black capture lacks live DSI/MIPITX HS-video
+state after RDMA feeds `dsi0`. The earliest remaining evidence gap is whether
+DSI video mode, DSI FSM, MIPITX PLL/lane state, and VM command state remain
+healthy after `DSI_START`.
+
+Evidence:
+- Fresh physical-black identity capture:
+  `/srv/forge/android/meizu_m6/captures/20260607-222849-m6-physical-black-identity-dsi-frontier-711HEBSR277K5`.
+- Stock LK reverse report:
+  `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/lk_display_reverse.md`.
+- Stock/current display parity report:
+  `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/stock_display_parity_matrix.md`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-dsi-hs-video-diag-20260607.log`,
+  sha256 `a3bfdebb5691ca03152c8fc51a1e5e8e80c6e2b20d19ebe86859055e12494e8f`.
+- Built `Image.gz-dtb` sha256
+  `b5016b9b3872206c0cfd687b59be21db90e5ed0d3359c70c70030db1dd86087e`.
+- Built `System.map` sha256
+  `e7e5ffe959cc8d3bf7fcb3850f43f03d4133163717f67277e534b35e4f765784`.
+- Built `vmlinux` sha256
+  `66f8ecd3a6b651bc345ea2703b68d2db38bac2d6e86a8f8a827b7be3e90896db`.
+- Built `.config` sha256
+  `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+- Packed boot artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260607-m6-dsi-hs-video-diag/boot-m6-dsi-hs-video-diag.img`,
+  sha256 `2552752194ea41a93aadad584e8d42f842ce5ecccd40f2f9e1574fe2a491440d`.
+- Unpack verification confirmed artifact kernel `zImage` hash matches the new
+  `Image.gz-dtb`, and artifact ramdisk hash matches the current boot ramdisk.
+- `strings` on the built image finds `M6 DSI HS video[%s]`,
+  `after-1vsync`, `after-500ms`, `start-before`, `start-after`, and
+  `config-done`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  workqueue/jiffies includes, a bounded `M6 DSI HS video[...]` marker wrapper,
+  delayed work snapshots after one vsync and after 500 ms, and routes
+  `config-done` / `DSI_Start()` diagnostics through that wrapper.
+- `BRINGUP_STATE.md`: records Task 3 parity and this Task 4 diagnostic patch
+  summary, artifact identity, expected next markers, rollback condition, and
+  verification commands.
+
+Why each file changed:
+- `ddp_dsi.c` owns DSI config/start, live DSI registers, and MIPITX register
+  access. The fresh capture proves DDP/RDMA/backlight are alive but lacks the
+  post-start DSI/MIPITX state, so the patch adds read-only markers exactly at
+  config, start-before, start-after, and delayed post-start boundaries.
+- `BRINGUP_STATE.md` is the selected device-local durable state file for this
+  kernel tree and must mirror patch evidence and rollback rules.
+
+Expected next marker:
+- Healthy transport should show `M6 DSI HS video[config-done]`,
+  `[start-before]`, `[start-after]`, `[after-1vsync]`, and `[after-500ms]`
+  with video mode active, expected PLL/lane/packet/timing values, DSI start on,
+  MIPITX PLL/lane state not off/ULPS, and DSI FSM/counters changing after the
+  delayed snapshots.
+- Failing transport should show RDMA/DDP still active while DSI/MIPITX state is
+  static, off, ULPS-like, timeouted, or inconsistent with stock runtime DSI
+  state (`START=0x1`, `MODE=0x3`, `PS=0x30870`, `PHY_LCCON=0x1`,
+  `STATE_DBG=0x40010/0x1080010/0x1010001/0x8100810`).
+
+Rollback condition: revert this diagnostic patch if the rebuilt boot image
+regresses ADB, `sys.boot_completed`, SurfaceFlinger flips, RDMA transfer,
+current backlight/DCS command path, or causes log volume high enough to make the
+device unusable or the capture unparsable.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260607-m6-dsi-hs-video-diag/boot-m6-dsi-hs-video-diag.img \
+  /srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb \
+  /srv/forge/work/m6-source-kernel-manual-20260520/out/System.map
+gzip -cd /srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb 2>/tmp/m6-dsi-hs-diag-gzip.err | \
+  strings | grep -E 'M6 DSI HS video|after-1vsync|after-500ms|start-before|start-after|config-done'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 DSI HS video|M6 DSI snapshot|M6 DSI phydecode|M6 LCM backlight|RDMA0 Transfer|M4Ufault" | tail -400'
+```
+
+## 2026-06-07 stock boot/kernel display parity checkpoint
+
+STATE / EVIDENCE CHECKPOINT, 2026-06-07: task 3 of
+`/srv/forge/android/meizu_m6/.ai-factory/plans/m6-physical-black-stock-reverse-display-plan.md`
+unpacked the stock and current boot images and compared LK/source/runtime
+display facts. Report path:
+`/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/stock_display_parity_matrix.md`.
+
+FACT: stock boot image
+`/srv/forge/android/export/meizu_m6_artifacts/20260530-m6-stock-lcm-parity-72entry/boot-m6-stock-lcm-parity-72entry.img`
+has sha256 `7be765bd7aa180ace519db0ba4fe6a9c27b6f27b3138364a3ec4fa8246b0e0f2`,
+page size `2048`, kernel load address `0x40080000`, ramdisk load address
+`0x45000000`, tags address `0x44000000`, extracted `zImage` sha256
+`90ef931093dc8e01a2068016ab0f966f465802f41b3bfab32d60aefb69a33bfe`,
+and gzip-decoded `Image` sha256
+`238ee31caf81968a805250bc07344ce5bac574cad95e248be5fba2554856b4da`.
+
+FACT: current physical-black boot image
+`/srv/forge/android/meizu_m6/rom-lineage-15.1-meizu_m6-experimental/out/target/product/meizu_m6/boot.img`
+has sha256 `a201f25f92317a6157bd7ca855ada4edb1bf7d4f9d7545b510067a6c99b4f9b4`,
+the same bootimg page/load-address layout, extracted `zImage` sha256
+`50820adf50d1d1d720f873de73dad2d613d18aa439bb978ba609544b78256b92`,
+and gzip-decoded `Image` sha256
+`6a8d15645202a916dd9c75da69d3d641583d527ff19f35e420883bf548620f40`.
+
+FACT: stock LK, stock runtime, current source, and current runtime agree on
+panel driver name `ili9881p_hd_dsi_txd`, resolution `720x1280`, four DSI
+lanes, packet size `256`, primary porch values `20/24/64/1280` and
+`20/80/100/720`, PLL `230`, direct-link DDP route, `DISP_OPT_BYPASS_PQ=1`,
+RDMA transfer, and backlight command path. The trailing DTB bytes in
+`Image.gz-dtb` were not decoded in this task; compiled DTB parity remains task
+8.
+
+INFERENCE: the next evidence gap is live DSI HS video/MIPITX state after RDMA
+feeds `dsi0`. Do not change timing, PLL, init table, TPS, or OVL/M4U behavior
+before collecting the Task 4 markers.
+
+NEXT ACTION: add bounded `DIAGNOSTIC` markers named
+`M6 DSI HS video[config-done]`, `[start-before]`, `[start-after]`,
+`[after-1vsync]`, and `[after-500ms]` in `ddp_dsi.c`, then build and capture.
+
+## 2026-06-07 stock LK display reverse checkpoint
+
+STATE / EVIDENCE CHECKPOINT, 2026-06-07: task 2 of
+`/srv/forge/android/meizu_m6/.ai-factory/plans/m6-physical-black-stock-reverse-display-plan.md`
+reversed the stock LK display handoff enough to constrain the next kernel
+patch. Report path:
+`/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/lk_display_reverse.md`.
+
+FACT: `lk.img` sha256 is
+`b32d7ae68c918195632faf730a5fd6fc0136e090c100f4fe6eddfba4c56746bc`;
+`lk2.img` sha256 is
+`7f2597d35ce8297145d27e51258c5d03d4044bb7085b2ba55e90a8907fa84708`.
+The two images differ only at offsets 11187-11190. Runtime VA mapping is
+`fileoff - 0x200 + 0x46000000`; rizin disassembly used map base
+`0x45fffe00`.
+
+FACT: stock LK contains `ili9881p_hd_dsi_txd`, and the fresh current runtime
+capture reports the same active LCM driver in `/proc/mtkfb`. Stock LK
+`get_params` writes the same primary current-source display params: 720x1280,
+four lanes, packet size 256, vertical `20/24/64/1280`, horizontal
+`20/80/100/720`, RGB888 PS, and PLL 230. Stock LK `lcm_init` pushes a 0x48
+entry table starting at file offset `0x5f434`; current source already carries
+that stock Flyme LK/kernel `init_setting[]`.
+
+INFERENCE: do not start the next patch by changing panel name, DSI
+lane/porch/PLL, or the init table. The next evidence-backed boundary is DSI HS
+video/MIPITX state after RDMA feeds `dsi0`.
+
+NEXT ACTION: implement a bounded `DIAGNOSTIC` DSI HS video marker patch in
+`ddp_dsi.c`, then rebuild/flash/capture before any behavior change.
+
+## 2026-06-07 fresh physical-black identity gate
+
+STATE / EVIDENCE CHECKPOINT, 2026-06-07: task 1 of
+`/srv/forge/android/meizu_m6/.ai-factory/plans/m6-physical-black-stock-reverse-display-plan.md`
+captured a fresh physical-black display identity bundle after clearing logs and
+rebooting `711HEBSR277K5`.
+
+FACT: capture path is
+`/srv/forge/android/meizu_m6/captures/20260607-222849-m6-physical-black-identity-dsi-frontier-711HEBSR277K5`.
+The boot partition readback is a 16 MiB image with sha256
+`ef61d1a64284fbe295743ec712d8dc132cdf9defcf240edf2a4de98e295301bd`.
+Its prefix matches local ROM `boot.img` size `8865792`, sha256
+`a201f25f92317a6157bd7ca855ada4edb1bf7d4f9d7545b510067a6c99b4f9b4`.
+Matching local context recorded `Image.gz-dtb` sha256
+`50820adf50d1d1d720f873de73dad2d613d18aa439bb978ba609544b78256b92`,
+`System.map` sha256
+`dc78cb63c233f1672fbca66c929f5016e13b3b8c1950bc7e828518b553cc4207`,
+and `.config` sha256
+`bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+
+FACT: fresh runtime state is Android-booted and composition-live:
+`sys.boot_completed=1`, SurfaceFlinger running, non-black 720x1280
+`screencap.png` sha256
+`5f066250bdc29b81ed32e9692926991c0219b0b080994eb8ea789b530696d4bd`,
+SurfaceFlinger `powerMode=2`, `isDisplayOn=1`, `flips=1738`, and Android
+display state `mActualBacklight=255`.
+
+FACT: kernel display path remains direct and active:
+`LCM Driver=[ili9881p_hd_dsi_txd]`, `PathMode:DIRECT_LINK`,
+`RDMA0 Transfer` about `62.0 fps`, `DISP_OPT_BYPASS_PQ=1`, and DDP path cfg
+walks through `dsi0`. No `M6 DSI HS video[...]`, `MIPITX`, `DSI_START`, or
+`STATE_DBG` marker set exists in this boot beyond the route handoff to `dsi0`.
+
+INFERENCE: the next implementation frontier remains DSI HS video
+acceptance/timing/lane/mode, not PQ, generic SurfaceFlinger/scrcpy,
+backlight-off, or DDP route construction. OVL/M4U end faults still recur at
+`delta=0x0`, but remain a secondary branch unless future evidence correlates
+them with physical black.
+
+NEXT ACTION: reverse stock LK/boot display handoff from
+`captures/20260530-stock-lk-boot-reverse-inputs/lk.img` and `lk2.img`, then
+add bounded `DIAGNOSTIC` DSI HS markers in `ddp_dsi.c` before any behavior
+patch.
+
 ## 2026-06-07 post-GUI-shim physical display frontier: OVL/M4U
 
 STATE / EVIDENCE CHECKPOINT, 2026-06-07: after the ROM-side targeted GUI
