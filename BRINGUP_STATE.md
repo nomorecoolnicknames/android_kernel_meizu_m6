@@ -1,5 +1,52 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-07 post-GUI-shim physical display frontier: OVL/M4U
+
+STATE / EVIDENCE CHECKPOINT, 2026-06-07: after the ROM-side targeted GUI
+linker shim was live-pushed, Android framebuffer output and scrcpy/screencap
+must be treated separately from the physical LCD.
+
+FACT: live `adb` check on `711HEBSR277K5` showed `sys.boot_completed=1`,
+`surfaceflinger=running`, and SystemUI pid `1030`. `dumpsys SurfaceFlinger`
+showed real active buffers for Launcher, ImageWallpaper, and StatusBar.
+Fresh `/tmp/m6-live-screencap.png` was 720x1280, sha256
+`d24617e6b9ad7e9c04dac50181c8dcffdefafb2934c20d4f8a96b6c5d4c5ef1c`,
+with mean brightness about `0.20`; it was not an all-black frame.
+
+FACT: the same post-fix capture
+`/srv/forge/android/meizu_m6/captures/20260607-162257-m6-targeted-gui-shim-linker-reboot`
+still contains lower-level display anomalies. `dmesg.txt` reports
+`M4Ufault: port=DISP_OVL0` at `0x1984000` and `0x3184000`, while the matching
+M6 marker reports `valid=0x1600000 size=0x384000 end=0x1984000` and
+`valid=0x2e00000 size=0x384000 end=0x3184000`. `0x384000` is exactly
+720x1280x4 bytes, so both faults are exactly at the end of an RGBA layer MVA.
+
+FACT: the same capture reports OVL underflows and `L2 not complete until EOF`.
+The OVL register dump has ROI `0x50002d0`, source size `0x50002d0`, pitch
+`0x10001680`, and address examples such as `0x1e00000`, matching a 720x1280
+direct-link scanout path. `mtkfb` still reports `DISP_OPT_BYPASS_PQ=1`.
+
+FACT: source comparison with `android_kernel_collection_mt6750-P-ex2` and
+`android_kernel_collection_mt6750-Q-ex2` shows the MTK OVL span formula is the
+same donor behavior: `(cfg->dst_h - 1) * cfg->src_pitch + dst_w * Bpp`.
+Those donors also carry the generic display translation-fault bypass for
+faults within `+SZ_4K` of a valid MVA end. The current M6 `M4UM6` line is a
+diagnostic marker on that path, not evidence that PQ or Android composition is
+the active blocker.
+
+INFERENCE: if the human still sees a physically black LCD while the live
+screencap is non-black, do not reopen SurfaceFlinger, scrcpy, or PQ. The next
+kernel frontier is OVL/M4U/SMI/DSI physical scanout: determine whether the OVL
+end fault is a harmless hardware prefetch that is already bypassed, or whether
+it correlates with the underflow/L2 EOF and prevents physical visibility.
+
+NEXT ACTION: collect a fresh physical-black capture after forcing brightness
+255 and waking the screen, then compare live `dmesg` before/after screen
+transitions for new `M4Ufault`, `M4UM6`, `OVL irq`, `frame underflow`, and
+`L2 not complete until EOF`. Only patch OVL/M4U behavior if the fresh capture
+proves the fault recurs with the physical black state. Do not classify a
+larger `+4K` bypass or fake fence/EOF release as a proper fix.
+
 ## 2026-06-06 display awake capture after mediaserver hotfix
 
 STATE / EVIDENCE CHECKPOINT, 2026-06-06: after the live
