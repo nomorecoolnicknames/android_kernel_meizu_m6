@@ -1,5 +1,132 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-07 OVL GREQ profile isolation flashed
+
+PATCH HISTORY, ISOLATION, 2026-06-07: after the DSI HS-video diagnostic boot
+proved Android scanout remains alive while OVL/RDMA underflows and DISP_OVL0
+M4U end-prefetch faults continue, this patch adds a runtime-selectable
+`m6_ovl_greq_profile:[0|1|2|3]` debugfs command in `/d/mtkfb`. Profile `0`
+preserves the current register values; profiles `1..3` rewrite only OVL0
+RDMA/GREQ/urgent/buf-low golden-setting fields for live underflow isolation.
+No default runtime behavior changes unless a profile is explicitly selected.
+
+Hypothesis: FACT from the fresh postboot capture shows `sys.boot_completed=1`,
+SurfaceFlinger/HWC are live, the screencap is nonblack, RDMA0 transfers at
+about 62 fps, DSI/MIPITX self-pattern registers toggle, and `DISP_OPT_BYPASS_PQ`
+is already `1`. FACT from the same capture shows repeated `RDMA0 underflow`,
+`ovl0 frame underflow`, `ovl0 -Lx not complete until EOF`, and DISP_OVL0 M4U
+faults exactly at the end of RGBA layer MVAs. HYPOTHESIS: one remaining
+hardware frontier was whether MTK OVL RDMA/GREQ/urgent thresholds starve scanout
+under this ROM/HWC layer mix. The debugfs profiles make that variable testable
+without baking a new default into the kernel.
+
+Evidence:
+- Built artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260607-m6-ovl-greq-profile-isolation/boot-m6-ovl-greq-profile-isolation-pgup.img`,
+  sha256 `94eba1038b48ce215ac548206b93f4bb22a87bbe44f973343bff23e72eaf1bbb`,
+  size `8867840`.
+- Built `Image.gz-dtb` sha256
+  `4d95a164545e3ae2dc27c6727ca1c9ad2469fc01180e944d38d21c9fe121d612`.
+- Built `System.map` sha256
+  `886a499003704742cff76aecf33f319ef79f0f0cd2d2cc4451479cd3030029e5`.
+- Built `vmlinux` sha256
+  `7864ba17a0ed9151fd29bbf9f42920a1cf7017df8ca79e924cab65e67641bef3`.
+- Built `.config` sha256
+  `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-ovl-greq-profile-isolation-20260607.log`,
+  sha256 `6553aa5b20e5141ad8a273708c6acde3788704ea3534fe7289c012a902fac0e9`.
+- Boot-image layout/ramdisk reused the previous verified DSI diagnostic boot.
+  The new kernel was one 2048-byte page larger, so the artifact-local
+  `bootimg-0x875000.cfg` increases `bootsize` from `0x874800` to `0x875000`;
+  boot partition readback matched the local artifact before and after reboot.
+- Flash/capture directory:
+  `/srv/forge/android/meizu_m6/captures/20260607-ovl-greq-profile-isolation-flash-711HEBSR277K5`.
+- Postboot FACT: `sys.boot_completed=1`, bootanim stopped, SurfaceFlinger
+  running, SystemUI running, SELinux permissive, battery `6` and `Charging`.
+  Postboot boot-partition prefix sha256 is
+  `94eba1038b48ce215ac548206b93f4bb22a87bbe44f973343bff23e72eaf1bbb` and
+  `postboot-prefix-cmp-ok`.
+- Postboot FACT: `/d/mtkfb` still reports
+  `LCM Driver=[ili9881p_hd_dsi_txd]`, `PathMode:DIRECT_LINK`,
+  `RDMA0 Transfer` about 62 fps, and `DISP_OPT_BYPASS_PQ=1`.
+- Profile scan FACT: in
+  `profile-rescan-ui/profile-0/dmesg.txt`, profile `0` under UI stimulus still
+  reports 29 underflow markers, 42 `M6 OVL irq diag` lines, and 6 M4U/end
+  fault markers.
+- Profile scan FACT: in
+  `profile-rescan-ui/profile-1/dmesg.txt`, profile `1` successfully changes
+  OVL registers to `ovl_greq=0x30ff5555`, `ovl_urg=0x13ff5555`,
+  `flush_ultra=1`, `urg_th=0x3ff`, `buflow=0x20010`, but still reports 36
+  underflow markers, 54 `M6 OVL irq diag` lines, and 6 M4U/end fault markers.
+- Profile scan FACT: in
+  `profile-rescan-ui/profile-2/dmesg.txt`, profile `2` successfully changes
+  OVL registers to `layer=7/7/7/7`, `ovl_greq=0x30ff7777`,
+  `buflow=0x40020`, but still reports 22 underflow markers, 39
+  `M6 OVL irq diag` lines, and 2 M4U/end fault markers.
+- Profile scan FACT: in
+  `profile-rescan-ui/profile-3/dmesg.txt`, profile `3` successfully changes
+  OVL registers to `layer=3/3/3/3`, `ostd=0x40`, `gmc=0x8080`, but still
+  reports 26 underflow markers, 12 capped `M6 OVL irq diag` lines, and 2
+  M4U/end fault markers.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c`: factors OVL
+  RDMA/GREQ golden-setting constants into variables, adds profiles `0..3`, and
+  adds `ovl_m6_set_greq_profile()` to apply OVL0 CPU registers on demand.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.h`: exports the M6
+  profile setter to the debug command parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds
+  `m6_ovl_greq_profile:[0|1|2|3]` to `/d/mtkfb` help and parser.
+- `BRINGUP_STATE.md`: records the patch category, artifact identity, flash
+  identity, profile scan verdict, expected next marker, rollback condition, and
+  verification commands.
+
+Why each file changed:
+- `ddp_ovl.c` owns OVL golden-setting writes and the live OVL0 registers that
+  the underflow diagnostics dump. The fresh capture proves OVL/RDMA faults
+  continue after PQ bypass and live DSI, so the patch isolates only the OVL
+  RDMA/GREQ threshold variable.
+- `ddp_ovl.h` is required because the existing `/d/mtkfb` parser lives in
+  `disp_debug.c`.
+- `disp_debug.c` is the existing bounded debug command path for display bringup
+  commands such as `m6_lcm_reinit`; using it avoids a new userspace ABI.
+- `BRINGUP_STATE.md` is the selected device-local state file for this tree.
+
+Result and next marker: FACT: profiles `1..3` apply and are observable in the
+OVL irq diag decode, but none closes the OVL/RDMA underflow or M4U end-fault
+frontier under UI stimulus. INFERENCE: do not promote any GREQ profile to a
+default/proper fix. The next patch should move to the earlier proven register
+state inside the same frontier: why `flow=0xf8c02`/`sta=0x1e` blank/zero-in-out
+cycles and stale/multi-layer `OVL0_SRC` transitions recur under HWC UI
+composition even with DSI active, RDMA transfer live, and PQ bypassed.
+
+Rollback condition: revert this isolation patch if `/d/mtkfb` parsing regresses,
+profile `0` no longer reproduces the previous OVL defaults
+(`ovl_greq=0x10ff5555`, `ovl_urg=0x5555`, `buflow=0x0`), Android boot/screencap
+regresses, or the debug command causes high log volume outside explicit profile
+testing.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.h \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260607-m6-ovl-greq-profile-isolation/boot-m6-ovl-greq-profile-isolation-pgup.img \
+  /srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb \
+  /srv/forge/work/m6-source-kernel-manual-20260520/out/System.map
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_ovl_greq_profile:0 > /d/mtkfb; dmesg -c >/dev/null; input keyevent 3; input swipe 360 1050 360 250 250; sleep 3; dmesg | grep -E "M6 OVL greq profile|M6 OVL irq diag|M4Ufault|M6 M4U|RDMA0 underflow|frame underflow|L2 not complete" | tail -120'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_ovl_greq_profile:2 > /d/mtkfb; dmesg -c >/dev/null; input keyevent 3; input swipe 360 1050 360 250 250; sleep 3; dmesg | grep -E "M6 OVL greq profile|M6 OVL irq diag|M4Ufault|M6 M4U|RDMA0 underflow|frame underflow|L2 not complete" | tail -120'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_ovl_greq_profile:0 > /d/mtkfb'
+```
+
 ## 2026-06-07 DSI HS video diagnostic patch built
 
 PATCH HISTORY, DIAGNOSTIC, 2026-06-07: task 4 of

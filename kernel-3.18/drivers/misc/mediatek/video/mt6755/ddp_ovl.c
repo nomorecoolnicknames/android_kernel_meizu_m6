@@ -22,6 +22,7 @@
 #endif
 #include "m4u.h"
 #include <linux/delay.h>
+#include <linux/errno.h>
 #include "ddp_info.h"
 #include "ddp_hal.h"
 #include "ddp_reg.h"
@@ -50,6 +51,8 @@ static DISP_MODULE_ENUM ovl_index_module[OVL_NUM] = {
 static unsigned int reg_back_cnt[OVL_NUM];
 static struct OVL_REG reg_back[OVL_NUM][OVL_REG_BACK_MAX];
 static unsigned int gOVLBackground = 0xFF000000;
+static unsigned int m6_ovl_greq_profile_id;
+static unsigned int m6_ovl_greq_profile_apply_count;
 
 static inline int is_module_ovl(DISP_MODULE_ENUM module)
 {
@@ -1295,16 +1298,71 @@ static int ovl_golden_setting(DISP_MODULE_ENUM module, enum dst_module_type dst_
 {
 	unsigned long ovl_base = ovl_base_addr(module);
 	unsigned int regval;
+	unsigned int ultra_th = 0xff;
+	unsigned int pre_ultra_th = 0xff;
+	unsigned int fifo_size = 144;
+	unsigned int layer_greq = 5;
+	unsigned int ostd_greq = 0xff;
+	unsigned int greq_dis_cnt = 0;
+	unsigned int flush_preultra = 1;
+	unsigned int flush_ultra = 0;
+	unsigned int urg_layer_greq = 5;
+	unsigned int urg_th = 0;
+	unsigned int urg_bias = 0;
+	unsigned int buf_low_ultra = 0;
+	unsigned int buf_low_preultra = 0;
+	unsigned int profile = m6_ovl_greq_profile_id;
 	int i, layer_num;
 
 	layer_num = ovl_layer_num(module);
 
+	switch (profile) {
+	case 0:
+		break;
+	case 1:
+		flush_ultra = 1;
+		urg_th = 0x3ff;
+		urg_bias = 1;
+		buf_low_ultra = 0x10;
+		buf_low_preultra = 0x20;
+		break;
+	case 2:
+		layer_greq = 7;
+		urg_layer_greq = 7;
+		flush_ultra = 1;
+		urg_th = 0x3ff;
+		urg_bias = 1;
+		buf_low_ultra = 0x20;
+		buf_low_preultra = 0x40;
+		break;
+	case 3:
+		pre_ultra_th = 0x80;
+		ultra_th = 0x80;
+		layer_greq = 3;
+		urg_layer_greq = 3;
+		ostd_greq = 0x40;
+		flush_preultra = 0;
+		flush_ultra = 0;
+		break;
+	default:
+		profile = 0;
+		break;
+	}
+
+	if (module == DISP_MODULE_OVL0 && profile &&
+	    m6_ovl_greq_profile_apply_count < 64) {
+		DISPERR("M6 OVL greq profile apply[%u]: profile=%u dst=%d cmdq=%p layer_num=%d ultra=0x%x pre=0x%x fifo=%u layer=%u urg=%u ostd=0x%x dis=%u flush=%u/%u urg_th=0x%x urg_bias=%u buf=%u/%u\n",
+			m6_ovl_greq_profile_apply_count, profile, dst_mod_type,
+			cmdq, layer_num, ultra_th, pre_ultra_th, fifo_size,
+			layer_greq, urg_layer_greq, ostd_greq, greq_dis_cnt,
+			flush_preultra, flush_ultra, urg_th, urg_bias,
+			buf_low_ultra, buf_low_preultra);
+		m6_ovl_greq_profile_apply_count++;
+	}
+
 	/* DISP_REG_OVL_RDMA0_MEM_GMC_SETTING */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_ULTRA_THRESHOLD, 0xff);
-	if (dst_mod_type == DST_MOD_REAL_TIME)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_PRE_ULTRA_THRESHOLD, 0xff);
-	else
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_PRE_ULTRA_THRESHOLD, /*0x78*/ 0xff);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_ULTRA_THRESHOLD, ultra_th);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_PRE_ULTRA_THRESHOLD, pre_ultra_th);
 
 	for (i = 0; i < layer_num; i++) {
 		unsigned long layer_offset = i * OVL_LAYER_OFFSET + ovl_base;
@@ -1313,7 +1371,7 @@ static int ovl_golden_setting(DISP_MODULE_ENUM module, enum dst_module_type dst_
 	}
 
 	/* DISP_REG_OVL_RDMA0_FIFO_CTRL */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_FIFO_SIZE, 144);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_FIFO_SIZE, fifo_size);
 	for (i = 0; i < layer_num; i++) {
 		unsigned long layer_offset = i * OVL_LAYER_OFFSET + ovl_base;
 
@@ -1321,31 +1379,31 @@ static int ovl_golden_setting(DISP_MODULE_ENUM module, enum dst_module_type dst_
 	}
 
 	/* DISP_REG_OVL_RDMA_GREQ_NUM */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER0_GREQ_NUM, 5);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER0_GREQ_NUM, layer_greq);
 	if (layer_num > 1)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER1_GREQ_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER1_GREQ_NUM, layer_greq);
 	if (layer_num > 2)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER2_GREQ_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER2_GREQ_NUM, layer_greq);
 	if (layer_num > 3)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER3_GREQ_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER3_GREQ_NUM, layer_greq);
 
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_OSTD_GREQ_NUM, 0xff);
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_GREQ_DIS_CNT, 0);
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_IOBUF_FLUSH_PREULTRA, 1);
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_IOBUF_FLUSH_ULTRA, 0);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_OSTD_GREQ_NUM, ostd_greq);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_GREQ_DIS_CNT, greq_dis_cnt);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_IOBUF_FLUSH_PREULTRA, flush_preultra);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_IOBUF_FLUSH_ULTRA, flush_ultra);
 	DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_RDMA_GREQ_NUM, regval);
 
 	/* DISP_REG_OVL_RDMA_GREQ_URG_NUM */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER0_GREQ_URG_NUM, 5);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER0_GREQ_URG_NUM, urg_layer_greq);
 	if (layer_num > 0)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER1_GREQ_URG_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER1_GREQ_URG_NUM, urg_layer_greq);
 	if (layer_num > 1)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER2_GREQ_URG_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER2_GREQ_URG_NUM, urg_layer_greq);
 	if (layer_num > 2)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER3_GREQ_URG_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER3_GREQ_URG_NUM, urg_layer_greq);
 
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_ARG_GREQ_URG_TH, 0);
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_ARG_URG_BIAS, 0);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_ARG_GREQ_URG_TH, urg_th);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_ARG_URG_BIAS, urg_bias);
 	DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_RDMA_GREQ_URG_NUM, regval);
 
 	/* DISP_REG_OVL_RDMA_ULTRA_SRC */
@@ -1368,17 +1426,30 @@ static int ovl_golden_setting(DISP_MODULE_ENUM module, enum dst_module_type dst_
 	DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_RDMA_ULTRA_SRC, regval);
 
 	/* DISP_REG_OVL_RDMAn_BUF_LOW */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_ULTRA_TH, 0);
-	if (dst_mod_type == DST_MOD_REAL_TIME)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_PREULTRA_TH, 0);
-	else
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_PREULTRA_TH, /*0x30*/ 0x0);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_ULTRA_TH, buf_low_ultra);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_PREULTRA_TH, buf_low_preultra);
 
 	for (i = 0; i < layer_num; i++)
 		DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_RDMAn_BUF_LOW(i), regval);
 
 	/* DISP_REG_OVL_FUNC_DCM1 -- no need anymore, because we set it @ovl_clock_on()*/
 	/* DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_FUNC_DCM1, 0x10); */
+
+	return 0;
+}
+
+int ovl_m6_set_greq_profile(unsigned int profile)
+{
+	if (profile > 3) {
+		DISPERR("M6 OVL greq profile reject: profile=%u valid=0..3\n",
+			profile);
+		return -EINVAL;
+	}
+
+	m6_ovl_greq_profile_id = profile;
+	DISPERR("M6 OVL greq profile set: profile=%u; applying OVL0 CPU registers now\n",
+		profile);
+	ovl_golden_setting(DISP_MODULE_OVL0, DST_MOD_REAL_TIME, NULL);
 
 	return 0;
 }
