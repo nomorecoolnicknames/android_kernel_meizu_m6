@@ -1252,17 +1252,83 @@ static void msdc_card_reset(struct mmc_host *mmc)
 	usleep_range(200, 500);
 }
 
+static bool m6_msdc2_trace_host(struct msdc_host *host)
+{
+	return host && host->id == 2 && host->hw &&
+	       host->hw->host_function == MSDC_SDIO;
+}
+
+static bool m6_msdc2_trace_opcode(u32 opcode)
+{
+	switch (opcode) {
+	case MMC_GO_IDLE_STATE:
+	case SD_IO_SEND_OP_COND:
+	case SD_IO_RW_DIRECT:
+	case SD_SEND_IF_COND:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void m6_msdc2_trace_state(struct msdc_host *host, const char *phase,
+	u32 opcode, u32 rawcmd, u32 arg, int err, u32 resp0, u32 intsts)
+{
+	void __iomem *base = host->base;
+
+	pr_warn("M6 MSDC2 state %s op=%u arg=0x%x raw=0x%x err=%d resp0=0x%x int=0x%x ps=0x%x cfg=0x%x sdc_cfg=0x%x sdc_cmd=0x%x sdc_arg=0x%x iocon=0x%x patch0=0x%x mclk=%u sclk=%u hclk=%u pwr=%u width=%u timing=%u\n",
+		phase, opcode, arg, rawcmd, err, resp0, intsts,
+		MSDC_READ32(MSDC_PS), MSDC_READ32(MSDC_CFG),
+		MSDC_READ32(SDC_CFG), MSDC_READ32(SDC_CMD),
+		MSDC_READ32(SDC_ARG), MSDC_READ32(MSDC_IOCON),
+		MSDC_READ32(MSDC_PATCH_BIT0), host->mclk, host->sclk,
+		host->hclk, host->power_mode, host->bus_width, host->timing);
+}
+
+static void m6_msdc2_trace_power(struct msdc_host *host, const char *phase,
+	u8 mode)
+{
+	void __iomem *base;
+
+	if (!m6_msdc2_trace_host(host))
+		return;
+
+	base = host->base;
+	m6_msdc2_trace_state(host, phase, 0xffffffffU, 0, mode, 0, 0,
+		MSDC_READ32(MSDC_INT));
+}
+
+static void m6_msdc2_trace_cmd(struct msdc_host *host, struct mmc_command *cmd,
+	const char *phase, u32 rawcmd, u32 intsts)
+{
+	static int budget = 160;
+
+	if (!m6_msdc2_trace_host(host) || !cmd ||
+	    !m6_msdc2_trace_opcode(cmd->opcode))
+		return;
+	if (budget <= 0)
+		return;
+	budget--;
+
+	m6_msdc2_trace_state(host, phase, cmd->opcode, rawcmd, cmd->arg,
+		(int)cmd->error, cmd->resp[0], intsts);
+}
+
 static void msdc_set_power_mode(struct msdc_host *host, u8 mode)
 {
 	N_MSG(CFG, "Set power mode(%d)", mode);
 	if (host->power_mode == MMC_POWER_OFF && mode != MMC_POWER_OFF) {
+		m6_msdc2_trace_power(host, "power-up-entry", mode);
 		msdc_pin_reset(host, MSDC_PIN_PULL_UP, 0);
 		msdc_pin_config(host, MSDC_PIN_PULL_UP);
+		m6_msdc2_trace_power(host, "power-up-pins", mode);
 
 		if (host->power_control)
 			host->power_control(host, 1);
+		m6_msdc2_trace_power(host, "power-up-rails", mode);
 
 		mdelay(10);
+		m6_msdc2_trace_power(host, "power-up-delay", mode);
 
 		msdc_oc_check(host);
 
@@ -1274,8 +1340,10 @@ static void msdc_set_power_mode(struct msdc_host *host, u8 mode)
 	} else if (host->power_mode != MMC_POWER_OFF && mode == MMC_POWER_OFF) {
 
 		if (is_card_sdio(host) || (host->hw->flags & MSDC_SDIO_IRQ)) {
+			m6_msdc2_trace_power(host, "power-off-sdio-keep", mode);
 			msdc_pin_config(host, MSDC_PIN_PULL_UP);
 		} else {
+			m6_msdc2_trace_power(host, "power-off-entry", mode);
 
 			if (host->power_control)
 				host->power_control(host, 0);
@@ -1908,6 +1976,8 @@ static unsigned int msdc_command_start(struct msdc_host   *host,
 	dbg_add_host_log(host->mmc, 0, cmd->opcode, cmd->arg);
 #endif
 
+	m6_msdc2_trace_cmd(host, cmd, "cmd-start", rawcmd,
+		MSDC_READ32(MSDC_INT));
 	sdc_send_cmd(rawcmd, rawarg);
 
 	return 0;
@@ -1915,6 +1985,8 @@ static unsigned int msdc_command_start(struct msdc_host   *host,
 err:
 	ERR_MSG("XXX %s timeout: before CMD<%d>", str, opcode);
 	cmd->error = (unsigned int)-ETIMEDOUT;
+	m6_msdc2_trace_cmd(host, cmd, "cmd-start-timeout", rawcmd,
+		MSDC_READ32(MSDC_INT));
 	msdc_dump_register(host);
 	msdc_reset_hw(host->id);
 	return cmd->error;
@@ -1927,7 +1999,7 @@ static u32 msdc_command_resp_polling(struct msdc_host *host,
 	unsigned long       timeout)
 {
 	void __iomem *base = host->base;
-	u32 intsts;
+	u32 intsts = 0;
 	u32 resp;
 	unsigned long tmo;
 	/* struct mmc_data   *data = host->data; */
@@ -2086,7 +2158,9 @@ static u32 msdc_command_resp_polling(struct msdc_host *host,
 	}
 #endif /* end of MTK_MSDC_USE_CMD23 */
 
- out:
+out:
+	m6_msdc2_trace_cmd(host, cmd, "cmd-done", MSDC_READ32(SDC_CMD),
+		intsts);
 	host->cmd = NULL;
 
 	if (!cmd->data && !cmd->error)

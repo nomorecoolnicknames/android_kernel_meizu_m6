@@ -1,5 +1,62 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 MSDC2 CMD-state diagnostic compile fix
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: fix the build break in the bounded
+MSDC2 CMD-state diagnostic helper by providing the local `base` pointer required
+by the legacy `MSDC_READ32()` macro in `m6_msdc2_trace_power()`. This preserves
+the Wi-Fi/MSDC diagnostic patch as a separate checkpoint before the display
+truth-window work; it does not change display behavior.
+
+Hypothesis: FACT: the build log
+`build-m6-msdc2-cmd-state-diag-20260608.log` failed in
+`drivers/mmc/host/mediatek/mt6755/sd.c` because `MSDC_READ32(MSDC_INT)`
+expanded to a macro that expects a local variable named `base`. HYPOTHESIS:
+adding the local `void __iomem *base = host->base` setup in the power trace
+helper should restore the diagnostic build without altering runtime behavior
+outside the existing bounded MSDC2 trace path.
+
+Evidence:
+- Failed build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-msdc2-cmd-state-diag-20260608.log`.
+- Passing retry build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-msdc2-cmd-state-diag-20260608-retry1.log`.
+- Built `Image.gz-dtb` sha256:
+  `5991c9fb549fdd4ffcffad98ec0e6c6593517a1510402aa932c9a8a7b5c4e08f`.
+- Built `System.map` sha256:
+  `26bab674e1d74a385a535ccb03c998cb8a7855000d2a85eec1909ee5dd43c931`.
+
+Files changed:
+- `kernel-3.18/drivers/mmc/host/mediatek/mt6755/sd.c`: adds the local `base`
+  pointer for `m6_msdc2_trace_power()` and keeps the existing diagnostic-only
+  trace helper compileable.
+- `BRINGUP_STATE.md`: records this as a separate non-display checkpoint so the
+  next display patch does not mix Wi-Fi/MSDC edits.
+
+Why each file changed: `sd.c` owns the bounded MSDC2 command/power diagnostic
+markers that the previous Wi-Fi patch added. The state file is the canonical
+M6 kernel-tree handoff record.
+
+Expected next marker: a rebuilt diagnostic image should contain the existing
+`M6 MSDC2 state` markers and no longer fail at compile time.
+
+Rollback condition: revert this checkpoint if the MSDC2 diagnostic helper
+changes SDIO power sequencing, produces excessive hot-path logs beyond the
+existing budget, or regresses boot/storage/Wi-Fi enumeration.
+
+Verification commands:
+
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+rg -n 'm6_msdc2_trace_power|M6 MSDC2 state' kernel-3.18/drivers/mmc/host/mediatek/mt6755/sd.c
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+```
+
 ## 2026-06-08 WMT GPIO/IRQ markers and MSDC2 CMD5 pad frontier
 
 PATCH HISTORY, **PROPER-FIX / DIAGNOSTIC**, 2026-06-08: guard the active
