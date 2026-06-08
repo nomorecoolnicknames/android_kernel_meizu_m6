@@ -1986,6 +1986,15 @@ static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x154));
 }
 
+void dpmgr_m6_dump_primary_video_truth(const char *tag)
+{
+	const char *safe_tag = tag ? tag : "manual";
+
+	DISPERR("M6 DISPLAY truth[%s][ddp-route]: begin\n", safe_tag);
+	dpmgr_m6_dump_primary_video_state(safe_tag);
+	DISPERR("M6 DISPLAY truth[%s][ddp-route]: end\n", safe_tag);
+}
+
 static bool dpmgr_m6_primary_event_watch(ddp_path_handle handle,
 	DISP_PATH_EVENT event)
 {

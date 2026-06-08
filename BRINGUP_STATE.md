@@ -1,5 +1,133 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 Display truth-window diagnostic boot
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add a read-only manual
+`m6_display_truth_window[:tag]` debugfs entry that captures one bounded
+cross-layer display snapshot while Android is showing known UI. This is not a
+display fix and does not change DDP route, PQ behavior, panel timing, DSI
+mode, or MIPITX programming.
+
+Hypothesis: FACT: stock LK reverse/parity work has already matched the visible
+ILI9881P panel identity, DCS init table, geometry, 4-lane DSI parameters,
+timing, PLL, packet size, PS byte, TPS/reset order, and LP DCS readability.
+FACT: current Linux can boot far enough for scrcpy/UI evidence, but the
+physical LCD remains lit-black. HYPOTHESIS: the remaining evidence gap is
+between logical composition and physical photons: a single fresh truth window
+must correlate OVL requested layers, live DDP route/valid/ready, mutex/RDMA
+counters, SMI/LARB, DSI host state, MIPITX raw/decode, panel/backlight DCS,
+and LED backlight state before any further behavior patch is justified.
+
+Evidence:
+- Stock low-level parity note:
+  `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/m6_lowlevel_dsi_mipitx_parity_20260608.md`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-display-truth-window-diag-20260608.log`,
+  ending in `CAT arch/arm64/boot/Image.gz-dtb`.
+- Export artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1320-m6-display-truth-window-bootonly`.
+- `Image.gz-dtb` marker string check contains
+  `m6_display_truth_window`, `M6 DISPLAY truth[%s][window]`,
+  `M6 DISPLAY truth[%s][ddp-route]`, `M6 DISPLAY truth[%s][dsi-host]`,
+  `M6 DISPLAY truth[%s][mipitx]`, `M6 DISPLAY truth[%s][backlight]`,
+  `stock-pages-before-stop`, and `stock-pages-restart-after-read`.
+- Built `Image.gz-dtb` sha256:
+  `e5bdbab9749d8762ec9c94698a557d43f80a0dc7b35b8e7a46aee0f25f46e668`.
+- Built `System.map` sha256:
+  `9a8146f2664f808b26f5d4effb8ce0fa80d70b2fe99d7791d0af89fb1b01010d`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Boot-only artifact sha256:
+  `f1f4291b385277cf7a7e51ddd5b96c9b31e5446878213d89f291daf94f9bb9a1`.
+- `abootimg -i` reports boot image size `16777216`, page size `2048`,
+  boot name `1552631950`, kernel address `0x40080000`, ramdisk address
+  `0x45000000`, tags address `0x44000000`, and unchanged cmdline
+  `bootopt=64S3,32N2,64N2 androidboot.selinux=permissive binder.devices=binder,hwbinder,vndbinder buildvariant=userdebug`.
+- `sha256sum -c SHA256SUMS` passed in the artifact directory.
+  `cmp Image.gz-dtb verify-unpack/zImage` and
+  `cmp initrd.img verify-unpack/initrd.img` passed.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  manual `m6_display_truth_window[:tag]` debugfs entry and help text.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: adds
+  the locked truth-window orchestrator and requested OVL layer snapshot dump;
+  also wraps stock-pages stop/read/restart phases with DSI live snapshots.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.h`: exports
+  the truth-window entry for debugfs.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c`: exposes the
+  existing primary DDP route/RDMA/OVL/SMI/MUTEX dump through a read-only truth
+  wrapper.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.h`: declares
+  the DDP truth wrapper.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  `M6 DISPLAY truth` anchors around DSI host snapshots and a raw MIPITX
+  lane-map/LP/HS/PLL decode line.
+- `kernel-3.18/drivers/misc/mediatek/leds/mt6755/leds.c`: adds a bounded
+  LED/backlight truth dump for the active `lcd-backlight` DTS entry and
+  cached brightness/PWM values.
+- `kernel-3.18/drivers/misc/mediatek/leds/mt6755/leds_hal.h`: declares the
+  LED truth helper.
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`:
+  adds a panel-side `0x51` backlight truth marker when the existing bounded
+  backlight log fires.
+- `BRINGUP_STATE.md`: records the diagnostic evidence, expected markers,
+  rollback condition, and verification commands.
+
+Why each file changed: `disp_debug.c` is the existing M6 display debugfs
+command surface. `primary_display.c` owns the primary path lock, session state,
+video-mode state, and OVL snapshot correlation point. `ddp_manager.c` already
+had the deepest live DDP route/MUTEX/RDMA/OVL/SMI register dump, so the patch
+reuses it instead of duplicating register tables. `ddp_dsi.c` owns DSI host and
+MIPITX register access. `leds.c` owns the actual `lcd-backlight` LED/PWM/LCM
+dispatch state, while the ILI9881P LCM file owns the panel `0x51` DCS write.
+
+Expected next marker: after flashing
+`boot-m6-display-truth-window-20260608.img`, boot Android to a known non-black
+scrcpy UI and run:
+
+```bash
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_truth_window:ui-visible" > /d/disp/dbg'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_dsi_dcs_status:stock_pages" > /d/disp/dbg'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_truth_window:after-stock-pages" > /d/disp/dbg'
+```
+
+Fresh dmesg should contain the full `M6 DISPLAY truth[...]` set for
+`window`, `ovl-request`, `ddp-route`, `dsi-host`, `mipitx`, `backlight`, and
+`backlight-write`. If OVL/RDMA counters advance and DSI/MIPITX/LP reads look
+stock-like while the physical LCD remains black, stop route/PQ guessing and
+escalate to the first proven lower layer from the capture: MIPITX lane/analog
+parity, panel HS-video acceptance, or optical/backlight hardware.
+
+Rollback condition: revert this diagnostic if the verified boot regresses
+before ADB/SurfaceFlinger, if `m6_display_truth_window` deadlocks the primary
+path lock, if the manual command floods logs enough to hide the capture, or if
+stock-pages stop/restart phase snapshots destabilize video mode. Do not promote
+this patch to `PROPER-FIX`; it is evidence only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+sha256sum /srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb \
+  /srv/forge/work/m6-source-kernel-manual-20260520/out/System.map \
+  /srv/forge/work/m6-source-kernel-manual-20260520/out/.config \
+  build-m6-display-truth-window-diag-20260608.log
+gzip -cd /srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb 2>/tmp/m6-display-truth-window-gzip.err | \
+  strings | grep -E 'm6_display_truth_window|M6 DISPLAY truth|stock-pages-before-stop|stock-pages-restart-after-read'
+cd /srv/forge/android/export/meizu_m6_artifacts/20260608-1320-m6-display-truth-window-bootonly
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack/zImage
+cmp initrd.img verify-unpack/initrd.img
+abootimg -i boot-m6-display-truth-window-20260608.img
+```
+
 ## 2026-06-08 MSDC2 CMD-state diagnostic compile fix
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: fix the build break in the bounded

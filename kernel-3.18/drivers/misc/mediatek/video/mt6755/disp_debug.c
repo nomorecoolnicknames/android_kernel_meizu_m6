@@ -130,6 +130,9 @@ char MTKFB_STR_HELP[] =
 	"        m6_dsi_dcs_status[:stock_pages]\n"
 	"             Meizu M6 diagnostic DSI/ILI9881P DCS status dump\n"
 	"\n"
+	"        m6_display_truth_window[:tag]\n"
+	"             Meizu M6 read-only DDP/OVL/RDMA/DSI/MIPITX/backlight truth dump\n"
+	"\n"
 	"        m6_ovl_greq_profile:[0|1|2|3]\n"
 	"             Meizu M6 isolation profiles for OVL RDMA/GREQ underflow triage\n"
 	"\n"
@@ -627,6 +630,14 @@ void mtkfb_process_dbg_opt(const char *opt)
 		}
 		DISPERR("M6 LCM debug reinit command: force=%u\n", force_power);
 		primary_display_m6_lcm_reinit(force_power);
+		return;
+	} else if (0 == strncmp(opt, "m6_display_truth_window", 23)) {
+		const char *tag = "manual";
+
+		if (opt[23] == ':')
+			tag = opt + 24;
+		DISPERR("M6 DISPLAY truth command: tag=%s\n", tag);
+		primary_display_m6_truth_window(tag);
 		return;
 	} else if (0 == strncmp(opt, "m6_dsi_dcs_status", 17)) {
 		const char *tag = "public";

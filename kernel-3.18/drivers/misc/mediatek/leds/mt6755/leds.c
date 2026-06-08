@@ -360,6 +360,42 @@ struct cust_mt65xx_led *mt_get_cust_led_list(void)
 	return cust_led_list;
 }
 
+void m6_led_dump_backlight_truth(const char *tag)
+{
+	struct cust_mt65xx_led *cust = mt_get_cust_led_list();
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int support = Cust_GetBacklightLevelSupport_byPWM();
+	unsigned int i;
+
+	if (!cust) {
+		pr_info("[LED]M6 DISPLAY truth[%s][backlight]: cust=NULL bl=%u duty=%u div=%u pwm_div=%u support=%u\n",
+			safe_tag, bl_brightness_hal, bl_duty_hal, bl_div_hal,
+			backlight_PWM_div_hal, support);
+		return;
+	}
+
+	for (i = 0; i < MT65XX_LED_TYPE_TOTAL; i++) {
+		const char *name = cust[i].name ? cust[i].name : "null";
+
+		if (strcmp(name, "lcd-backlight"))
+			continue;
+		pr_info("[LED]M6 DISPLAY truth[%s][backlight]: idx=%u name=%s mode=%d data=0x%lx bl=%u duty=%u div=%u pwm_div=%u cfg=%u/%u/%u/%u/%u support=%u\n",
+			safe_tag, i, name, cust[i].mode, cust[i].data,
+			bl_brightness_hal, bl_duty_hal, bl_div_hal,
+			backlight_PWM_div_hal,
+			cust[i].config_data.clock_source,
+			cust[i].config_data.div,
+			cust[i].config_data.low_duration,
+			cust[i].config_data.High_duration,
+			cust[i].config_data.pmic_pad, support);
+		return;
+	}
+
+	pr_info("[LED]M6 DISPLAY truth[%s][backlight]: lcd-backlight not found bl=%u duty=%u div=%u pwm_div=%u support=%u\n",
+		safe_tag, bl_brightness_hal, bl_duty_hal, bl_div_hal,
+		backlight_PWM_div_hal, support);
+}
+
 /****************************************************************************
  * internal functions
  ***************************************************************************/

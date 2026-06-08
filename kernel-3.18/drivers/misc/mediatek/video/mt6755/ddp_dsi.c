@@ -1327,6 +1327,18 @@ static void dsi_m6_dump_mipitx_decode(const char *tag)
 		dsi_m6_field(pll2, 0, 31), dsi_m6_field(pll_pwr, 0, 1),
 		dsi_m6_field(pll_pwr, 1, 1), dsi_m6_field(pll_pwr, 8, 1),
 		gpi_en, gpi_pull, dsi_m6_field(sw_ctrl, 0, 1), sw0, sw1, dbg, apb);
+	DISPERR("M6 DISPLAY truth[%s][mipitx]: raw c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x lane_map d0/d1/d2/d3/c/lprx=%u/%u/%u/%u/%u/%u lptx=0x%x/0x%x/0x%x/0x%x/0x%x lpcd=0x%x/0x%x/0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x pwr=0x%x sw=0x%x/0x%x/0x%x dbg=0x%x apb=0x%x\n",
+		tag, clock_lane, lane0, lane1, lane2, lane3,
+		dsi_m6_field(phy_sel, 0, 3), dsi_m6_field(phy_sel, 4, 3),
+		dsi_m6_field(phy_sel, 8, 3), dsi_m6_field(phy_sel, 12, 3),
+		dsi_m6_field(phy_sel, 16, 3), dsi_m6_field(phy_sel, 20, 3),
+		dsi_m6_field(clock_lane, 2, 3), dsi_m6_field(lane0, 2, 3),
+		dsi_m6_field(lane1, 2, 3), dsi_m6_field(lane2, 2, 3),
+		dsi_m6_field(lane3, 2, 3), dsi_m6_field(clock_lane, 5, 2),
+		dsi_m6_field(lane0, 5, 2), dsi_m6_field(lane1, 5, 2),
+		dsi_m6_field(lane2, 5, 2), dsi_m6_field(lane3, 5, 2),
+		pll0, pll2, pll_pwr, INREG32(MIPITX_BASE + 0x06c),
+		sw_ctrl, sw0, sw1, dbg, apb);
 }
 #endif
 
@@ -1514,7 +1526,11 @@ static void dsi_m6_schedule_hs_video_delayed(void)
 
 void dsi_m6_dump_live(const char *tag)
 {
-	dsi_m6_dump_snapshot(tag, DISP_MODULE_DSI0, NULL);
+	const char *safe_tag = tag ? tag : "manual";
+
+	DISPERR("M6 DISPLAY truth[%s][dsi-host]: begin\n", safe_tag);
+	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
+	DISPERR("M6 DISPLAY truth[%s][dsi-host]: end\n", safe_tag);
 }
 
 static uint32_t dsi_m6_dcs_read_noreset(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)

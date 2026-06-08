@@ -1384,6 +1384,9 @@ static void lcm_setbacklight_cmdq(void *handle, unsigned int level)
 		LCM_LOGI("M6 LCM backlight handle=%p request=%u dcs51=0x%02x min=%u count=%u delta=%u\n",
 			handle, level, bl_level[0].para_list[0], BL_MIN_LEVEL,
 			lcm_m6_backlight_log_count, delta);
+		LCM_LOGI("M6 DISPLAY truth[backlight-write][panel]: handle=%p request=%u dcs51=0x%02x min=%u count=%u delta=%u mode=%d\n",
+			handle, level, bl_level[0].para_list[0], BL_MIN_LEVEL,
+			lcm_m6_backlight_log_count, delta, lcm_dsi_mode);
 	}
 	lcm_m6_backlight_last_level = level;
 

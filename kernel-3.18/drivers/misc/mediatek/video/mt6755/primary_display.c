@@ -70,6 +70,7 @@
 #include "ddp_reg.h"
 #include "mtk_disp_mgr.h"
 #include "ddp_dsi.h"
+#include "ddp_ovl.h"
 #include "m4u.h"
 #include "m4u_priv.h"
 #include "mt_spm.h"
@@ -92,6 +93,7 @@
 #include "mt_spm_idle.h"
 
 extern void lcm_m6_diag_read_stock_pages(void);
+extern void m6_led_dump_backlight_truth(const char *tag);
 
 #define FRM_UPDATE_SEQ_CACHE_NUM (DISP_INTERNAL_BUFFER_COUNT+1)
 
@@ -6042,10 +6044,12 @@ int primary_display_m6_lcm_stock_pages(void)
 		goto done;
 	}
 
+	dsi_m6_dump_live("stock-pages-before-stop");
 	DISPERR("M6 LCM stock_pages: stop video path begin\n");
 	if (primary_display_is_video_mode())
 		dpmgr_path_ioctl(pgc->dpmgr_handle, NULL, DDP_STOP_VIDEO_MODE, NULL);
 
+	dsi_m6_dump_live("stock-pages-stop-video-read");
 	DISPERR("M6 LCM stock_pages: read begin\n");
 	lcm_m6_diag_read_stock_pages();
 	DISPERR("M6 LCM stock_pages: read end\n");
@@ -6053,12 +6057,73 @@ int primary_display_m6_lcm_stock_pages(void)
 	dpmgr_path_start(pgc->dpmgr_handle, CMDQ_DISABLE);
 	if (primary_display_is_video_mode())
 		dpmgr_path_trigger(pgc->dpmgr_handle, NULL, CMDQ_DISABLE);
+	dsi_m6_dump_live("stock-pages-restart-after-read");
 
 done:
 	disp_irq_esd_cust_bycmdq(1);
 	_primary_path_unlock(__func__);
 	primary_display_esd_check_enable(1);
 	return ret;
+}
+
+static void primary_display_m6_dump_ovl_request_truth(const char *tag)
+{
+	struct m6_ovl_config_snapshot snap;
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int layer;
+	int have;
+
+	have = ovl_m6_get_last_config_snapshot(&snap);
+	DISPERR("M6 DISPLAY truth[%s][ovl-request]: have=%d seq=%u enabled=0x%x first=%u scanned=0x%x/0x%x dst=%ux%u sec=%u cmdq=%u direct=%u bypass_pq=%u\n",
+		safe_tag, have, have ? snap.seq : 0,
+		have ? snap.enabled_layers : 0,
+		have ? snap.first_global_layer : 0,
+		have ? snap.scanned_before : 0,
+		have ? snap.scanned_after : 0,
+		have ? snap.dst_w : 0, have ? snap.dst_h : 0,
+		have ? snap.has_sec_layer : 0,
+		have ? snap.cmdq : 0, have ? snap.direct : 0,
+		have ? snap.bypass_pq : 0);
+	if (!have)
+		return;
+
+	for (layer = 0; layer < 4; layer++) {
+		struct m6_ovl_layer_snapshot *l = &snap.layer[layer];
+
+		DISPERR("M6 DISPLAY truth[%s][ovl-request-l%u]: valid=%u en=%u global=%u src=%u fmt=0x%x bpp=%u sec=%u src_xywh=%u/%u/%u/%u dst_xywh=%u/%u/%u/%u hw_dst_h=%u bounds=%u addr=0x%lx final=0x%lx visible_last=0x%lx pitch_end=0x%lx pitch=%u\n",
+			safe_tag, layer, l->valid, l->enabled, l->global_layer,
+			l->source, l->fmt, l->bpp, l->security,
+			l->src_x, l->src_y, l->src_w, l->src_h,
+			l->dst_x, l->dst_y, l->dst_w, l->dst_h,
+			l->hw_dst_h, l->bounds_profile, l->addr,
+			l->final_addr, l->visible_last, l->pitch_end,
+			l->src_pitch);
+	}
+}
+
+int primary_display_m6_truth_window(const char *tag)
+{
+	DISP_MODULE_ENUM dst_module;
+	const char *safe_tag = tag ? tag : "manual";
+	int busy;
+
+	_primary_path_lock(__func__);
+	dst_module = dpmgr_path_get_dst_module(pgc->dpmgr_handle);
+	busy = dpmgr_path_is_busy(pgc->dpmgr_handle);
+	DISPERR("M6 DISPLAY truth[%s][window]: begin state=%u session_mode=%d primary_mode=%d video=%d busy=%d dst=%s/%d cmdq=%d bypass_pq=%d\n",
+		safe_tag, pgc->state, pgc->session_mode, primary_display_mode,
+		primary_display_is_video_mode(), busy, ddp_get_module_name(dst_module),
+		dst_module, primary_display_cmdq_enabled(),
+		disp_helper_get_option(DISP_OPT_BYPASS_PQ));
+	primary_display_m6_dump_ovl_request_truth(safe_tag);
+	dpmgr_m6_dump_primary_video_truth(safe_tag);
+	dsi_m6_dump_live(safe_tag);
+	m6_led_dump_backlight_truth(safe_tag);
+	DISPERR("M6 DISPLAY truth[%s][window]: end state=%u busy=%d\n",
+		safe_tag, pgc->state, dpmgr_path_is_busy(pgc->dpmgr_handle));
+	_primary_path_unlock(__func__);
+
+	return 0;
 }
 
 int primary_display_manual_lock(void)
