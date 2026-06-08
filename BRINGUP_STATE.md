@@ -99,6 +99,46 @@ adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_route_probe:r
 adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell dmesg | rg 'M6 DISPLAY route_probe|M6 DDP timeout|M6 DISPLAY truth|M6 DSI snapshot|abnormal SOF'
 ```
 
+Runtime capture result, 2026-06-08:
+
+- Capture verdict:
+  `/srv/forge/android/meizu_m6/captures/20260608-1759-m6-display-route-probe-711HEBSR277K5/CAPTURE_VERDICT.md`.
+- Capture files:
+  `/srv/forge/android/meizu_m6/captures/20260608-1759-m6-display-route-probe-711HEBSR277K5`.
+- FACT: `identity-before-route-probe.txt` shows kernel
+  `Linux localhost 3.18.140 #56 SMP PREEMPT Mon Jun 8 17:46:20 CDT 2026`,
+  `sys.boot_completed=1`, and boot partition sha256
+  `e26a2b991cefba405604d8a184010dfba05216c146dd34702a97d56e97610ae6`.
+- FACT: the boot partition hash matches exported artifact
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1750-m6-display-route-probe-bootonly/boot-m6-display-route-probe-20260608.img`.
+- FACT: `m6_display_route_probe:dump` and `:trigger` returned without timeout.
+- FACT: fresh route snapshots show `VALID=0x4000937a`, OVL0 enabled, two
+  enabled OVL layers, clocks ungated, and RDMA0 enabled at `720x1280`.
+- FACT: RDMA counters move in every route window: examples include
+  `dump-before IN=198/367 OUT=350/363`, `dump-after IN=598/468 OUT=34/465`,
+  `trigger-before IN=699/1121 OUT=138/1118`, and
+  `trigger-after IN=368/410 OUT=528/406`.
+- FACT: DSI is in video mode and reports `STATE7=0x2020/Video data period`,
+  `MODE=0x3`, `TXRX=0x1003c`, `PS=0x30870`, and active MIPITX lanes
+  `0x603/0x601/0x601/0x601/0x601`.
+- FACT: no `abnormal SOF` line is present in fresh `dmesg-after-dump.txt` or
+  `dmesg-after-trigger.txt`.
+- FACT: backlight remains nonzero: `lcd-backlight ... bl=10 duty=21`.
+- INFERENCE: the current fresh boot is not failing before OVL/RDMA scanout;
+  the frame route is active enough to feed RDMA and DSI video packets.
+- INFERENCE: `m6_display_route_probe:rekick` was intentionally not run because
+  route valid bits and RDMA counters were already active.
+- HYPOTHESIS: if the physical LCD is still lit-black, the next frontier is
+  below the normal OVL/RDMA route: panel HS-video acceptance, panel command
+  state/gamma/page programming, or actual UI buffer content being black before
+  OVL. Next diagnostic should be a forced visible OVL solid layer or
+  writeback/screencap-safe content proof plus panel command-state replay, not
+  another PQ or route-valid patch.
+- Note: `m6_dsi_dcs_status:route-good` emitted only its command line here.
+  Source review shows that helper is rate-limited by static `dump_count >= 2`
+  and skips reads while DSI is in video mode, so missing DCS readback is not
+  evidence that panel DCS is unreadable.
+
 ## 2026-06-08 Display truth-window diagnostic boot
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add a read-only manual
