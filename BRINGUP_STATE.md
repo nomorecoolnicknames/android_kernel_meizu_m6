@@ -1,5 +1,104 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 MSDC2 VCN rail DT binding and CMD5 power frontier
+
+PATCH HISTORY, **PROPER-FIX / DIAGNOSTIC**, 2026-06-08: bind MSDC2's SDIO
+`vmmc` and `vqmmc` supplies in the active compiled DTB so the host no longer
+parses the Wi-Fi SDIO slot with missing regulator handles. This is a proper DT
+wiring fix for the board contract and a diagnostic frontier advance for Wi-Fi:
+it does not claim WLAN is complete.
+
+Hypothesis: FACT: the previous `#49` boot closed the WMT/MSDC2 callback gap and
+showed `M6 CMB SDIO on invoking pm cb=... evt=272`, but CMD5 still returned
+`ocr=0x0` and Android had no `wlan0`. FACT: the source `mmc2` node had
+`host_function = <MSDC_SDIO>` but no `vmmc-supply` or `vqmmc-supply`, while the
+M6 PMIC DTS already exposes `mt_pmic_vcn33_wifi_ldo_reg` and
+`mt_pmic_vcn18_ldo_reg`. HYPOTHESIS: MSDC2 was reaching the SDIO attach path
+without the board's Wi-Fi SDIO power rails attached to the MMC host, so CMD5
+could not see a powered card. INFERENCE after flashing `#51`: the supply handles
+are now present, but `msdc_sdio_power()` still only logs host id 2 and does not
+enable those regulators, leaving the next earliest blocker inside the MSDC2
+power-on path rather than Wi-Fi firmware, NVRAM, HAL, or userspace.
+
+Evidence:
+- Previous callback-fix capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-0951-m6-msdc2-cfg-gate-fix-after-flash-711HEBSR277K5`.
+- New artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1019-m6-msdc2-vcn-rails-only-bootonly/boot-m6-msdc2-vcn-rails-only-20260608.img`,
+  sha256 `20156ac4e0bc1bb2b1f81d804fb15abe18a15c26d0447ed6cd2aff4d2a581dfa`.
+- New `Image.gz-dtb` sha256:
+  `3b60016635fafe2e1349312e4645588c5bd890cca0e051ae2bacf6d883f91022`.
+- Matching compiled `meizu_m6.dtb` sha256:
+  `bdcecd02d7e3ea4ffcd558c88f1a17107ffbd067c9ccc6c908b8d3e2a29a03b8`.
+- Matching `System.map` sha256:
+  `30fb32c0c7896562744a56b2e4377b6031516413c25c67325eda6a3cf3f35a64`.
+- Matching `vmlinux` sha256:
+  `5cfb45efe6b206fa4ea250757810e8ed246db1b53a5693865c71d7679b2e3ea4`.
+- Matching `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- DTB verification:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1019-m6-msdc2-vcn-rails-only-bootonly/msdc2-compiled-dtb-snippet.txt`
+  shows `msdc2@11250000` with `vmmc-supply=<0x10>` and
+  `vqmmc-supply=<0x11>`, while `cmd_edge`, `rdata_edge`, and `wdata_edge`
+  remain `MSDC_SMPL_FALLING`. The earlier rising-edge idea was abandoned before
+  flashing because Q-ex2's reference `mmc2_register_setting_default` also uses
+  falling edges.
+- Flash identity: the boot partition readback in
+  `/srv/forge/android/meizu_m6/captures/20260608-1019-m6-msdc2-vcn-rails-only-after-flash-711HEBSR277K5/postflash-readback-sha256.txt`
+  matches the local boot image sha256
+  `20156ac4e0bc1bb2b1f81d804fb15abe18a15c26d0447ed6cd2aff4d2a581dfa`.
+- Runtime identity: the phone rebooted with
+  `Linux localhost 3.18.140 #51 SMP PREEMPT Mon Jun 8 10:23:54 CDT 2026
+  aarch64`.
+- Closed DT-supply sub-blocker marker: `M6 MSDC2 sdio_power on=1
+  vmmc=ffffffc079ddcc00 vqmmc=ffffffc079ddcc80 g_io=0 g_flash=0`.
+- Still-open frontier markers: `M6 MMC2 attach_sdio CMD5 probe err=0 ocr=0x0`,
+  `mtk-msdc 11250000.msdc2: no support for card's volts`,
+  `M6 MMC2 attach_sdio err=-22 ocr=0x0 rocr=0x0 funcs=0`,
+  `hif_sdio_stp_on:M6 SDIO no supported func probed`, and
+  `Device "wlan0" does not exist.`
+- Power-side sanity marker: WMT/CONSYS still reads chip id `0x00000326`, so the
+  current failure is not a total CONSYS power-off condition.
+
+Files changed:
+- `kernel-3.18/arch/arm64/boot/dts/cust_mt6755_msdc.dtsi`: adds MSDC2
+  `vmmc-supply = <&mt_pmic_vcn33_wifi_ldo_reg>` and
+  `vqmmc-supply = <&mt_pmic_vcn18_ldo_reg>`.
+- `BRINGUP_STATE.md`: records artifact identity, readback identity, the DTB
+  proof, the abandoned timing-edge branch, and the remaining
+  `msdc_sdio_power()` frontier.
+
+Why each file changed: the DTS file owns the board-level MMC2 supply binding
+that `msdc_of_parse()` consumes into `host->mmc->supply`. Without this binding,
+driver-local power work could not safely tell whether it was operating on the
+real Wi-Fi rails or dummy/missing regulators. This state file is the canonical
+M6 handoff record and must carry the evidence chain for the next patch cycle.
+
+Expected next marker: after a targeted MSDC2 power-path patch, the next capture
+should show `msdc_sdio_power(on=1)` enabling or proving the already-enabled
+state of `vcn33_wifi` and `vcn18`, then CMD5 should either return a nonzero SDIO
+OCR or move to a more specific command/CRC/timeout/reset marker. If OCR remains
+`0x0` with both rails proven on at the moment of CMD5, pivot to SDIO reset,
+pinctrl drive/pull, clock, `ocr_avail`, non-removable/card-detect policy, and
+stock LK/kernel power sequencing before touching Wi-Fi firmware or NVRAM.
+
+Rollback condition: revert this DT binding if boot/ADB, eMMC/mmc0, external
+storage/mmc1, WMT chip power-on, or regulator init regresses, or if stock-source
+evidence proves these are not the M6 Wi-Fi SDIO rails. Do not revert solely
+because WLAN still fails at CMD5; that is the expected next frontier.
+
+Verification commands:
+
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+kernel-3.18/scripts/dtc/dtc -I dtb -O dts -o /tmp/m6-msdc2.dts /srv/forge/android/export/meizu_m6_artifacts/20260608-1019-m6-msdc2-vcn-rails-only-bootonly/meizu_m6.dtb
+rg -n 'msdc2@11250000|vmmc-supply|vqmmc-supply|cmd_edge|rdata_edge|wdata_edge' /tmp/m6-msdc2.dts
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260608-1019-m6-msdc2-vcn-rails-only-bootonly/boot-m6-msdc2-vcn-rails-only-20260608.img
+CAP=/srv/forge/android/meizu_m6/captures/20260608-1019-m6-msdc2-vcn-rails-only-after-flash-711HEBSR277K5
+rg -n 'Linux localhost 3.18.140 #51|M6 MSDC2 sdio_power|M6 MMC2 attach_sdio CMD5|no support for card.s volts|M6 SDIO no supported func|Device "wlan0" does not exist|chipId=0x00000326' "$CAP"/*.txt
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'getprop sys.boot_completed; getprop service.wcn.driver.ready; ip link show wlan0 2>/dev/null || true'
+```
+
 ## 2026-06-08 MSDC2 callback compile-gate fix and CMD5 frontier
 
 PATCH HISTORY, **PROPER-FIX**, 2026-06-08: widen the MSDC2 SDIO callback

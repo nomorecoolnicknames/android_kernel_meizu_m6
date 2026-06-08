@@ -59,6 +59,8 @@
 	pinctl = <&mmc2_pins_default>;
 	register_setting = <&mmc2_register_setting_default>;
 	host_function = /bits/ 8 <MSDC_SDIO>;
+	vmmc-supply = <&mt_pmic_vcn33_wifi_ldo_reg>;
+	vqmmc-supply = <&mt_pmic_vcn18_ldo_reg>;
 	status = "okay";
 };
 
