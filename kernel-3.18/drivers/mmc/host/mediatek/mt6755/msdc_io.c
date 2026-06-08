@@ -1252,6 +1252,12 @@ int msdc_of_parse(struct mmc_host *mmc)
 	struct msdc_host *host = mmc_priv(mmc);
 	int len;
 	int ret;
+	bool m6_is_msdc2;
+#if defined(CFG_DEV_MSDC2)
+	const unsigned int m6_cfg_dev_msdc2 = 1;
+#else
+	const unsigned int m6_cfg_dev_msdc2 = 0;
+#endif
 
 	ret = mmc_of_parse(mmc);
 	if (ret) {
@@ -1260,6 +1266,11 @@ int msdc_of_parse(struct mmc_host *mmc)
 	}
 
 	np = mmc->parent->of_node; /* mmcx node in projectdts */
+	m6_is_msdc2 = np && !strcmp(np->name, "msdc2");
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 of_parse enter node=%s available=%d cfg_dev_msdc2=%u\n",
+			np->name, of_device_is_available(np),
+			m6_cfg_dev_msdc2);
 
 	host->mmc = mmc;  /* msdc_check_init_done() need */
 	host->hw = kzalloc(sizeof(struct msdc_hw), GFP_KERNEL);
@@ -1296,6 +1307,10 @@ int msdc_of_parse(struct mmc_host *mmc)
 	if (of_property_read_u8(np, "host_function", &host->hw->host_function))
 		pr_err("[msdc%d] host_function isn't found in device tree\n",
 			host->id);
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 of_parse host_function=%u flags=0x%lx irq=%d base=%p\n",
+			host->hw->host_function, host->hw->flags, host->irq,
+			host->base);
 
 	if (of_find_property(np, "bootable", &len))
 		host->hw->boot = 1;
@@ -1314,6 +1329,9 @@ int msdc_of_parse(struct mmc_host *mmc)
 
 	mmc->supply.vmmc = regulator_get(mmc_dev(mmc), "vmmc");
 	mmc->supply.vqmmc = regulator_get(mmc_dev(mmc), "vqmmc");
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 of_parse supplies vmmc=%p vqmmc=%p\n",
+			mmc->supply.vmmc, mmc->supply.vqmmc);
 
 	#else
 	msdc_fpga_pwr_init();
@@ -1332,6 +1350,13 @@ int msdc_of_parse(struct mmc_host *mmc)
 			host->hw->disable_sdio_eirq, host->hw->register_pm);
 	}
 #endif
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 of_parse exit host_function=%u flags=0x%lx request=%p enable=%p disable=%p register_pm=%p\n",
+			host->hw->host_function, host->hw->flags,
+			host->hw->request_sdio_eirq,
+			host->hw->enable_sdio_eirq,
+			host->hw->disable_sdio_eirq,
+			host->hw->register_pm);
 
 	return 0;
 }
@@ -1357,6 +1382,11 @@ int msdc_dt_init(struct platform_device *pdev, struct mmc_host *mmc)
 			break;
 		}
 	}
+	if (id == 2)
+		pr_warn("M6 MSDC2 dt_init enter node=%s available=%d pdev_id=%d\n",
+			pdev->dev.of_node->name,
+			of_device_is_available(pdev->dev.of_node),
+			pdev->id);
 
 	if (id == HOST_MAX_NUM) {
 		pr_err("%s: Can not find msdc host\n", __func__);
@@ -1365,6 +1395,8 @@ int msdc_dt_init(struct platform_device *pdev, struct mmc_host *mmc)
 
 	ret = msdc_of_parse(mmc);
 	if (ret) {
+		if (id == 2)
+			pr_warn("M6 MSDC2 dt_init of_parse ret=%d\n", ret);
 		pr_err("msdc%d of parse fail!!: %d\n", id, ret);
 		return ret;
 	}

@@ -492,6 +492,8 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 	mtk_wcn_cmb_sdio_eirq_handler = irq_handler;
 
 	node = (struct device_node *)of_find_compatible_node(NULL, NULL, "mediatek,connectivity-combo");
+	pr_warn("M6 CMB SDIO request_eirq handler=%p data=%p node=%p\n",
+		irq_handler, data, node);
 	if (node) {
 #if 0
 		gpio_wifi_eint_pin = of_get_gpio(node, 5);
@@ -504,6 +506,8 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 		ret = request_irq(wifi_irq, mtk_wcn_cmb_sdio_eirq_handler_stub, IRQF_TRIGGER_LOW,
 				"WIFI-eint", NULL);
 		CMB_STUB_LOG_DBG("WIFI EINT irq %d !!\n", wifi_irq);
+		pr_warn("M6 CMB SDIO request_eirq parsed_irq=%u request_ret=%d\n",
+			wifi_irq, ret);
 #endif
 
 		if (ret)
@@ -523,6 +527,8 @@ static void mtk_wcn_cmb_sdio_register_pm(pm_callback_t pm_cb, void *data)
 	/* register pm change callback */
 	mtk_wcn_cmb_sdio_pm_cb = pm_cb;
 	mtk_wcn_cmb_sdio_pm_data = data;
+	pr_warn("M6 CMB SDIO register_pm stored cb=%p data=%p\n",
+		mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data);
 }
 
 static void mtk_wcn_cmb_sdio_on(int sdio_port_num)
@@ -541,7 +547,12 @@ static void mtk_wcn_cmb_sdio_on(int sdio_port_num)
 	if (mtk_wcn_cmb_sdio_pm_cb) {
 		/* pr_warn("mtk_wcn_cmb_sdio_pm_cb(PM_EVENT_USER_RESUME, 0x%p, 0x%p)\n",
 		 * mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data); */
+		pr_warn_ratelimited("M6 CMB SDIO on invoking pm cb=%p data=%p evt=%d\n",
+			mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data,
+			state.event);
 		mtk_wcn_cmb_sdio_pm_cb(state, mtk_wcn_cmb_sdio_pm_data);
+		pr_warn_ratelimited("M6 CMB SDIO on returned from pm cb=%p\n",
+			mtk_wcn_cmb_sdio_pm_cb);
 	} else
 		CMB_STUB_LOG_WARN("mtk_wcn_cmb_sdio_on no sd callback!!\n");
 }
@@ -559,7 +570,12 @@ static void mtk_wcn_cmb_sdio_off(int sdio_port_num)
 	if (mtk_wcn_cmb_sdio_pm_cb) {
 		/* pr_warn("mtk_wcn_cmb_sdio_off(PM_EVENT_USER_SUSPEND, 0x%p, 0x%p)\n",
 		 * mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data); */
+		pr_warn_ratelimited("M6 CMB SDIO off invoking pm cb=%p data=%p evt=%d\n",
+			mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data,
+			state.event);
 		mtk_wcn_cmb_sdio_pm_cb(state, mtk_wcn_cmb_sdio_pm_data);
+		pr_warn_ratelimited("M6 CMB SDIO off returned from pm cb=%p\n",
+			mtk_wcn_cmb_sdio_pm_cb);
 	} else
 		CMB_STUB_LOG_WARN("mtk_wcn_cmb_sdio_off no sd callback!!\n");
 

@@ -31,6 +31,7 @@
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
 #include <linux/irq.h>
+#include <linux/of.h>
 #include <linux/pagemap.h>
 #include <linux/highmem.h>
 #include <linux/printk.h>
@@ -5873,14 +5874,26 @@ static int msdc_drv_probe(struct platform_device *pdev)
 	void __iomem *base = NULL;
 	u32 *hclks = NULL;
 	int ret = 0;
+	bool m6_is_msdc2 = pdev->dev.of_node &&
+		!strcmp(pdev->dev.of_node->name, "msdc2");
+
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 probe enter node=%s pdev_id=%d available=%d\n",
+			pdev->dev.of_node->name, pdev->id,
+			of_device_is_available(pdev->dev.of_node));
 
 	/* Allocate MMC host for this device */
 	mmc = mmc_alloc_host(sizeof(struct msdc_host), &pdev->dev);
-	if (!mmc)
+	if (!mmc) {
+		if (m6_is_msdc2)
+			pr_warn("M6 MSDC2 probe mmc_alloc_host failed\n");
 		return -ENOMEM;
+	}
 
 	ret = msdc_dt_init(pdev, mmc);
 	if (ret) {
+		if (m6_is_msdc2)
+			pr_warn("M6 MSDC2 probe msdc_dt_init ret=%d\n", ret);
 		mmc_free_host(mmc);
 		return ret;
 	}
@@ -6084,15 +6097,28 @@ static int msdc_drv_probe(struct platform_device *pdev)
 
 	MVG_EMMC_SETUP(host);
 
-	if (hw->request_sdio_eirq)
+	if (hw->request_sdio_eirq) {
+		if (host->id == 2)
+			pr_warn("M6 MSDC2 request_sdio_eirq call request=%p host=%p\n",
+				hw->request_sdio_eirq, host);
 		/* set to combo_sdio_request_eirq() for WIFI */
 		/* msdc_eirq_sdio() will be called when EIRQ */
 		hw->request_sdio_eirq(msdc_eirq_sdio, (void *)host);
+		if (host->id == 2)
+			pr_warn("M6 MSDC2 request_sdio_eirq returned request=%p host=%p\n",
+				hw->request_sdio_eirq, host);
+	}
 
 #ifdef CONFIG_PM
 	if (hw->register_pm) {/* only for sdio */
+		if (host->id == 2)
+			pr_warn("M6 MSDC2 register_pm call register=%p cb=%p host=%p\n",
+				hw->register_pm, msdc_pm, host);
 		/* function pointer to combo_sdio_register_pm() */
 		hw->register_pm(msdc_pm, (void *)host);
+		if (host->id == 2)
+			pr_warn("M6 MSDC2 register_pm returned register=%p host=%p\n",
+				hw->register_pm, host);
 		if (hw->flags & MSDC_SYS_SUSPEND) {
 			/* will not set for WIFI */
 			ERR_MSG("MSDC_SYS_SUSPEND and register_pm both set");

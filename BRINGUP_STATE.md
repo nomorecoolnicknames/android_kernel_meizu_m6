@@ -18,6 +18,124 @@ private ILI9881P page state, or an LK-only DSI/PHY/panel side effect. Reuse
 existing `m6_dsi_snapshot`, `m6_dsi_dcs_status:stock_pages`, and
 `m6_dsi_bist_full:<rgb>` diagnostics before writing new behavior patches.
 
+## 2026-06-08 display/WMT subagent audit and MSDC2-HIF diagnostic patch
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add bounded WMT/MSDC2/HIF SDIO
+markers for the next boot-only Wi-Fi/BT capture and record the display
+subagent frontier as capture-only. This patch intentionally does not change
+display timing, panel init, DSI/MIPITX writes, SDIO power sequencing, callback
+control flow, or WMT return values.
+
+Hypothesis: FACT: safe-iomap boot identity is proven by matching flashed boot
+and Android readback sha256
+`22497e9bc4b25a6fadab5410fbf4e5be2dac97592652cb98c61e723391641bfa` in
+`/srv/forge/android/meizu_m6/captures/20260608-2321-m6-rtcal-safe-iomap-after-flash-711HEBSR277K5/sha256sums.txt`;
+the same capture reached `sys.boot_completed=1` on kernel `3.18.140 #47`.
+FACT: live DSI evidence in that capture proves RT-cal parity, active MIPITX
+PLL/lane state, nonblack screencap, and full-BIST RGB latch/clear. INFERENCE:
+without a physical LCD report, display can only advance by comparing stock
+LK/DSI/MIPITX/panel hidden side effects and by rerunning the existing
+`m6_dsi_snapshot`, `m6_dsi_dcs_status:stock_pages`, and `m6_dsi_bist_full`
+capture commands. FACT: WMT reads CONSYS chip `0x00000326`, then reports
+`SDIO_HW plat_on slot=2 ret=0`, but runtime logs show `M6 CMB board_sdio_ctrl
+port=2 on=1 cb=(null) data=(null)` followed by `M6 SDIO no supported func
+probed` and `SDIO_FUNC ... ret=-8`; Bluetooth fails downstream with `STP Not
+Ready`. HYPOTHESIS: the earliest Wi-Fi/BT blocker is MSDC2/WMT host
+integration: MSDC2 SDIO either does not probe/register `request_sdio_eirq` and
+`register_pm`, or registration happens but the SDIO function still never
+enumerates after WMT power-on.
+
+Evidence:
+- Current safe-iomap capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-2321-m6-rtcal-safe-iomap-after-flash-711HEBSR277K5`.
+- Current boot artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-0815-m6-dsi-rtcal-safe-iomap-diag-bootonly/boot-m6-dsi-rtcal-safe-iomap-diag-20260608.img`.
+- Matching System.map:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-0815-m6-dsi-rtcal-safe-iomap-diag-bootonly/System.map`,
+  sha256 `c1e7052cf273e2b37dba5d4ee4e28cf8e0dc316e3c020a25da119c8abc7f9bd4`.
+- Display subagent conclusion: do not patch PQ/HWC/RDMA/OVL, generic DCS,
+  backlight, reset/bias, timing/PLL, or `page5_2a` without a fresh mismatch;
+  BIST is controller proof, not physical photon proof.
+- WMT/MSDC2 subagent conclusion: do not chase BT HAL, Wi-Fi firmware, STP ID
+  tables, or unsupported function IDs until a real SDIO function is present or
+  the MSDC2 callback registration gap is closed.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/connectivity/common/common_detect/mtk_wcn_stub_alps.c`:
+  logs SDIO EIRQ DT lookup, parsed IRQ/request result, PM callback storage, and
+  PM callback invocation/return.
+- `kernel-3.18/drivers/mmc/host/mediatek/mt6755/msdc_io.c`: logs MSDC2
+  DT-init/of-parse entry, DT availability, `CFG_DEV_MSDC2` compile gate,
+  `host_function`, supplies, and resulting SDIO callback pointers.
+- `kernel-3.18/drivers/mmc/host/mediatek/mt6755/sd.c`: logs MSDC2 probe entry,
+  `mmc_alloc_host`/`msdc_dt_init` failures, and the exact calls into
+  `request_sdio_eirq` and `register_pm`.
+- `kernel-3.18/drivers/misc/mediatek/connectivity/common/common_main/linux/hif_sdio.c`:
+  logs HIF client table registration, driver registration, real `sdio_func`
+  probe-list insertion, function enable result, and block-size setup result.
+- `BRINGUP_STATE.md`: records the two-subagent conclusion, patch category,
+  evidence, expected markers, rollback condition, and next verification.
+
+Why each file changed: `mtk_wcn_stub_alps.c` is where WMT sees `cb=NULL` while
+still returning SDIO_HW success. `msdc_io.c` and `sd.c` own the DT-derived
+MSDC2 host setup that should install the PM/EIRQ callbacks. `hif_sdio.c` owns
+the client/probed-list split that distinguishes "MSDC2 never enumerated" from
+"enumerated but unsupported/unregistered". The display finding is state-only
+because existing DSI debugfs already dumps the needed controller/MIPITX/BIST
+state; without physical verification, a display behavior patch would be
+speculative.
+
+Expected next marker: in the next boot capture, WMT should show one of these
+branches:
+1. `M6 MSDC2 of_parse ... cfg_dev_msdc2=1`, `M6 MSDC2 register_pm call`, and
+   `M6 CMB SDIO register_pm stored cb=<non-null>` before WMT SDIO on.
+2. No MSDC2 probe/of-parse/register markers, proving the DT/platform driver
+   bind is earlier than WMT.
+3. Callback registration is present and `M6 CMB SDIO on invoking pm cb` fires,
+   but no `M6 SDIO probed-list add` appears, moving the blocker to SDIO
+   electrical/power/pinctrl/command enumeration.
+4. A real `M6 SDIO probed-list add` appears, moving the blocker above SDIO
+   enumeration into STP/Wi-Fi client registration or firmware.
+
+For display, the next non-visual capture should contain `M6 DSI rtcal`,
+`M6 DSI snapshot`, `phydecode`, `m6_dsi_dcs_status:stock_pages`, RGB
+`m6_dsi_bist_full`, `/d/mtkfb`, SurfaceFlinger dump, and screencap from the
+same verified boot. Do not draw a physical-visibility conclusion without a
+human/camera report.
+
+Rollback condition: revert this diagnostic patch if it regresses ADB boot,
+storage/eMMC/SD stability, WMT power-on, or produces log spam that prevents
+normal capture. Revert any future display behavior patch if it changes DSI
+timing/route behavior without a fresh stock/runtime mismatch.
+
+Verification commands:
+
+```sh
+CAP=/srv/forge/android/meizu_m6/captures/<new-safe-iomap-msdc2-hif-capture>
+rg -n 'M6 MSDC2|M6 CMB SDIO|M6 SDIO|HIF-SDIO|SDIO_FUNC|WMT SDIO' "$CAP/dmesg.txt"
+rg -n 'M6 CMB SDIO register_pm|M6 MSDC2 probe|M6 MSDC2 of_parse|M6 SDIO probed-list add|M6 SDIO probed\[' "$CAP/dmesg.txt"
+rg -n 'M6 DSI rtcal|M6 DSI snapshot|phydecode|m6_dsi_bist_full|stock_pages|BIST_CON|BIST_PATTERN' "$CAP/dmesg.txt" "$CAP"/*.txt
+```
+
+Build verification result, 2026-06-08: `Image.gz-dtb` built successfully with
+the existing M6 out-dir `/srv/forge/work/m6-source-kernel-manual-20260520/out`
+and boot-only artifact was packed from the verified safe-iomap ramdisk/config.
+Artifact directory:
+`/srv/forge/android/export/meizu_m6_artifacts/20260608-0909-m6-msdc2-hif-diag-bootonly`.
+Boot image:
+`boot-m6-msdc2-hif-diag-20260608.img`, sha256
+`08837a1615800e0da47c7d863f64cb09e2cdce2f64f6962bf0175377ffdda531`.
+`Image.gz-dtb` sha256
+`54cc766eaf95e3ac01c1678cc965dbf0561530222ca22333edfac41c1610c5a7`;
+`System.map` sha256
+`d74595d92e7c726113539ac87060c709b5e8597dfda2b031cbf4bee438a190bc`;
+`vmlinux` sha256
+`c860f08d189bbdd29a4c0983932232dc00aa7dd5eaf9df0b28c2513c9f2c5019`;
+`kernel.config` sha256
+`698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+`abootimg -x` verification passed: unpacked `zImage`, `initrd.img`, and
+`bootimg.cfg` match the artifact inputs.
+
 ## 2026-06-08 DSI PHY RT-cal / VM-payload diagnostic
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add bounded DSI markers for the
