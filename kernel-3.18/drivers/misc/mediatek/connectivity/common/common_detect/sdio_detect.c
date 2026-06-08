@@ -234,6 +234,8 @@ static int sdio_detect_probe(struct sdio_func *func, const struct sdio_device_id
 
 	WMT_DETECT_INFO_FUNC("vendor(0x%x) device(0x%x) num(0x%x)\n", func->vendor, func->device, func->num);
 	chipId = hif_sdio_match_chipid_by_dev_id(id);
+	WMT_DETECT_INFO_FUNC("M6 SDIO-DETECT probe vendor(0x%x) device(0x%x) num(0x%x) chipId(0x%x)\n",
+			     func->vendor, func->device, func->num, chipId);
 
 	if ((0x6630 == chipId || 0x6632 == chipId) && (1 == func->num)) {
 		int ret = 0;

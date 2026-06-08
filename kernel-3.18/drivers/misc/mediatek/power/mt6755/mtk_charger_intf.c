@@ -266,6 +266,8 @@ int mtk_charger_get_charger_type(struct mtk_charger_info *info, void *data)
 #if defined(CONFIG_POWER_EXT) || defined(CONFIG_FPGA_EARLY_PORTING)
 	*(CHARGER_TYPE *) (data) = STANDARD_HOST;
 #else
+	int chr_det = 0;
+
 #if defined(MTK_WIRELESS_CHARGER_SUPPORT)
 	int wireless_state = 0;
 
@@ -293,7 +295,10 @@ int mtk_charger_get_charger_type(struct mtk_charger_info *info, void *data)
 	}
 #endif /* MTK_WIRELESS_CHARGER_SUPPORT */
 
-	if (is_chr_det() == 0) {
+	chr_det = is_chr_det();
+	battery_log(BAT_LOG_CRTI, "[M6_CHG] get_charger_type chr_det=%d cached=%d\n",
+		chr_det, g_charger_type);
+	if (chr_det == 0) {
 		g_charger_type = CHARGER_UNKNOWN;
 		*(CHARGER_TYPE *) (data) = CHARGER_UNKNOWN;
 		battery_log(BAT_LOG_CRTI, "%s: return CHARGER_UNKNOWN\n", __func__);
@@ -304,6 +309,8 @@ int mtk_charger_get_charger_type(struct mtk_charger_info *info, void *data)
 	*(CHARGER_TYPE *) (data) = hw_charging_get_charger_type();
 	charging_type_det_done = KAL_TRUE;
 	g_charger_type = *(CHARGER_TYPE *) (data);
+	battery_log(BAT_LOG_CRTI, "[M6_CHG] get_charger_type detected=%d done=%d\n",
+		g_charger_type, charging_type_det_done);
 #endif
 
 	return ret;

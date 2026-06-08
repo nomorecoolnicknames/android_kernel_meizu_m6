@@ -22,6 +22,7 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
+#include <linux/io.h>
 #include <mach/irqs.h>
 #include <linux/types.h>
 #include "disp_log.h"
@@ -199,6 +200,7 @@ t_dsi_context _dsi_context[DSI_INTERFACE_NUM];
 #define DSI_MODULE_END(x)		0	/* (x == DISP_MODULE_DSIDUAL?1:DSI_MODULE_to_ID(x)) */
 #define DSI_MODULE_to_ID(x)		0	/* (x == DISP_MODULE_DSI0?0:1) */
 #define DIFF_CLK_LANE_LP (0x10)
+#define M6_MIPITX_RT_CAL_PHYS 0x10206190
 
 PDSI_REGS DSI_REG[2] = {0};
 PDSI_PHY_REGS DSI_PHY_REG[2] = {0};
@@ -896,6 +898,41 @@ DSI_STATUS DSI_BIST_Pattern_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bo
 	return DSI_STATUS_OK;
 }
 
+DSI_STATUS DSI_M6_BIST_Full_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bool enable,
+				 unsigned int color)
+{
+	int i = 0;
+	static unsigned int m6_bist_full_dump_count;
+	DSI_BIST_CON_REG bist_con = {0};
+
+	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
+		if (enable) {
+			dsi_m6_dump_snapshot_limited("bist-full-pre", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+			bist_con.BIST_ENABLE = 1;
+			bist_con.BIST_FIX_PATTERN = 1;
+			bist_con.SELF_PAT_MODE = 1;
+			bist_con.BIST_LANE_NUM = 4;
+			bist_con.BIST_TIMING = 0x20;
+			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_PATTERN, color);
+			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_CON, AS_UINT32(&bist_con));
+			dsi_m6_dump_snapshot_limited("bist-full-post", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+			msleep(500);
+			dsi_m6_dump_snapshot_limited("bist-full-after-500ms", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+		} else {
+			dsi_m6_dump_snapshot_limited("bist-full-pre-disable", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_CON, 0x00);
+			dsi_m6_dump_snapshot_limited("bist-full-post-disable", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+		}
+	}
+
+	return DSI_STATUS_OK;
+}
+
 int ddp_dsi_porch_setting(DISP_MODULE_ENUM module, void *handle,
 		DSI_PORCH_TYPE type, unsigned int value)
 {
@@ -1187,6 +1224,55 @@ static unsigned int dsi_m6_field(uint32_t value, unsigned int shift, unsigned in
 	return (value >> shift) & ((1U << width) - 1);
 }
 
+static unsigned int dsi_m6_lk_rt_code(uint32_t raw, unsigned int shift)
+{
+	unsigned int code = dsi_m6_field(raw, shift, 4);
+
+	return code ? code : 8;
+}
+
+static void dsi_m6_dump_rt_cal(const char *tag)
+{
+	static unsigned int count;
+	static void __iomem *rt_cal_base;
+	static bool rt_cal_iomap_tried;
+	uint32_t raw = 0;
+	uint32_t raw_valid = 0;
+	uint32_t live_c;
+	uint32_t live_d3;
+	uint32_t live_d2;
+	uint32_t live_d1;
+	uint32_t live_d0;
+
+	if (count >= 96)
+		return;
+
+	count++;
+	if (!rt_cal_iomap_tried) {
+		rt_cal_base = ioremap_nocache(M6_MIPITX_RT_CAL_PHYS, 4);
+		rt_cal_iomap_tried = true;
+	}
+	if (rt_cal_base) {
+		raw = readl(rt_cal_base);
+		raw_valid = 1;
+	}
+	live_c = INREG32(MIPITX_BASE + 0x004);
+	live_d3 = INREG32(MIPITX_BASE + 0x014);
+	live_d2 = INREG32(MIPITX_BASE + 0x010);
+	live_d1 = INREG32(MIPITX_BASE + 0x00c);
+	live_d0 = INREG32(MIPITX_BASE + 0x008);
+
+	DISPERR("M6 DSI rtcal[%s]: phys10206190 raw_valid=%u raw=0x%x lk_eff c/d3/d2/d1/d0=0x%x/0x%x/0x%x/0x%x/0x%x live_rt=0x%x/0x%x/0x%x/0x%x/0x%x saved_rt=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, raw_valid, raw, dsi_m6_lk_rt_code(raw, 16),
+		dsi_m6_lk_rt_code(raw, 8), dsi_m6_lk_rt_code(raw, 12),
+		dsi_m6_lk_rt_code(raw, 20), dsi_m6_lk_rt_code(raw, 24),
+		dsi_m6_field(live_c, 8, 4), dsi_m6_field(live_d3, 8, 4),
+		dsi_m6_field(live_d2, 8, 4), dsi_m6_field(live_d1, 8, 4),
+		dsi_m6_field(live_d0, 8, 4), dsi_m6_field(clock_lane, 8, 4),
+		dsi_m6_field(data_lane3, 8, 4), dsi_m6_field(data_lane2, 8, 4),
+		dsi_m6_field(data_lane1, 8, 4), dsi_m6_field(data_lane0, 8, 4));
+}
+
 static void dsi_m6_dump_mipitx_decode(const char *tag)
 {
 	uint32_t txrx = INREG32(DDP_REG_BASE_DSI0 + 0x018);
@@ -1286,6 +1372,15 @@ static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void 
 		INREG32(DDP_REG_BASE_DSI0 + 0x118),
 		INREG32(DDP_REG_BASE_DSI0 + 0x11c),
 		INREG32(DDP_REG_BASE_DSI0 + 0x130));
+	DISPERR("M6 DSI snapshot[%s]: VM_PAYLOAD=0x%x/0x%x/0x%x/0x%x ext=0x%x/0x%x/0x%x/0x%x\n",
+		tag, INREG32(DDP_REG_BASE_DSI0 + 0x134),
+		INREG32(DDP_REG_BASE_DSI0 + 0x138),
+		INREG32(DDP_REG_BASE_DSI0 + 0x13c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x140),
+		INREG32(DDP_REG_BASE_DSI0 + 0x180),
+		INREG32(DDP_REG_BASE_DSI0 + 0x184),
+		INREG32(DDP_REG_BASE_DSI0 + 0x188),
+		INREG32(DDP_REG_BASE_DSI0 + 0x18c));
 	DISPERR("M6 DSI snapshot[%s]: BIST_PATTERN=0x%x BIST_CON=0x%x self_pat=%u bist_en=%u bist_mode=%u fix=%u lane=%u timing=0x%x CKSM=0x%x DEBUG_SEL=0x%x\n",
 		tag, INREG32(DDP_REG_BASE_DSI0 + 0x178),
 		INREG32(DDP_REG_BASE_DSI0 + 0x17c),
@@ -1327,11 +1422,12 @@ static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void 
 		INREG32(MIPITX_BASE + 0x07c),
 		INREG32(MIPITX_BASE + 0x080),
 		INREG32(MIPITX_BASE + 0x084),
-		INREG32(MIPITX_BASE + 0x088),
-		INREG32(MIPITX_BASE + 0x08c),
-		INREG32(MIPITX_BASE + 0x090),
-		INREG32(MIPITX_BASE + 0x094));
-	dsi_m6_dump_mipitx_decode(tag);
+			INREG32(MIPITX_BASE + 0x088),
+			INREG32(MIPITX_BASE + 0x08c),
+			INREG32(MIPITX_BASE + 0x090),
+			INREG32(MIPITX_BASE + 0x094));
+		dsi_m6_dump_rt_cal(tag);
+		dsi_m6_dump_mipitx_decode(tag);
 #endif
 }
 
@@ -1800,6 +1896,7 @@ void DSI_PHY_clk_setting(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PA
 #endif
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
+		dsi_m6_dump_rt_cal("phy-clk-before");
 		/* step 0 */
 		MIPITX_OUTREGBIT(MIPITX_DSI_CLOCK_LANE_REG, DSI_PHY_REG[i]->MIPITX_DSI_CLOCK_LANE,
 						RG_DSI_LNTC_RT_CODE, (clock_lane>>8) & 0xf);
@@ -1818,6 +1915,7 @@ void DSI_PHY_clk_setting(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PA
 		INREG32(&DSI_PHY_REG[i]->MIPITX_DSI_DATA_LANE2),
 		INREG32(&DSI_PHY_REG[i]->MIPITX_DSI_DATA_LANE1),
 		INREG32(&DSI_PHY_REG[i]->MIPITX_DSI_DATA_LANE0));
+		dsi_m6_dump_rt_cal("phy-clk-after-rt-write");
 		/* step 1 */
 		/* MIPITX_MASKREG32(APMIXED_BASE+0x00, (0x1<<6), 1); */
 
@@ -2005,14 +2103,15 @@ void DSI_PHY_clk_setting(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PA
 					 RG_DSI0_MPPLL_SDM_SSC_EN, 0);
 		}
 
-		/* step 18 */
-		MIPITX_OUTREGBIT(MIPITX_DSI_TOP_CON_REG, DSI_PHY_REG[i]->MIPITX_DSI_TOP_CON,
-				 RG_DSI_PAD_TIE_LOW_EN, 0);
+			/* step 18 */
+			MIPITX_OUTREGBIT(MIPITX_DSI_TOP_CON_REG, DSI_PHY_REG[i]->MIPITX_DSI_TOP_CON,
+					 RG_DSI_PAD_TIE_LOW_EN, 0);
 
-		mdelay(1);
+			mdelay(1);
+			dsi_m6_dump_rt_cal("phy-clk-after");
+		}
+	#endif
 	}
-#endif
-}
 
 
 
@@ -3466,6 +3565,9 @@ int ddp_dsi_init(DISP_MODULE_ENUM module, void *cmdq)
 	DSI_STATUS ret = DSI_STATUS_OK;
 	int i = 0;
 	static unsigned int dump_count;
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	int mipitx_enabled = 0;
+#endif
 
 	DISPFUNC();
 	/* DSI_OUTREG32(cmdq, 0xf0000048, 0x80000000); */
@@ -3501,7 +3603,12 @@ int ddp_dsi_init(DISP_MODULE_ENUM module, void *cmdq)
 	disp_register_module_irq_callback(DISP_MODULE_DSI0, _DSI_INTERNAL_IRQ_Handler);
 
 #ifndef CONFIG_FPGA_EARLY_PORTING
-	if (MIPITX_IsEnabled(module, cmdq)) {
+	dsi_m6_dump_rt_cal("init-before-is-enabled");
+	mipitx_enabled = MIPITX_IsEnabled(module, cmdq);
+	DISPERR("M6 DSI mipitx-decision[init]: enabled=%d PMaster=%d force=%d\n",
+		mipitx_enabled, atomic_read(&PMaster_enable), dsi_force_config);
+	dsi_m6_dump_rt_cal("init-after-is-enabled");
+	if (mipitx_enabled) {
 		s_isDsiPowerOn = true;
 #ifdef ENABLE_CLK_MGR
 #ifdef CONFIG_MTK_CLKMGR
@@ -3534,11 +3641,12 @@ int ddp_dsi_init(DISP_MODULE_ENUM module, void *cmdq)
 		data_lane3 = (INREG32(MIPI_TX_REG_BASE + 0x14));/*MIPITX_DSI_DATA_LANE3*/
 		data_lane2 = (INREG32(MIPI_TX_REG_BASE + 0x10));/*MIPITX_DSI_DATA_LANE2*/
 		data_lane1 = (INREG32(MIPI_TX_REG_BASE + 0xc));/*MIPITX_DSI_DATA_LANE1*/
-		data_lane0 = (INREG32(MIPI_TX_REG_BASE + 0x8));/*MIPITX_DSI_DATA_LANE0*/
-		DISPMSG("clk=0x%x,lan3=0x%x,lan2=0x%x,lan1=0x%x,lan0=0x%x\n",
-			clock_lane, data_lane3, data_lane2, data_lane1, data_lane0);
-		dsi_m6_dump_snapshot_limited("init-after", module, cmdq, &dump_count, 2);
-	}
+			data_lane0 = (INREG32(MIPI_TX_REG_BASE + 0x8));/*MIPITX_DSI_DATA_LANE0*/
+			DISPMSG("clk=0x%x,lan3=0x%x,lan2=0x%x,lan1=0x%x,lan0=0x%x\n",
+				clock_lane, data_lane3, data_lane2, data_lane1, data_lane0);
+			dsi_m6_dump_rt_cal("init-after-save-lanes");
+			dsi_m6_dump_snapshot_limited("init-after", module, cmdq, &dump_count, 2);
+		}
 #endif
 
 	return DSI_STATUS_OK;
@@ -3618,6 +3726,13 @@ static void DSI_PHY_CLK_LP_PerLine_config(DISP_MODULE_ENUM module, cmdqRecHandle
 		if (dsi_mode == CMD_MODE)
 			continue;
 		/* vdo mode */
+		DISPERR("M6 DSI lp_per_line[before]: enable=%u mode=%u HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+			dsi_params->clk_lp_per_line_enable, dsi_mode,
+			INREG32(DDP_REG_BASE_DSI0 + 0x050),
+			INREG32(DDP_REG_BASE_DSI0 + 0x054),
+			INREG32(DDP_REG_BASE_DSI0 + 0x058),
+			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x064));
 		DSI_OUTREG32(cmdq, &hsa, AS_UINT32(&DSI_REG[i]->DSI_HSA_WC));
 		DSI_OUTREG32(cmdq, &hbp, AS_UINT32(&DSI_REG[i]->DSI_HBP_WC));
 		DSI_OUTREG32(cmdq, &hfp, AS_UINT32(&DSI_REG[i]->DSI_HFP_WC));
@@ -3704,18 +3819,28 @@ static void DSI_PHY_CLK_LP_PerLine_config(DISP_MODULE_ENUM module, cmdqRecHandle
 			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_HSTX_CKL_WC, (v_a - v_b));
 			DSI_OUTREG32(cmdq, &new_hstx_ckl_wc,
 				     AS_UINT32(&DSI_REG[i]->DSI_HSTX_CKL_WC));
-			DISPMSG("===>new HSTX_CKL_WC=0x%x, HFP_WC=0x%x\n", new_hstx_ckl_wc,
-				  new_hfp.HFP_WC);
+				DISPMSG("===>new HSTX_CKL_WC=0x%x, HFP_WC=0x%x\n", new_hstx_ckl_wc,
+					  new_hfp.HFP_WC);
+			}
+			DISPERR("M6 DSI lp_per_line[after]: enable=%u mode=%u HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+				dsi_params->clk_lp_per_line_enable, dsi_mode,
+				INREG32(DDP_REG_BASE_DSI0 + 0x050),
+				INREG32(DDP_REG_BASE_DSI0 + 0x054),
+				INREG32(DDP_REG_BASE_DSI0 + 0x058),
+				INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+				INREG32(DDP_REG_BASE_DSI0 + 0x064));
 		}
-	}
 
-}
+	}
 
 int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *cmdq)
 {
 	int i = 0;
 	LCM_DSI_PARAMS *dsi_config = &(config->dispif_config.dsi);
 	static unsigned int dump_count;
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	int mipitx_enabled = 0;
+#endif
 
 	if (!config->dst_dirty) {
 		if (atomic_read(&PMaster_enable) == 0)
@@ -3748,7 +3873,13 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 	if (dsi_config->mode != CMD_MODE)
 		dsi_currect_mode = 1;
 #ifndef CONFIG_FPGA_EARLY_PORTING
-	if ((MIPITX_IsEnabled(module, cmdq)) && (atomic_read(&PMaster_enable) == 0)) {
+	dsi_m6_dump_rt_cal("config-before-is-enabled");
+	mipitx_enabled = MIPITX_IsEnabled(module, cmdq);
+	DISPERR("M6 DSI mipitx-decision[config]: enabled=%d PMaster=%d force=%d clk_lp_per_line=%u\n",
+		mipitx_enabled, atomic_read(&PMaster_enable), dsi_force_config,
+		dsi_config->clk_lp_per_line_enable);
+	dsi_m6_dump_rt_cal("config-after-is-enabled");
+	if ((mipitx_enabled) && (atomic_read(&PMaster_enable) == 0)) {
 		DISPDBG("mipitx is already init\n");
 		if (dsi_force_config)
 			goto force_config;
@@ -3761,6 +3892,7 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 		DISPMSG("===>Pmaster:CLK SETTING??==> clk:%d\n",
 			  _dsi_context[0].dsi_params.PLL_CLOCK);
 		DSI_PHY_clk_setting(module, NULL, dsi_config);
+		dsi_m6_dump_rt_cal("config-after-phy-clk-setting");
 	}
 
 force_config:
@@ -3780,10 +3912,17 @@ force_config:
 	    || ((dsi_config->switch_mode_enable == 1) && (dsi_config->switch_mode != CMD_MODE))) {
 		DSI_Config_VDO_Timing(module, cmdq, dsi_config);
 		DSI_Set_VM_CMD(module, cmdq);
-	}
-	/* Enable clk low power per Line ; */
-	if (dsi_config->clk_lp_per_line_enable)
-		DSI_PHY_CLK_LP_PerLine_config(module, cmdq, dsi_config);
+		}
+		/* Enable clk low power per Line ; */
+		DISPERR("M6 DSI lp_per_line[config]: enable=%u mode=%u HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+			dsi_config->clk_lp_per_line_enable, dsi_config->mode,
+			INREG32(DDP_REG_BASE_DSI0 + 0x050),
+			INREG32(DDP_REG_BASE_DSI0 + 0x054),
+			INREG32(DDP_REG_BASE_DSI0 + 0x058),
+			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x064));
+		if (dsi_config->clk_lp_per_line_enable)
+			DSI_PHY_CLK_LP_PerLine_config(module, cmdq, dsi_config);
 
 
 done:

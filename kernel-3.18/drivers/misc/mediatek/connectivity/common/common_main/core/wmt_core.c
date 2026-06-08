@@ -695,6 +695,10 @@ static INT32 wmt_core_stp_init(VOID)
 	pWmtGenConf = wmt_conf_get_cfg();
 	if (pWmtGenConf == NULL)
 		WMT_ERR_FUNC("WMT-CORE: wmt_conf_get_cfg return NULL!!\n");
+	WMT_INFO_FUNC("M6 WMT stp_init enter chip_type=%d info=0x%x hif=%d p_ic_ops=%p cfg=%p co_clock=%u\n",
+		wmt_detect_get_chip_type(), pctx->wmtInfoBit,
+		pctx->wmtHifConf.hifType, pctx->p_ic_ops, pWmtGenConf,
+		gDevWmt.rWmtGenConf.co_clock_flag);
 	if (!(pctx->wmtInfoBit & WMT_OP_HIF_BIT)) {
 		WMT_ERR_FUNC("WMT-CORE: no hif info!\n");
 		osal_assert(0);
@@ -705,6 +709,8 @@ static INT32 wmt_core_stp_init(VOID)
 		ctrlPa1 = WMT_SDIO_SLOT_SDIO2;
 		ctrlPa2 = 1;	/* turn on SDIO2 slot */
 		iRet = wmt_core_ctrl(WMT_CTRL_SDIO_HW, &ctrlPa1, &ctrlPa2);
+		WMT_INFO_FUNC("M6 WMT SDIO_HW ctrl slot=%lu on=%lu ret=%d\n",
+			ctrlPa1, ctrlPa2, iRet);
 		if (iRet) {
 			WMT_ERR_FUNC("WMT-CORE: turn on SLOT_SDIO2 fail (%d)\n", iRet);
 			osal_assert(0);
@@ -716,6 +722,8 @@ static INT32 wmt_core_stp_init(VOID)
 		ctrlPa1 = WMT_SDIO_FUNC_STP;
 		ctrlPa2 = 1;	/* turn on STP driver */
 		iRet = wmt_core_ctrl(WMT_CTRL_SDIO_FUNC, &ctrlPa1, &ctrlPa2);
+		WMT_INFO_FUNC("M6 WMT SDIO_FUNC ctrl func=%lu on=%lu ret=%d\n",
+			ctrlPa1, ctrlPa2, iRet);
 		if (iRet) {
 			WMT_ERR_FUNC("WMT-CORE: turn on SDIO_FUNC_STP func fail (%d)\n", iRet);
 
@@ -727,6 +735,7 @@ static INT32 wmt_core_stp_init(VOID)
 	ctrlPa1 = 0;
 	ctrlPa2 = 0;
 	iRet = wmt_core_ctrl(WMT_CTRL_STP_OPEN, &ctrlPa1, &ctrlPa2);
+	WMT_INFO_FUNC("M6 WMT STP_OPEN ret=%d p_ic_ops=%p\n", iRet, pctx->p_ic_ops);
 	if (iRet) {
 		WMT_ERR_FUNC("WMT-CORE: wmt open stp\n");
 		return -4;

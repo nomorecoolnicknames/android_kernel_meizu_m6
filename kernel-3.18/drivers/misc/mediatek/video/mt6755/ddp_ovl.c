@@ -53,7 +53,7 @@ static struct OVL_REG reg_back[OVL_NUM][OVL_REG_BACK_MAX];
 static unsigned int gOVLBackground = 0xFF000000;
 static unsigned int m6_ovl_greq_profile_id;
 static unsigned int m6_ovl_greq_profile_apply_count;
-static unsigned int m6_ovl_bounds_profile_id;
+static unsigned int m6_ovl_bounds_profile_id = 1;
 static unsigned int m6_ovl_bounds_profile_apply_count;
 static struct m6_ovl_config_snapshot m6_ovl0_last_config_snapshot;
 static unsigned int m6_ovl0_last_config_seq;
@@ -672,6 +672,26 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 	return 0;
 }
 
+static void m6_ovl_clear_inactive_layer(DISP_MODULE_ENUM module,
+	unsigned int layer, void *handle)
+{
+	unsigned long ovl_base = ovl_base_addr(module);
+	unsigned long layer_offset = layer * OVL_LAYER_OFFSET;
+
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_RDMA0_CTRL +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_CON +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_SRC_SIZE +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_ADDR +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_PITCH +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_OFFSET +
+		layer_offset, 0);
+}
+
 static void ovl_store_regs(DISP_MODULE_ENUM module)
 {
 	int i = 0;
@@ -1110,35 +1130,49 @@ static int ovl_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, 
 
 	}
 
-	DISP_REG_SET(handle, ovl_base_addr(module) + DISP_REG_OVL_SRC_CON, enabled_layers);
-	m6_ovl_capture_last_config(module, pConfig, handle, enabled_layers,
-		first_global_layer, scanned_before, has_sec_layer);
 	if (module == DISP_MODULE_OVL0 &&
 	    disp_helper_get_option(DISP_OPT_BYPASS_PQ) &&
 	    !primary_display_is_decouple_mode()) {
 		unsigned long ovl_base = ovl_base_addr(module);
 		unsigned int old_src = DISP_REG_GET(ovl_base + DISP_REG_OVL_SRC_CON);
-		unsigned int stale_layers = old_src & ~enabled_layers;
+		unsigned int layer_mask = (1U << ovl_layer_num(module)) - 1;
+		unsigned int stale_layers = old_src & ~enabled_layers & layer_mask;
 
 		if (stale_layers && m6_ovl_cpu_preclear_count < 80) {
-			DISPERR("M6 OVL cpu preclear[%u]: mod=%s old_src=0x%x enabled=0x%x stale=0x%x handle=%p direct=%d bypass_pq=%d\n",
+			DISPERR("M6 OVL stale clear[%u]: mod=%s old_src=0x%x enabled=0x%x stale=0x%x handle=%p direct=%d bypass_pq=%d bounds_default=%u\n",
 				m6_ovl_cpu_preclear_count,
 				m6_ovl_module_name(module), old_src, enabled_layers,
 				stale_layers, handle, !primary_display_is_decouple_mode(),
-				disp_helper_get_option(DISP_OPT_BYPASS_PQ));
+				disp_helper_get_option(DISP_OPT_BYPASS_PQ),
+				m6_ovl_bounds_profile_id);
 			m6_ovl_cpu_preclear_count++;
 		}
 		if (stale_layers) {
 			unsigned int i;
+			unsigned int stale_intsta_clear =
+				((stale_layers & 0xfU) << 5) | (1U << 2) |
+				(1U << 13);
 
+			DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_SRC_CON,
+				enabled_layers);
+			DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_SRC_CON,
+				enabled_layers);
 			for (i = 0; i < ovl_layer_num(module); i++) {
-				if (!(enabled_layers & (1 << i)))
-					DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_RDMA0_CTRL +
-							 i * OVL_LAYER_OFFSET, 0);
+				if (stale_layers & (1U << i)) {
+					m6_ovl_clear_inactive_layer(module, i,
+						handle);
+					if (handle)
+						m6_ovl_clear_inactive_layer(module,
+							i, NULL);
+				}
 			}
-			DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_SRC_CON, enabled_layers);
+			DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_INTSTA,
+				~stale_intsta_clear);
 		}
 	}
+	DISP_REG_SET(handle, ovl_base_addr(module) + DISP_REG_OVL_SRC_CON, enabled_layers);
+	m6_ovl_capture_last_config(module, pConfig, handle, enabled_layers,
+		first_global_layer, scanned_before, has_sec_layer);
 	if (m6_log_scan)
 		DISPERR("M6 OVL scan[%u]: mod=%s scanned_after=0x%x first_global=%u enabled=0x%x SRC=0x%x EN=0x%x ROI=0x%x PATH=0x%x FLOW=0x%x\n",
 			m6_scan_idx, m6_ovl_module_name(module),

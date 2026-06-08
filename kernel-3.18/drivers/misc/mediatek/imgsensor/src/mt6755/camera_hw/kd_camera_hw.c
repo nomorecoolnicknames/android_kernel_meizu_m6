@@ -351,6 +351,8 @@ struct pinctrl_state *cam_mipi_switch_sel_h = NULL;/* for mipi switch select */
 struct pinctrl_state *cam_mipi_switch_sel_l = NULL;
 int has_mipi_switch = 0;
 
+#define M6_CAM_STATE_OK(_s) (!IS_ERR(_s))
+
 int mtkcam_gpio_init(struct platform_device *pdev)
 {
 	int ret = 0;
@@ -539,15 +541,64 @@ int mtkcam_gpio_init(struct platform_device *pdev)
 		ret = PTR_ERR(cam_mipi_switch_sel_l);
 		PK_DBG("%s : pinctrl err, cam_mipi_switch_sel_l\n", __func__);
 	}
+	PK_ERR("[M6_CAM] gpio_init ret=%d has_mipi=%d camctrl=%d cam0_pnd=%d/%d cam0_rst=%d/%d cam1_pnd=%d/%d cam1_rst=%d/%d cam2_pnd=%d/%d cam2_rst=%d/%d vcama=%d/%d vcamd=%d/%d vcamio=%d/%d vcamaf=%d/%d sub_vcamd=%d/%d main2_vcamd=%d/%d mipi_en=%d/%d mipi_sel=%d/%d\n",
+		ret, has_mipi_switch, M6_CAM_STATE_OK(camctrl),
+		M6_CAM_STATE_OK(cam0_pnd_l), M6_CAM_STATE_OK(cam0_pnd_h),
+		M6_CAM_STATE_OK(cam0_rst_l), M6_CAM_STATE_OK(cam0_rst_h),
+		M6_CAM_STATE_OK(cam1_pnd_l), M6_CAM_STATE_OK(cam1_pnd_h),
+		M6_CAM_STATE_OK(cam1_rst_l), M6_CAM_STATE_OK(cam1_rst_h),
+		M6_CAM_STATE_OK(cam2_pnd_l), M6_CAM_STATE_OK(cam2_pnd_h),
+		M6_CAM_STATE_OK(cam2_rst_l), M6_CAM_STATE_OK(cam2_rst_h),
+		M6_CAM_STATE_OK(cam_ldo_vcama_l), M6_CAM_STATE_OK(cam_ldo_vcama_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamd_l), M6_CAM_STATE_OK(cam_ldo_vcamd_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamio_l), M6_CAM_STATE_OK(cam_ldo_vcamio_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamaf_l), M6_CAM_STATE_OK(cam_ldo_vcamaf_h),
+		M6_CAM_STATE_OK(cam_ldo_sub_vcamd_l), M6_CAM_STATE_OK(cam_ldo_sub_vcamd_h),
+		M6_CAM_STATE_OK(cam_ldo_main2_vcamd_l), M6_CAM_STATE_OK(cam_ldo_main2_vcamd_h),
+		M6_CAM_STATE_OK(cam_mipi_switch_en_l), M6_CAM_STATE_OK(cam_mipi_switch_en_h),
+		M6_CAM_STATE_OK(cam_mipi_switch_sel_l), M6_CAM_STATE_OK(cam_mipi_switch_sel_h));
 	return ret;
 }
 
 int mtkcam_gpio_set(int PinIdx, int PwrType, int Val)
 {
 	int ret = 0;
+	struct pinctrl_state *rst_l;
+	struct pinctrl_state *rst_h;
+	struct pinctrl_state *pnd_l;
+	struct pinctrl_state *pnd_h;
+
 	if (IS_ERR(camctrl)) {
+		PK_ERR("[M6_CAM] gpio_set fail camctrl unavailable pinIdx=%d pwr=%d val=%d\n",
+			PinIdx, PwrType, Val);
 		return -1;
 	}
+	if (PinIdx == 0) {
+		rst_l = cam0_rst_l;
+		rst_h = cam0_rst_h;
+		pnd_l = cam0_pnd_l;
+		pnd_h = cam0_pnd_h;
+	} else if (PinIdx == 1) {
+		rst_l = cam1_rst_l;
+		rst_h = cam1_rst_h;
+		pnd_l = cam1_pnd_l;
+		pnd_h = cam1_pnd_h;
+	} else {
+		rst_l = cam2_rst_l;
+		rst_h = cam2_rst_h;
+		pnd_l = cam2_pnd_l;
+		pnd_h = cam2_pnd_h;
+	}
+	PK_ERR("[M6_CAM] gpio_set req pinIdx=%d pwr=%d val=%d rst=%d/%d pnd=%d/%d vcama=%d/%d vcamd=%d/%d vcamio=%d/%d vcamaf=%d/%d sub_vcamd=%d/%d main2_vcamd=%d/%d\n",
+		PinIdx, PwrType, Val,
+		M6_CAM_STATE_OK(rst_l), M6_CAM_STATE_OK(rst_h),
+		M6_CAM_STATE_OK(pnd_l), M6_CAM_STATE_OK(pnd_h),
+		M6_CAM_STATE_OK(cam_ldo_vcama_l), M6_CAM_STATE_OK(cam_ldo_vcama_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamd_l), M6_CAM_STATE_OK(cam_ldo_vcamd_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamio_l), M6_CAM_STATE_OK(cam_ldo_vcamio_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamaf_l), M6_CAM_STATE_OK(cam_ldo_vcamaf_h),
+		M6_CAM_STATE_OK(cam_ldo_sub_vcamd_l), M6_CAM_STATE_OK(cam_ldo_sub_vcamd_h),
+		M6_CAM_STATE_OK(cam_ldo_main2_vcamd_l), M6_CAM_STATE_OK(cam_ldo_main2_vcamd_h));
 	switch (PwrType) {
 	case RST:
 		if (PinIdx == 0) {
@@ -773,6 +824,9 @@ BOOL hwpoweron(PowerInformation pwInfo, char *mode_name)
 	}
 	if (pwInfo.Delay > 0)
 		mdelay(pwInfo.Delay);
+	PK_ERR("[M6_CAM] hwpoweron ok pinSetIdx=%u type=%d volt=%d delay=%d mode=%s\n",
+		pinSetIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay,
+		mode_name ? mode_name : "null");
 	return TRUE;
 }
 
@@ -893,6 +947,9 @@ BOOL hwpowerdown(PowerInformation pwInfo, char *mode_name)
 		}
 	} else {
 	}
+	PK_ERR("[M6_CAM] hwpowerdown ok pinSetIdx=%u type=%d volt=%d delay=%d mode=%s\n",
+		pinSetIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay,
+		mode_name ? mode_name : "null");
 	return TRUE;
 }
 

@@ -670,6 +670,35 @@ static void lcm_m6_log_table_cmd(const char *tag, unsigned int index,
 		force_update);
 }
 
+#ifndef BUILD_LK
+static void lcm_m6_select_page_for_trace(unsigned char page)
+{
+	unsigned char page_cmd[3] = { 0x98, 0x81, page };
+
+	dsi_set_cmdq_V2(0xFF, sizeof(page_cmd), page_cmd, 1);
+	MDELAY(2);
+}
+
+static void lcm_m6_trace_page5_2a(const char *tag, unsigned int index,
+	const char *phase, unsigned char current_page)
+{
+	unsigned char read_buf[4];
+	unsigned int read_count;
+
+	if (current_page != 5)
+		lcm_m6_select_page_for_trace(5);
+
+	memset(read_buf, 0xA5, sizeof(read_buf));
+	read_count = read_reg_v2(0x2A, read_buf, 1);
+	LCM_LOGI("M6 LCM page5_2a_trace[%s] idx=%u phase=%s current_page=%u read=%02x %02x %02x %02x read_count=%u\n",
+		tag, index, phase, current_page, read_buf[0], read_buf[1],
+		read_buf[2], read_buf[3], read_count);
+
+	if (current_page != 5)
+		lcm_m6_select_page_for_trace(current_page);
+}
+#endif
+
 static void push_table(void *cmdq, struct LCM_setting_table *table,
 	unsigned int count, unsigned char force_update)
 {
@@ -677,6 +706,10 @@ static void push_table(void *cmdq, struct LCM_setting_table *table,
 	unsigned cmd;
 	unsigned int log_table = 1;
 	const char *tag = lcm_m6_table_name(table);
+#ifndef BUILD_LK
+	unsigned char m6_current_page = 0xFF;
+	unsigned int m6_trace_init = (table == init_setting);
+#endif
 
 	if (table == bl_level)
 		log_table = lcm_m6_backlight_log_this_call;
@@ -710,6 +743,26 @@ static void push_table(void *cmdq, struct LCM_setting_table *table,
 		default:
 			dsi_set_cmdq_V22(cmdq, cmd, table[i].count, table[i].para_list, force_update);
 		}
+#ifndef BUILD_LK
+		if (m6_trace_init && cmd == 0xFF && table[i].count == 3 &&
+		    table[i].para_list[0] == 0x98 &&
+		    table[i].para_list[1] == 0x81)
+			m6_current_page = table[i].para_list[2];
+		if (m6_trace_init) {
+			if (i == 12)
+				lcm_m6_trace_page5_2a(tag, i,
+					"after-page5-2a-write", m6_current_page);
+			else if (i == 17)
+				lcm_m6_trace_page5_2a(tag, i,
+					"after-page5-cluster", m6_current_page);
+			else if (i == 65)
+				lcm_m6_trace_page5_2a(tag, i,
+					"after-page0-select", m6_current_page);
+			else if (i == 69)
+				lcm_m6_trace_page5_2a(tag, i,
+					"after-display-on", m6_current_page);
+		}
+#endif
 		if (log_table)
 			LCM_LOGI("M6 LCM table[%s] idx=%u done cmd=0x%04x elapsed_ms=%u\n",
 				tag, i, cmd, jiffies_to_msecs(jiffies - start_jiffies));
@@ -1130,6 +1183,121 @@ static void lcm_m6_diag_read_dcs_registers(void)
 			read_buf[0], read_buf[1], read_buf[2], read_buf[3],
 			read_count);
 	}
+}
+
+struct m6_lcm_stock_page_diag_read {
+	unsigned char page;
+	unsigned char cmd;
+	unsigned char len;
+	const char *name;
+};
+
+static void lcm_m6_diag_select_stock_page(unsigned char page)
+{
+	unsigned char page_cmd[3] = { 0x98, 0x81, page };
+
+	dsi_set_cmdq_V2(0xFF, sizeof(page_cmd), page_cmd, 1);
+	MDELAY(2);
+	LCM_LOGI("M6 LCM stock_pages select page=%u\n", page);
+}
+
+void lcm_m6_diag_read_stock_pages(void)
+{
+	static const struct m6_lcm_stock_page_diag_read reads[] = {
+		{ 0, 0x35, 1, "te_on" },
+		{ 0, 0x36, 1, "madctl" },
+		{ 0, 0x3A, 1, "pixel_format" },
+		{ 0, 0x51, 1, "brightness" },
+		{ 0, 0x53, 1, "ctrl_display" },
+		{ 0, 0x55, 1, "cabc" },
+		{ 1, 0x44, 1, "page1_vcom_gip" },
+		{ 5, 0xB2, 1, "page5_b2" },
+		{ 5, 0x26, 1, "page5_26" },
+		{ 5, 0x3D, 1, "page5_3d" },
+		{ 5, 0x1B, 1, "page5_1b" },
+		{ 5, 0x52, 1, "page5_52" },
+		{ 5, 0x04, 1, "page5_04" },
+		{ 5, 0x06, 1, "page5_06" },
+		{ 5, 0x30, 1, "page5_30" },
+		{ 5, 0x29, 1, "page5_29" },
+		{ 5, 0x2A, 1, "page5_2a" },
+		{ 5, 0x38, 1, "page5_38" },
+		{ 5, 0x54, 1, "page5_54" },
+		{ 5, 0x55, 1, "page5_55" },
+		{ 5, 0x1A, 1, "page5_1a" },
+		{ 6, 0x01, 1, "page6_01" },
+		{ 6, 0x2B, 1, "page6_2b" },
+		{ 6, 0xF2, 1, "page6_f2_compare_id" },
+		{ 2, 0x01, 1, "page2_01" },
+		{ 2, 0x15, 1, "page2_15" },
+		{ 2, 0x42, 1, "page2_42" },
+		{ 2, 0x57, 1, "page2_gamma_57" },
+		{ 2, 0x58, 1, "page2_gamma_58" },
+		{ 2, 0x59, 1, "page2_gamma_59" },
+		{ 2, 0x5A, 1, "page2_gamma_5a" },
+		{ 2, 0x5B, 1, "page2_gamma_5b" },
+		{ 2, 0x5C, 1, "page2_gamma_5c" },
+		{ 2, 0x5D, 1, "page2_gamma_5d" },
+		{ 2, 0x5E, 1, "page2_gamma_5e" },
+		{ 2, 0x5F, 1, "page2_gamma_5f" },
+		{ 2, 0x60, 1, "page2_gamma_60" },
+		{ 2, 0x61, 1, "page2_gamma_61" },
+		{ 2, 0x62, 1, "page2_gamma_62" },
+		{ 2, 0x63, 1, "page2_gamma_63" },
+		{ 2, 0x64, 1, "page2_gamma_64" },
+		{ 2, 0x65, 1, "page2_gamma_65" },
+		{ 2, 0x66, 1, "page2_gamma_66" },
+		{ 2, 0x67, 1, "page2_gamma_67" },
+		{ 2, 0x68, 1, "page2_gamma_68" },
+		{ 2, 0x69, 1, "page2_gamma_69" },
+		{ 2, 0x6A, 1, "page2_gamma_6a" },
+		{ 2, 0x6B, 1, "page2_gamma_6b" },
+		{ 2, 0x6C, 1, "page2_gamma_6c" },
+		{ 2, 0x6D, 1, "page2_gamma_6d" },
+		{ 2, 0x6E, 1, "page2_gamma_6e" },
+		{ 2, 0x6F, 1, "page2_gamma_6f" },
+		{ 2, 0x70, 1, "page2_gamma_70" },
+		{ 2, 0x71, 1, "page2_gamma_71" },
+		{ 2, 0x72, 1, "page2_gamma_72" },
+		{ 2, 0x73, 1, "page2_gamma_73" },
+		{ 2, 0x74, 1, "page2_gamma_74" },
+		{ 2, 0x75, 1, "page2_gamma_75" },
+		{ 2, 0x76, 1, "page2_gamma_76" },
+		{ 2, 0x77, 1, "page2_gamma_77" },
+		{ 2, 0x78, 1, "page2_gamma_78" },
+		{ 2, 0x79, 1, "page2_gamma_79" },
+		{ 2, 0x7A, 1, "page2_gamma_7a" },
+		{ 2, 0x7B, 1, "page2_gamma_7b" },
+		{ 2, 0x7C, 1, "page2_gamma_7c" },
+		{ 2, 0x7D, 1, "page2_gamma_7d" },
+		{ 2, 0x7E, 1, "page2_gamma_7e" },
+	};
+	static unsigned int diag_count;
+	unsigned char current_page = 0xFF;
+	unsigned char read_buf[4];
+	unsigned int read_count;
+	unsigned int i;
+
+	if (diag_count >= 4)
+		return;
+
+	diag_count++;
+	LCM_LOGI("M6 LCM stock_pages[%u] begin reads=%u\n",
+		diag_count, (unsigned int)ARRAY_SIZE(reads));
+	for (i = 0; i < ARRAY_SIZE(reads); i++) {
+		if (current_page != reads[i].page) {
+			lcm_m6_diag_select_stock_page(reads[i].page);
+			current_page = reads[i].page;
+		}
+		memset(read_buf, 0xA5, sizeof(read_buf));
+		read_count = read_reg_v2(reads[i].cmd, read_buf, reads[i].len);
+		LCM_LOGI("M6 LCM stock_pages[%u] page=%u name=%s cmd=0x%02x len=%u read=%02x %02x %02x %02x read_count=%u\n",
+			diag_count, reads[i].page, reads[i].name, reads[i].cmd,
+			reads[i].len, read_buf[0], read_buf[1], read_buf[2],
+			read_buf[3], read_count);
+	}
+	lcm_m6_diag_select_stock_page(0);
+	LCM_LOGI("M6 LCM stock_pages[%u] end reset_page=0\n", diag_count);
 }
 #endif
 

@@ -367,6 +367,8 @@ INT32 mtk_wcn_consys_hw_reg_ctrl(UINT32 on, UINT32 co_clock_type)
 	UINT32 retry = 10;
 	UINT32 consysHwChipId = 0;
 
+	WMT_PLAT_ERR_FUNC("M6 WMT consys reg_ctrl enter on=%u co_clock=%u\n",
+		on, co_clock_type);
 	WMT_PLAT_DBG_FUNC("CONSYS-HW-REG-CTRL(0x%08x),start\n", on);
 	WMT_PLAT_DBG_FUNC("CONSYS_EMI_MAPPING dump before power on/off(0x%08x)\n", CONSYS_REG_READ(CONSYS_EMI_MAPPING));
 
@@ -521,6 +523,12 @@ INT32 mtk_wcn_consys_hw_reg_ctrl(UINT32 on, UINT32 co_clock_type)
 		/*12.poll CONNSYS CHIP ID until chipid is returned  0x18070008 */
 		while (retry-- > 0) {
 			consysHwChipId = CONSYS_REG_READ(conn_reg.mcu_base + CONSYS_CHIP_ID_OFFSET);
+			WMT_PLAT_ERR_FUNC("M6 WMT chipid retry_left=%u chipId=0x%08x top1=0x%08x ack=0x%08x ack_s=0x%08x prot=0x%08x\n",
+				retry, consysHwChipId,
+				CONSYS_REG_READ(conn_reg.spm_base + CONSYS_TOP1_PWR_CTRL_OFFSET),
+				CONSYS_REG_READ(conn_reg.spm_base + CONSYS_PWR_CONN_ACK_OFFSET),
+				CONSYS_REG_READ(conn_reg.spm_base + CONSYS_PWR_CONN_ACK_S_OFFSET),
+				CONSYS_REG_READ(conn_reg.topckgen_base + CONSYS_TOPAXI_PROT_STA1_OFFSET));
 			if (consysHwChipId == 0x0326) {
 				WMT_PLAT_INFO_FUNC("retry(%d)consys chipId(0x%08x)\n", retry, consysHwChipId);
 				break;

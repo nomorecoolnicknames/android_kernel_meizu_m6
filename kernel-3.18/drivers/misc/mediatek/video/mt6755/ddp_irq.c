@@ -44,6 +44,9 @@ static unsigned int cnt_rdma_abnormal[2];
 static unsigned int cnt_ovl_underflow[OVL_NUM];
 static unsigned int cnt_wdma_underflow[2];
 static unsigned int m6_ovl0_irq_diag_count;
+static unsigned int m6_rdma0_irq_diag_count;
+static unsigned int m6_dsi0_irq_diag_count;
+static unsigned int m6_mutex_irq_diag_count;
 
 unsigned long long rdma_start_time[2] = { 0 };
 unsigned long long rdma_end_time[2] = { 0 };
@@ -329,6 +332,59 @@ unsigned int rdma_done_irq_cnt[2] = { 0, 0 };
 unsigned int rdma_underflow_irq_cnt[2] = { 0, 0 };
 unsigned int rdma_targetline_irq_cnt[2] = { 0, 0 };
 
+static void disp_irq_m6_dump_primary_path_state(const char *tag,
+	unsigned int intsta, unsigned int *count)
+{
+	unsigned int idx;
+
+	if (!disp_irq_m6_diag_sample(count))
+		return;
+
+	idx = *count - 1;
+	DISPERR("M6 DDP irq diag[%u][%s]: intsta=0x%x route valid=0x%x ready=0x%x mutex INTEN=0x%x INTSTA=0x%x M0_EN=0x%x M0_MOD=0x%x M0_SOF=0x%x\n",
+		idx, tag, intsta,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTEN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTSTA),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF));
+	DISPERR("M6 DDP irq diag[%u][%s]: rdma0 INTEN=0x%x INTSTA=0x%x GLOBAL=0x%x SIZE=%ux%u FIFO=0x%x FIFO_CON=0x%x IN=%u/%u OUT=%u/%u irqcnt s/d/u/t=%u/%u/%u/%u\n",
+		idx, tag,
+		DISP_REG_GET(DISP_REG_RDMA_INT_ENABLE),
+		DISP_REG_GET(DISP_REG_RDMA_INT_STATUS),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_SIZE_CON_0),
+		DISP_REG_GET(DISP_REG_RDMA_SIZE_CON_1),
+		DISP_REG_GET(DISP_REG_RDMA_FIFO_LOG),
+		DISP_REG_GET(DISP_REG_RDMA_FIFO_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		rdma_start_irq_cnt[0], rdma_done_irq_cnt[0],
+		rdma_underflow_irq_cnt[0], rdma_targetline_irq_cnt[0]);
+	DISPERR("M6 DDP irq diag[%u][%s]: ovl0 INTSTA=0x%x EN=0x%x SRC=0x%x STA=0x%x FLOW=0x%x ADDCON=0x%x dsi0 START=0x%x STA=0x%x INTEN=0x%x INTSTA=0x%x MODE=0x%x VM_CMD=0x%x STATE_DBG=0x%x/0x%x/0x%x/0x%x\n",
+		idx, tag,
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_INTSTA),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_EN),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_STA),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_FLOW_CTRL_DBG),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_ADDCON_DBG),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x000),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x004),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x008),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x00c),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x014),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x130),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x148),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x14c),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x150),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x154));
+}
+
 irqreturn_t disp_irq_handler(int irq, void *dev_id)
 {
 	DISP_MODULE_ENUM module = DISP_MODULE_UNKNOWN;
@@ -350,6 +406,9 @@ irqreturn_t disp_irq_handler(int irq, void *dev_id)
 		if (disp_irq_esd_cust_get() == 0)
 			reg_temp_val = reg_val&0xfffe;
 		reg_temp_val = reg_temp_val&0xffdf;
+		if (reg_val)
+			disp_irq_m6_dump_primary_path_state("dsi0", reg_val,
+				&m6_dsi0_irq_diag_count);
 		DISP_CPU_REG_SET(dsi_reg_va + 0xC, ~reg_temp_val);
 	} else if (irq == dispsys_irq[DISP_REG_OVL0] ||
 		   irq == dispsys_irq[DISP_REG_OVL1] ||
@@ -520,12 +579,17 @@ irqreturn_t disp_irq_handler(int irq, void *dev_id)
 			disp_irq_log_module[module] = 1;
 			rdma_underflow_irq_cnt[index]++;
 		}
-		if (reg_val & (1 << 5)) {
-			DISPIRQ("IRQ: RDMA%d target line!\n", index);
-			rdma_targetline_irq_cnt[index]++;
-		}
-		/* clear intr */
-		DISP_CPU_REG_SET(DISP_REG_RDMA_INT_STATUS + index * DISP_RDMA_INDEX_OFFSET, ~reg_val);
+			if (reg_val & (1 << 5)) {
+				DISPIRQ("IRQ: RDMA%d target line!\n", index);
+				rdma_targetline_irq_cnt[index]++;
+			}
+			if (index == 0 &&
+			    (reg_val & ((1 << 1) | (1 << 2) | (1 << 3) |
+					(1 << 4) | (1 << 5))))
+				disp_irq_m6_dump_primary_path_state("rdma0", reg_val,
+					&m6_rdma0_irq_diag_count);
+			/* clear intr */
+			DISP_CPU_REG_SET(DISP_REG_RDMA_INT_STATUS + index * DISP_RDMA_INDEX_OFFSET, ~reg_val);
 		MMProfileLogEx(ddp_mmp_get_events()->RDMA_IRQ[index], MMProfileFlagPulse, reg_val, 0);
 		if (reg_val & 0x18)
 			MMProfileLogEx(ddp_mmp_get_events()->ddp_abnormal_irq, MMProfileFlagPulse,
@@ -539,19 +603,22 @@ irqreturn_t disp_irq_handler(int irq, void *dev_id)
 		/* mutex2: aal */
 		module = DISP_MODULE_MUTEX;
 		reg_val = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTSTA) & 0x7C1F;
-		for (mutexID = 0; mutexID < 5; mutexID++) {
-			if (reg_val & (0x1 << mutexID)) {
-				DISPIRQ("IRQ: mutex%d sof!\n", mutexID);
+			for (mutexID = 0; mutexID < 5; mutexID++) {
+				if (reg_val & (0x1 << mutexID)) {
+					DISPIRQ("IRQ: mutex%d sof!\n", mutexID);
 				MMProfileLogEx(ddp_mmp_get_events()->MUTEX_IRQ[mutexID],
 					       MMProfileFlagPulse, reg_val, 0);
 			}
 			if (reg_val & (0x1 << (mutexID + DISP_MUTEX_TOTAL))) {
 				DISPIRQ("IRQ: mutex%d eof!\n", mutexID);
-				MMProfileLogEx(ddp_mmp_get_events()->MUTEX_IRQ[mutexID],
-					       MMProfileFlagPulse, reg_val, 1);
+					MMProfileLogEx(ddp_mmp_get_events()->MUTEX_IRQ[mutexID],
+						       MMProfileFlagPulse, reg_val, 1);
+				}
 			}
-		}
-		DISP_CPU_REG_SET(DISP_REG_CONFIG_MUTEX_INTSTA, ~reg_val);
+			if (reg_val & ((0x1 << 0) | (0x1 << DISP_MUTEX_TOTAL)))
+				disp_irq_m6_dump_primary_path_state("mutex0", reg_val,
+					&m6_mutex_irq_diag_count);
+			DISP_CPU_REG_SET(DISP_REG_CONFIG_MUTEX_INTSTA, ~reg_val);
 	} else if (irq == dispsys_irq[DISP_REG_AAL]) {
 		module = DISP_MODULE_AAL;
 		reg_val = DISP_REG_GET(DISP_AAL_INTSTA);

@@ -2079,6 +2079,8 @@ static int md_cd_start(struct ccci_modem *md)
 	struct md_cd_ctrl *md_ctrl = (struct md_cd_ctrl *)md->private_data;
 	char img_err_str[IMG_ERR_STR_LEN];
 	int ret = 0;
+	int run_env_ready = 0;
+	unsigned int boot_setting = md->config.setting;
 #ifndef ENABLE_CLDMA_AP_SIDE
 	int retry, cldma_on = 0;
 #endif
@@ -2104,8 +2106,12 @@ static int md_cd_start(struct ccci_modem *md)
 	}
 
 	CCCI_BOOTUP_LOG(md->index, TAG, "CLDMA modem is starting\n");
+	run_env_ready = modem_run_env_ready(md->index);
+	CCCI_NOTICE_LOG(md->index, TAG,
+		"M6_RIL_DIAG start run_env_ready=%d setting_before=0x%x setting_now=0x%x post_fix=%s\n",
+		run_env_ready, boot_setting, md->config.setting, md->post_fix);
 	/* 1. load modem image */
-	if (!modem_run_env_ready(md->index)) {
+	if (!run_env_ready) {
 		CCCI_BOOTUP_LOG(md->index, TAG, "CLDMA modem is not ready, load it\n");
 		ccci_clear_md_region_protection(md);
 		ccci_clear_dsp_region_protection(md);
@@ -2115,6 +2121,11 @@ static int md_cd_start(struct ccci_modem *md)
 			CCCI_BOOTUP_LOG(md->index, TAG, "load MD firmware fail, %s\n", img_err_str);
 			goto out;
 		}
+		CCCI_NOTICE_LOG(md->index, TAG,
+			"M6_RIL_DIAG load_md ret=%d file=%s size=0x%x dsp_off=0x%x dsp_size=0x%x arm7_off=0x%x arm7_size=0x%x\n",
+			ret, md->img_info[IMG_MD].file_name, md->img_info[IMG_MD].size,
+			md->img_info[IMG_MD].dsp_offset, md->img_info[IMG_MD].dsp_size,
+			md->img_info[IMG_MD].arm7_offset, md->img_info[IMG_MD].arm7_size);
 		if (md->img_info[IMG_MD].dsp_size != 0 && md->img_info[IMG_MD].dsp_offset != 0xCDCDCDAA) {
 			md->img_info[IMG_DSP].address = md->img_info[IMG_MD].address + md->img_info[IMG_MD].dsp_offset;
 			ret = ccci_load_firmware(md->index, &md->img_info[IMG_DSP], img_err_str,
@@ -2128,6 +2139,9 @@ static int md_cd_start(struct ccci_modem *md)
 					     md->img_info[IMG_DSP].size);
 				goto out;
 			}
+			CCCI_NOTICE_LOG(md->index, TAG,
+				"M6_RIL_DIAG load_dsp ret=%d file=%s size=0x%x\n",
+				ret, md->img_info[IMG_DSP].file_name, md->img_info[IMG_DSP].size);
 			md->mem_layout.dsp_region_phy = md->img_info[IMG_DSP].address;
 			md->mem_layout.dsp_region_vir = md->mem_layout.md_region_vir + md->img_info[IMG_MD].dsp_offset;
 			md->mem_layout.dsp_region_size = ret;
@@ -2147,6 +2161,9 @@ static int md_cd_start(struct ccci_modem *md)
 					     md->img_info[IMG_ARMV7].size);
 				goto out;
 			}
+			CCCI_NOTICE_LOG(md->index, TAG,
+				"M6_RIL_DIAG load_armv7 ret=%d file=%s size=0x%x\n",
+				ret, md->img_info[IMG_ARMV7].file_name, md->img_info[IMG_ARMV7].size);
 		}
 		ret = 0;	/* load_std_firmware returns MD image size */
 		md->config.setting &= ~MD_SETTING_RELOAD;
@@ -2158,6 +2175,11 @@ static int md_cd_start(struct ccci_modem *md)
 			/* goto out; */
 		} else
 			CCCI_BOOTUP_LOG(md->index, TAG, "partition read success\n");
+		CCCI_NOTICE_LOG(md->index, TAG,
+			"M6_RIL_DIAG bypass_hdr ret=%d file=%s size=0x%x dsp_off=0x%x dsp_size=0x%x arm7_off=0x%x arm7_size=0x%x\n",
+			ret, md->img_info[IMG_MD].file_name, md->img_info[IMG_MD].size,
+			md->img_info[IMG_MD].dsp_offset, md->img_info[IMG_MD].dsp_size,
+			md->img_info[IMG_MD].arm7_offset, md->img_info[IMG_MD].arm7_size);
 	}
 
 

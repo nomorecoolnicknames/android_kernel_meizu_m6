@@ -127,6 +127,9 @@ char MTKFB_STR_HELP[] =
 	"        m6_lcm_reinit:[0|1]\n"
 	"             Meizu M6 diagnostic Linux LCM init after boot\n"
 	"\n"
+	"        m6_dsi_dcs_status[:stock_pages]\n"
+	"             Meizu M6 diagnostic DSI/ILI9881P DCS status dump\n"
+	"\n"
 	"        m6_ovl_greq_profile:[0|1|2|3]\n"
 	"             Meizu M6 isolation profiles for OVL RDMA/GREQ underflow triage\n"
 	"\n"
@@ -550,6 +553,20 @@ void mtkfb_process_dbg_opt(const char *opt)
 			primary_display_manual_unlock();
 			return;
 		}
+	} else if (0 == strncmp(opt, "m6_dsi_bist_full:", 17)) {
+		char *p = (char *)opt + 17;
+		unsigned int pattern;
+
+		ret = kstrtouint(p, 0, &pattern);
+		if (ret) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+
+		primary_display_manual_lock();
+		DSI_M6_BIST_Full_Test(DISP_MODULE_DSI0, NULL, pattern != 0, pattern);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi bist full: 0x%08x\n", pattern);
 	} else if (0 == strncmp(opt, "bypass_blank:", 13)) {
 		char *p = (char *)opt + 13;
 		unsigned int blank;
@@ -610,6 +627,21 @@ void mtkfb_process_dbg_opt(const char *opt)
 		}
 		DISPERR("M6 LCM debug reinit command: force=%u\n", force_power);
 		primary_display_m6_lcm_reinit(force_power);
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_dcs_status", 17)) {
+		const char *tag = "public";
+
+		if (opt[17] == ':')
+			tag = opt + 18;
+		if (!strncmp(tag, "stock_pages", 11)) {
+			DISPERR("M6 DSI DCS status command: stock_pages\n");
+			primary_display_m6_lcm_stock_pages();
+		} else {
+			DISPERR("M6 DSI DCS status command: tag=%s\n", tag);
+			primary_display_manual_lock();
+			dsi_m6_dump_dcs_status(tag);
+			primary_display_manual_unlock();
+		}
 		return;
 	} else if (0 == strncmp(opt, "m6_ovl_greq_profile:", 20)) {
 		char *p = (char *)opt + 20;

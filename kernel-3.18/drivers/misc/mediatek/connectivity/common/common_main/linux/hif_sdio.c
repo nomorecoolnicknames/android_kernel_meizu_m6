@@ -1682,7 +1682,8 @@ static INT32 hif_sdio_probe(struct sdio_func *func, const struct sdio_device_id 
 	MTK_WCN_HIF_SDIO_CLT_PROBE_WORKERINFO *clt_probe_worker_info = 0;
 #endif
 
-	HIF_SDIO_INFO_FUNC("start!\n");
+	HIF_SDIO_INFO_FUNC("M6 SDIO probe start ref=%d irq=%d\n",
+		gRefCount, atomic_read(&hif_sdio_irq_enable_flag));
 	HIF_SDIO_ASSERT(func);
 #if !(DELETE_HIF_SDIO_CHRDEV)
 	hif_sdio_match_chipid_by_dev_id(id);
@@ -1819,7 +1820,8 @@ static VOID hif_sdio_remove(struct sdio_func *func)
 	INT32 registed_list_index = 0;
 #endif
 
-	HIF_SDIO_INFO_FUNC("start!\n");
+	HIF_SDIO_INFO_FUNC("M6 SDIO remove start ref=%d irq=%d\n",
+		gRefCount, atomic_read(&hif_sdio_irq_enable_flag));
 	HIF_SDIO_ASSERT(func);
 
 	/* 4 <1> check input parameter is valid and has been probed previously */
@@ -2027,13 +2029,15 @@ static _osal_inline_ INT32 hif_sdio_stp_on(VOID)
 	INT32 probe_index = -1;
 	INT32 ret = -1;
 	INT32 ret2 = -1;
+	INT32 i = 0;
 	struct sdio_func *func;
 	UINT32 chip_id = 0;
 	UINT16 func_num = 0;
 
 	const MTK_WCN_HIF_SDIO_FUNCINFO *func_info = NULL;
 
-	HIF_SDIO_INFO_FUNC("start!\n");
+	HIF_SDIO_INFO_FUNC("M6 SDIO stp_on start ref=%d irq=%d\n",
+		gRefCount, atomic_read(&hif_sdio_irq_enable_flag));
 
 	/* 4 <1> If stp client drv has not been probed, return error code */
 	/* MT6620 */
@@ -2077,11 +2081,22 @@ static _osal_inline_ INT32 hif_sdio_stp_on(VOID)
 	else {
 		/* 4 <2> If stp client drv has not been probed, return error code */
 		/* client func has not been probed */
-		HIF_SDIO_INFO_FUNC("no supported func probed\n");
+		HIF_SDIO_INFO_FUNC("M6 SDIO no supported func probed, dumping probed list\n");
+		for (i = 0; i < CFG_CLIENT_COUNT; i++) {
+			func = g_hif_sdio_probed_func_list[i].func;
+			if (!func)
+				continue;
+			HIF_SDIO_INFO_FUNC("M6 SDIO probed[%d] vendor(0x%x) device(0x%x) num(0x%x) clt(%d) on(%d)\n",
+					   i, func->vendor, func->device, func->num,
+					   g_hif_sdio_probed_func_list[i].clt_idx,
+					   g_hif_sdio_probed_func_list[i].on_by_wmt);
+		}
 		return HIF_SDIO_ERR_NOT_PROBED;
 	}
 
 stp_on_exist:
+	HIF_SDIO_INFO_FUNC("M6 SDIO stp_on found probe=%d chip=0x%x func_num=%u\n",
+		probe_index, chip_id, func_num);
 	/* 4 <3> If stp client drv has been on by wmt, return error code */
 	if (MTK_WCN_BOOL_FALSE != g_hif_sdio_probed_func_list[probe_index].on_by_wmt) {
 		HIF_SDIO_INFO_FUNC("already on...\n");
@@ -2103,6 +2118,8 @@ stp_on_exist:
 		ret = sdio_claim_irq(func, hif_sdio_irq);
 		mtk_wcn_hif_sdio_irq_flag_set(1);
 		sdio_release_host(func);
+		HIF_SDIO_INFO_FUNC("M6 SDIO stp_on irq ret=%d vendor=0x%x device=0x%x num=%u clt=%d\n",
+			ret, func->vendor, func->device, func->num, clt_index);
 		if (ret) {
 			HIF_SDIO_WARN_FUNC("sdio_claim_irq() for stp fail(%d)\n", ret);
 			return ret;
@@ -2115,6 +2132,8 @@ stp_on_exist:
 #if 1
 		/* Call client's .hif_clt_probe() */
 		ret = hif_sdio_clt_probe_func(&g_hif_sdio_clt_drv_list[clt_index], probe_index);
+		HIF_SDIO_INFO_FUNC("M6 SDIO stp_on clt_probe ret=%d clt=%d probe=%d\n",
+			ret, clt_index, probe_index);
 		if (ret) {
 			HIF_SDIO_WARN_FUNC("clt_probe_func() for stp fail(%d) release irq\n", ret);
 			sdio_claim_host(func);
@@ -2848,4 +2867,3 @@ EXPORT_SYMBOL(mtk_wcn_hif_sdio_driver_exit);
 module_init(hif_sdio_init);
 module_exit(hif_sdio_exit);
 #endif
-

@@ -47,6 +47,8 @@
 
 /* MTK_WCN_COMBO header files */
 #include "osal_typedef.h"
+#include "wmt_plat.h"
+#include "wmt_detect_pwr.h"
 #include "mtk_wcn_consys_hw.h"
 #include "stp_dbg.h"
 
@@ -389,6 +391,18 @@ INT32 wmt_plat_deinit(VOID)
 	return 0;
 }
 EXPORT_SYMBOL(wmt_plat_deinit);
+
+INT32 wmt_plat_sdio_ctrl(UINT32 sdioPortNum, ENUM_FUNC_STATE on)
+{
+	INT32 ret;
+
+	ret = board_sdio_ctrl(sdioPortNum, (FUNC_OFF == on) ? 0 : 1);
+	pr_warn("M6 WMT mt6755 sdio_ctrl slot=%u state=%d ret=%d\n",
+		sdioPortNum, on, ret);
+
+	return ret;
+}
+EXPORT_SYMBOL(wmt_plat_sdio_ctrl);
 
 static INT32 wmt_plat_dump_pin_conf(VOID)
 {

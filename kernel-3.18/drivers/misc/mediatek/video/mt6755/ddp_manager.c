@@ -28,6 +28,7 @@
 #include "ddp_manager.h"
 #include "ddp_rdma.h"
 #include "ddp_ovl.h"
+#include "cmdq_core.h"
 
 #include "disp_log.h"
 /* #pragma GCC optimize("O0") */
@@ -1751,6 +1752,9 @@ void dpmgr_debug_path_status(int mutex_id)
 
 static bool dpmgr_m6_first_video_wait_dumped;
 static bool dpmgr_m6_primary_clock_hold_applied;
+static unsigned int dpmgr_m6_primary_wait_diag_count;
+static unsigned int dpmgr_m6_primary_wait_timeout_diag_count;
+static unsigned int dpmgr_m6_primary_rdmadone_irq_diag_count;
 
 #define M6_PRIMARY_SCANOUT_CG_MASK \
 	((1U << 1) | (1U << 10) | (1U << 12) | (1U << 15) | \
@@ -1982,6 +1986,64 @@ static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x154));
 }
 
+static bool dpmgr_m6_primary_event_watch(ddp_path_handle handle,
+	DISP_PATH_EVENT event)
+{
+	return handle && handle->scenario == DDP_SCENARIO_PRIMARY_DISP &&
+		(event == DISP_PATH_EVENT_FRAME_DONE ||
+		 event == DISP_PATH_EVENT_IF_VSYNC);
+}
+
+static void dpmgr_m6_dump_primary_event_flow(const char *tag,
+	unsigned int idx, ddp_path_handle handle, DISP_PATH_EVENT event,
+	DDP_IRQ_BIT irq_bit, unsigned int regvalue, DPMGR_WQ_HANDLE *wq_handle)
+{
+	if (!dpmgr_m6_primary_event_watch(handle, event))
+		return;
+
+	DISPERR("M6 DPMGR event flow[%u][%s]: event=%s scenario=%s irq=0x%x reg=0x%x wq_init=%u wq_data=%llu rdma_eof=%u mutex_eof=%u route=0x%x/0x%x mutex=0x%x/0x%x/0x%x\n",
+		idx, tag, path_event_name(event),
+		ddp_get_scenario_name(handle->scenario), irq_bit, regvalue,
+		wq_handle ? wq_handle->init : 0,
+		wq_handle ? wq_handle->data : 0,
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTSTA),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF));
+	DISPERR("M6 DPMGR event flow[%u][%s]: rdma0 INTEN=0x%x INTSTA=0x%x GLOBAL=0x%x FIFO=0x%x IN=%u/%u OUT=%u/%u dsi0 START=0x%x STA=0x%x INTSTA=0x%x\n",
+		idx, tag,
+		DISP_REG_GET(DISP_REG_RDMA_INT_ENABLE),
+		DISP_REG_GET(DISP_REG_RDMA_INT_STATUS),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_FIFO_LOG),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x000),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x004),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x00c));
+}
+
+static void dpmgr_m6_sample_primary_event_flow(const char *tag,
+	ddp_path_handle handle, DISP_PATH_EVENT event, DDP_IRQ_BIT irq_bit,
+	unsigned int regvalue, DPMGR_WQ_HANDLE *wq_handle, unsigned int *count)
+{
+	unsigned int idx;
+
+	if (!dpmgr_m6_primary_event_watch(handle, event))
+		return;
+	if (!dpmgr_m6_diag_sample(count))
+		return;
+
+	idx = *count - 1;
+	dpmgr_m6_dump_primary_event_flow(tag, idx, handle, event, irq_bit,
+		regvalue, wq_handle);
+}
+
 
 int dpmgr_wait_event_timeout(disp_path_handle dp_handle, DISP_PATH_EVENT event, int timeout)
 {
@@ -1997,6 +2059,9 @@ int dpmgr_wait_event_timeout(disp_path_handle dp_handle, DISP_PATH_EVENT event, 
 	if (wq_handle->init) {
 		DISPDBG("wait event %s on scenario %s\n", path_event_name(event),
 			   ddp_get_scenario_name(handle->scenario));
+		dpmgr_m6_sample_primary_event_flow("wait-timeout-pre",
+			handle, event, handle->irq_event_map[event].irq_bit, 0,
+			wq_handle, &dpmgr_m6_primary_wait_diag_count);
 		if (!dpmgr_m6_first_video_wait_dumped &&
 		    handle->scenario == DDP_SCENARIO_PRIMARY_DISP &&
 		    (event == DISP_PATH_EVENT_FRAME_DONE ||
@@ -2013,6 +2078,9 @@ int dpmgr_wait_event_timeout(disp_path_handle dp_handle, DISP_PATH_EVENT event, 
 		if (ret == 0) {
 			DISPERR("wait %s timeout on scenario %s\n", path_event_name(event),
 				   ddp_get_scenario_name(handle->scenario));
+			dpmgr_m6_sample_primary_event_flow("wait-timeout-expired",
+				handle, event, handle->irq_event_map[event].irq_bit, 0,
+				wq_handle, &dpmgr_m6_primary_wait_timeout_diag_count);
 			dpmgr_m6_dump_primary_video_state(path_event_name(event));
 			/* dpmgr_check_status(dp_handle); */
 		} else if (ret < 0) {
@@ -2050,6 +2118,9 @@ int _dpmgr_wait_event(disp_path_handle dp_handle, DISP_PATH_EVENT event, unsigne
 
 	DISPDBG("wait event %s on scenario %s\n", path_event_name(event),
 		   ddp_get_scenario_name(handle->scenario));
+	dpmgr_m6_sample_primary_event_flow("wait-pre", handle, event,
+		handle->irq_event_map[event].irq_bit, 0, wq_handle,
+		&dpmgr_m6_primary_wait_diag_count);
 
 	cur_time = ktime_to_ns(ktime_get());/*sched_clock();*/
 	ret = wait_event_interruptible(wq_handle->wq, cur_time < wq_handle->data);
@@ -2103,6 +2174,8 @@ static void dpmgr_irq_handler(DISP_MODULE_ENUM module, unsigned int regvalue)
 	int irq_bits_num = 0;
 	int irq_bit = 0;
 	ddp_path_handle handle = NULL;
+	bool m6_rdmadone_log;
+	unsigned int m6_rdmadone_idx;
 
 	handle = find_handle_by_module(module);
 	if (handle == NULL)
@@ -2116,12 +2189,25 @@ static void dpmgr_irq_handler(DISP_MODULE_ENUM module, unsigned int regvalue)
 			for (j = 0; j < DISP_PATH_EVENT_NUM; j++) {
 				if (handle->wq_list[j].init
 				    && irq_bit == handle->irq_event_map[j].irq_bit) {
+					m6_rdmadone_log = dpmgr_m6_primary_event_watch(handle, j) &&
+						irq_bit == DDP_IRQ_RDMA0_DONE &&
+						dpmgr_m6_diag_sample(&dpmgr_m6_primary_rdmadone_irq_diag_count);
+					m6_rdmadone_idx =
+						dpmgr_m6_primary_rdmadone_irq_diag_count - 1;
+					if (m6_rdmadone_log)
+						dpmgr_m6_dump_primary_event_flow("irq-prewake",
+							m6_rdmadone_idx, handle, j, irq_bit,
+							regvalue, &handle->wq_list[j]);
 					dprec_stub_event(j);
 					handle->wq_list[j].data = ktime_to_ns(ktime_get());/*sched_clock();*/
 					DISPIRQ("irq signal event %s on cycle %llu on scenario %s\n",
 					       path_event_name(j), handle->wq_list[j].data,
 					       ddp_get_scenario_name(handle->scenario));
 					wake_up_interruptible(&(handle->wq_list[j].wq));
+					if (m6_rdmadone_log)
+						dpmgr_m6_dump_primary_event_flow("irq-postwake",
+							m6_rdmadone_idx, handle, j, irq_bit,
+							regvalue, &handle->wq_list[j]);
 				}
 			}
 		}

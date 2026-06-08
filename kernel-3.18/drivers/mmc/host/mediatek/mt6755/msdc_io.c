@@ -269,6 +269,9 @@ void msdc_sdio_power(struct msdc_host *host, u32 on)
 	switch (host->id) {
 #if defined(CFG_DEV_MSDC2)
 	case 2:
+		pr_warn_ratelimited("M6 MSDC2 sdio_power on=%u vmmc=%p vqmmc=%p g_io=%u g_flash=%u\n",
+			on, host->mmc->supply.vmmc, host->mmc->supply.vqmmc,
+			g_msdc2_io, g_msdc2_flash);
 		g_msdc2_flash = g_msdc2_io;
 		break;
 #endif
@@ -1323,6 +1326,10 @@ int msdc_of_parse(struct mmc_host *mmc)
 		host->hw->enable_sdio_eirq = mt_sdio_ops[2].sdio_enable_eirq;
 		host->hw->disable_sdio_eirq = mt_sdio_ops[2].sdio_disable_eirq;
 		host->hw->register_pm = mt_sdio_ops[2].sdio_register_pm;
+		pr_warn("M6 MSDC2 SDIO callbacks mmc_index=%d request=%p enable=%p disable=%p register_pm=%p\n",
+			mmc->index, host->hw->request_sdio_eirq,
+			host->hw->enable_sdio_eirq,
+			host->hw->disable_sdio_eirq, host->hw->register_pm);
 	}
 #endif
 
@@ -1364,6 +1371,12 @@ int msdc_dt_init(struct platform_device *pdev, struct mmc_host *mmc)
 
 	host = mmc_priv(mmc);
 	host->id = id;
+	if (id == 2)
+		pr_warn("M6 MSDC2 dt parsed caps=0x%x caps2=0x%x pm_caps=0x%x f_min=%u f_max=%u ocr=0x%x supplies vmmc=%p vqmmc=%p host_function=%u flags=0x%lx\n",
+			mmc->caps, mmc->caps2, mmc->pm_caps, mmc->f_min,
+			mmc->f_max, mmc->ocr_avail, mmc->supply.vmmc,
+			mmc->supply.vqmmc, host->hw->host_function,
+			host->hw->flags);
 
 	if (gpio_base == NULL) {
 		np = of_find_compatible_node(NULL, NULL, "mediatek,GPIO");
@@ -1412,4 +1425,3 @@ int msdc_dt_init(struct platform_device *pdev, struct mmc_host *mmc)
 
 	return 0;
 }
-

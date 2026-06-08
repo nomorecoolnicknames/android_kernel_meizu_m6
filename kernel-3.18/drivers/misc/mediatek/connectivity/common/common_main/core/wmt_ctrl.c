@@ -878,20 +878,32 @@ INT32 wmt_ctrl_sdio_hw(P_WMT_CTRL_DATA pWmtCtrlData)
 	if (WMT_SDIO_SLOT_SDIO2 == sdioSlotNum)
 		statBit = WMT_STAT_SDIO2_ON;
 
+	WMT_INFO_FUNC("M6 WMT SDIO_HW request slot=%d funcState=%d statBit=%u state_before=0x%lx\n",
+		      sdioSlotNum, funcState, statBit, (unsigned long)pDev->state.data);
+
 	if (funcState) {
 		if (osal_test_and_set_bit(statBit, &pDev->state)) {
 			WMT_WARN_FUNC("CTRL_SDIO_SLOT slotNum(%d) already ON\n", sdioSlotNum);
 			/* still return 0 */
 			iRet = 0;
-		} else
+			WMT_INFO_FUNC("M6 WMT SDIO_HW skip plat already_on slot=%d state_after=0x%lx\n",
+				      sdioSlotNum, (unsigned long)pDev->state.data);
+		} else {
 			iRet = wmt_plat_sdio_ctrl(sdioSlotNum, FUNC_ON);
+			WMT_INFO_FUNC("M6 WMT SDIO_HW plat_on slot=%d ret=%d state_after=0x%lx\n",
+				      sdioSlotNum, iRet, (unsigned long)pDev->state.data);
+		}
 	} else {
-		if (osal_test_and_clear_bit(statBit, &pDev->state))
+		if (osal_test_and_clear_bit(statBit, &pDev->state)) {
 			iRet = wmt_plat_sdio_ctrl(sdioSlotNum, FUNC_OFF);
-		else {
+			WMT_INFO_FUNC("M6 WMT SDIO_HW plat_off slot=%d ret=%d state_after=0x%lx\n",
+				      sdioSlotNum, iRet, (unsigned long)pDev->state.data);
+		} else {
 			WMT_WARN_FUNC("CTRL_SDIO_SLOT slotNum(%d) already OFF\n", sdioSlotNum);
 			/* still return 0 */
 			iRet = 0;
+			WMT_INFO_FUNC("M6 WMT SDIO_HW skip plat already_off slot=%d state_after=0x%lx\n",
+				      sdioSlotNum, (unsigned long)pDev->state.data);
 		}
 	}
 

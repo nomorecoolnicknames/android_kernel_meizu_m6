@@ -771,8 +771,14 @@ int ccci_load_firmware(int md_id, void *img_inf, char img_err_str[], char post_f
 	*/
 	i = modem_ultg;
 TRY_LOAD_IMG:
+	CCCI_UTIL_ERR_MSG_WITH_ID(md_id,
+		"M6_RIL_DIAG firmware_request type=%d name=%s post_fix=%s fallback_i=%d\n",
+		img->type, img_name, post_fix, i);
 	ret = request_firmware(&fw_entry, img_name, dev);
 	if (ret != 0) {
+		CCCI_UTIL_ERR_MSG_WITH_ID(md_id,
+			"M6_RIL_DIAG firmware_request_fail ret=%d type=%d name=%s next_i=%d\n",
+			ret, img->type, img_name, i);
 		/*CCCI_UTIL_ERR_MSG_WITH_ID(md_id,
 		 *	"Try to load firmware %s failed:ret=%d!\n", img_name, ret);
 		 */
@@ -801,6 +807,9 @@ TRY_LOAD_IMG:
 		}
 	}
 	strncpy(img->file_name, img_name, sizeof(img->file_name));
+	CCCI_UTIL_ERR_MSG_WITH_ID(md_id,
+		"M6_RIL_DIAG firmware_request_ok type=%d name=%s fw_size=%zu\n",
+		img->type, img_name, fw_entry->size);
 	img->offset = 0;
 	img->tail_length = 0;
 	/*Check whether need skip header*/

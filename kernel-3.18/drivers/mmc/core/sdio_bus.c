@@ -136,6 +136,10 @@ static int sdio_bus_probe(struct device *dev)
 	id = sdio_match_device(func, drv);
 	if (!id)
 		return -ENODEV;
+	if (func->card->host->index == 2)
+		pr_warn("M6 MMC2 sdio_bus_probe driver=%s fn=%u class=0x%x vendor=0x%x device=0x%x\n",
+			drv->name, func->num, func->class, func->vendor,
+			func->device);
 
 	/* Unbound SDIO functions are always suspended.
 	 * During probe, the function is set active and the usage count
@@ -154,10 +158,16 @@ static int sdio_bus_probe(struct device *dev)
 	sdio_claim_host(func);
 	ret = sdio_set_block_size(func, 0);
 	sdio_release_host(func);
+	if (func->card->host->index == 2)
+		pr_warn("M6 MMC2 sdio_bus_probe block_size driver=%s fn=%u ret=%d\n",
+			drv->name, func->num, ret);
 	if (ret)
 		goto disable_runtimepm;
 
 	ret = drv->probe(func, id);
+	if (func->card->host->index == 2)
+		pr_warn("M6 MMC2 sdio_bus_probe driver_probe driver=%s fn=%u ret=%d\n",
+			drv->name, func->num, ret);
 	if (ret)
 		goto disable_runtimepm;
 
@@ -332,9 +342,17 @@ int sdio_add_func(struct sdio_func *func)
 	int ret;
 
 	dev_set_name(&func->dev, "%s:%d", mmc_card_id(func->card), func->num);
+	if (func->card->host->index == 2)
+		pr_warn("M6 MMC2 sdio_add_func start name=%s fn=%u class=0x%x vendor=0x%x device=0x%x\n",
+			dev_name(&func->dev), func->num, func->class,
+			func->vendor, func->device);
 
 	sdio_acpi_set_handle(func);
 	ret = device_add(&func->dev);
+	if (func->card->host->index == 2)
+		pr_warn("M6 MMC2 sdio_add_func done name=%s fn=%u ret=%d present=%d\n",
+			dev_name(&func->dev), func->num, ret,
+			sdio_func_present(func));
 	if (ret == 0) {
 		sdio_func_set_present(func);
 		dev_pm_domain_attach(&func->dev, false);
@@ -358,4 +376,3 @@ void sdio_remove_func(struct sdio_func *func)
 	device_del(&func->dev);
 	put_device(&func->dev);
 }
-

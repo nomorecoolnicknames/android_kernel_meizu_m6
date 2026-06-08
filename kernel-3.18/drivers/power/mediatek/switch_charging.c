@@ -964,12 +964,17 @@ static void mtk_select_ichg_aicr(void)
 			"[BATTERY] select_charging_curret !\n");
 	}
 #endif
-	battery_log(BAT_LOG_CRTI,
-		"[BATTERY] Default CC mode charging : %d, input current = %d\n",
-		g_temp_CC_value, g_temp_input_CC_value);
+		battery_log(BAT_LOG_CRTI,
+			"[BATTERY] Default CC mode charging : %d, input current = %d\n",
+			g_temp_CC_value, g_temp_input_CC_value);
+		battery_log(BAT_LOG_CRTI,
+			"[M6_CHG] select_ichg_aicr type=%d usb_unlimited=%d bcct=%d cc=%d aicr=%d usb_state=%d\n",
+			BMT_status.charger_type, get_usb_current_unlimited(),
+			g_bcct_flag, g_temp_CC_value, g_temp_input_CC_value,
+			g_usb_state);
 
-	battery_charging_control(CHARGING_CMD_SET_INPUT_CURRENT,
-		&g_temp_input_CC_value);
+		battery_charging_control(CHARGING_CMD_SET_INPUT_CURRENT,
+			&g_temp_input_CC_value);
 	battery_charging_control(CHARGING_CMD_SET_CURRENT,
 		&g_temp_CC_value);
 

@@ -519,6 +519,7 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 static void mtk_wcn_cmb_sdio_register_pm(pm_callback_t pm_cb, void *data)
 {
 	CMB_STUB_LOG_DBG("mtk_wcn_cmb_sdio_register_pm (0x%p, 0x%p)\n", pm_cb, data);
+	pr_warn("M6 CMB SDIO register_pm cb=%p data=%p\n", pm_cb, data);
 	/* register pm change callback */
 	mtk_wcn_cmb_sdio_pm_cb = pm_cb;
 	mtk_wcn_cmb_sdio_pm_data = data;
@@ -529,6 +530,9 @@ static void mtk_wcn_cmb_sdio_on(int sdio_port_num)
 	pm_message_t state = {.event = PM_EVENT_USER_RESUME };
 
 	CMB_STUB_LOG_INFO("mtk_wcn_cmb_sdio_on (%d)\n", sdio_port_num);
+	pr_warn_ratelimited("M6 CMB SDIO on port=%d cb=%p data=%p wifi_irq=%u\n",
+		sdio_port_num, mtk_wcn_cmb_sdio_pm_cb,
+		mtk_wcn_cmb_sdio_pm_data, wifi_irq);
 
 	/* 1. disable sdio eirq */
 	mtk_wcn_cmb_sdio_disable_eirq();
@@ -547,6 +551,9 @@ static void mtk_wcn_cmb_sdio_off(int sdio_port_num)
 	pm_message_t state = {.event = PM_EVENT_USER_SUSPEND };
 
 	CMB_STUB_LOG_INFO("mtk_wcn_cmb_sdio_off (%d)\n", sdio_port_num);
+	pr_warn_ratelimited("M6 CMB SDIO off port=%d cb=%p data=%p wifi_irq=%u\n",
+		sdio_port_num, mtk_wcn_cmb_sdio_pm_cb,
+		mtk_wcn_cmb_sdio_pm_data, wifi_irq);
 
 	/* 1. call sd callback */
 	if (mtk_wcn_cmb_sdio_pm_cb) {
@@ -563,6 +570,9 @@ static void mtk_wcn_cmb_sdio_off(int sdio_port_num)
 int board_sdio_ctrl(unsigned int sdio_port_num, unsigned int on)
 {
 	CMB_STUB_LOG_DBG("mt_mtk_wcn_cmb_sdio_ctrl (%d, %d)\n", sdio_port_num, on);
+	pr_warn_ratelimited("M6 CMB board_sdio_ctrl port=%u on=%u cb=%p data=%p\n",
+		sdio_port_num, on, mtk_wcn_cmb_sdio_pm_cb,
+		mtk_wcn_cmb_sdio_pm_data);
 	if (on) {
 #if 1
 		CMB_STUB_LOG_DBG("board_sdio_ctrl force off before on\n");

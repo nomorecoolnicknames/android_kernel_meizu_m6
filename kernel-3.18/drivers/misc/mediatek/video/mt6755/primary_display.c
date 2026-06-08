@@ -91,6 +91,8 @@
 #include "mt_spm_reg.h"
 #include "mt_spm_idle.h"
 
+extern void lcm_m6_diag_read_stock_pages(void);
+
 #define FRM_UPDATE_SEQ_CACHE_NUM (DISP_INTERNAL_BUFFER_COUNT+1)
 
 static disp_internal_buffer_info *decouple_buffer_info[DISP_INTERNAL_BUFFER_COUNT];
@@ -6024,6 +6026,38 @@ int primary_display_m6_lcm_reinit(unsigned int force_power)
 	_primary_path_unlock(__func__);
 
 	DISPERR("M6 LCM debug reinit: end ret=%d\n", ret);
+	return ret;
+}
+
+int primary_display_m6_lcm_stock_pages(void)
+{
+	DISP_STATUS ret = DISP_STATUS_OK;
+
+	DISPFUNC();
+	primary_display_esd_check_enable(0);
+	_primary_path_lock(__func__);
+	disp_irq_esd_cust_bycmdq(0);
+	if (pgc->state == 0) {
+		DISPMSG("M6 LCM stock_pages, primary display path is already sleep, skip\n");
+		goto done;
+	}
+
+	DISPERR("M6 LCM stock_pages: stop video path begin\n");
+	if (primary_display_is_video_mode())
+		dpmgr_path_ioctl(pgc->dpmgr_handle, NULL, DDP_STOP_VIDEO_MODE, NULL);
+
+	DISPERR("M6 LCM stock_pages: read begin\n");
+	lcm_m6_diag_read_stock_pages();
+	DISPERR("M6 LCM stock_pages: read end\n");
+
+	dpmgr_path_start(pgc->dpmgr_handle, CMDQ_DISABLE);
+	if (primary_display_is_video_mode())
+		dpmgr_path_trigger(pgc->dpmgr_handle, NULL, CMDQ_DISABLE);
+
+done:
+	disp_irq_esd_cust_bycmdq(1);
+	_primary_path_unlock(__func__);
+	primary_display_esd_check_enable(1);
 	return ret;
 }
 

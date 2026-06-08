@@ -199,6 +199,7 @@ extern "C" {
 	void DSI_Set_LFR(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, unsigned int mode,
 			 unsigned int type, unsigned int enable, unsigned int skip_num);
 	DSI_STATUS DSI_BIST_Pattern_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bool enable, unsigned int color);
+	DSI_STATUS DSI_M6_BIST_Full_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bool enable, unsigned int color);
 	int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq);
 	DSI_STATUS DSI_DumpRegisters(DISP_MODULE_ENUM module, int level);
 	void DSI_ForceConfig(int forceconfig);

@@ -400,6 +400,7 @@ static enum power_supply_property battery_props[] = {
 	/* Add for Battery Service */
 	POWER_SUPPLY_PROP_batt_vol,
 	POWER_SUPPLY_PROP_batt_temp,
+	POWER_SUPPLY_PROP_TEMP,
 	/* Add for EM */
 	POWER_SUPPLY_PROP_TemperatureR,
 	POWER_SUPPLY_PROP_TempBattVoltage,
@@ -757,10 +758,7 @@ static int battery_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_batt_vol:
 		val->intval = data->BAT_batt_vol;
 		break;
-#ifdef CONFIG_HUAWEI_CHARGER
-/*POWER_SUPPLY_PROP_TEMP same as POWER_SUPPLY_PROP_batt_temp,for huawei_charger*/
 	case POWER_SUPPLY_PROP_TEMP:
-#endif
 	case POWER_SUPPLY_PROP_batt_temp:
 		val->intval = data->BAT_batt_temp;
 		break;
@@ -789,9 +787,17 @@ static int battery_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_ChargerVoltage:
 		val->intval = data->BAT_ChargerVoltage;
 		break;
-	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-		val->intval = data->BAT_voltage_now;
+	case POWER_SUPPLY_PROP_VOLTAGE_NOW: {
+		int batt_voltage = data->BAT_voltage_now;
+
+		if (batt_voltage <= 0)
+			batt_voltage = data->BAT_batt_vol;
+		if (batt_voltage > 0 && batt_voltage < 20000)
+			batt_voltage *= 1000;
+
+		val->intval = batt_voltage;
 		break;
+	}
 	case POWER_SUPPLY_PROP_TempChr:
 		val->intval = data->TemperatureChr;
 		break;
@@ -2997,6 +3003,9 @@ static void mt_battery_thermal_check(void)
 
 void mt_battery_update_status(void)
 {
+	static unsigned int m6_chg_diag_wait_count;
+	static unsigned int m6_chg_diag_ready_count;
+
 #if defined(CONFIG_POWER_EXT)
 	battery_log(BAT_LOG_CRTI, "[BATTERY] CONFIG_POWER_EXT, no update Android.\n");
 #else
@@ -3005,8 +3014,23 @@ void mt_battery_update_status(void)
 		battery_update(&battery_main);
 		ac_update(&ac_main);
 		usb_update(&usb_main);
+
+		if ((m6_chg_diag_ready_count++ % 30) == 0)
+			battery_log(BAT_LOG_CRTI,
+				    "[M6_CHG] soc_ready update exist=%d type=%d ac=%d usb=%d status=%d cap=%d vol_mv=%d temp_deciC=%d voltage_now=%d ui_soc2=%d soc=%d\n",
+				    BMT_status.charger_exist, BMT_status.charger_type,
+				    ac_main.AC_ONLINE, usb_main.USB_ONLINE,
+				    battery_main.BAT_STATUS, battery_main.BAT_CAPACITY,
+				    battery_main.BAT_batt_vol, battery_main.BAT_batt_temp,
+				    battery_main.BAT_voltage_now, BMT_status.UI_SOC2,
+				    BMT_status.SOC);
 	} else {
-		battery_log(BAT_LOG_CRTI, "User space SOC init still waiting\n");
+		if ((m6_chg_diag_wait_count++ % 30) == 0)
+			battery_log(BAT_LOG_CRTI,
+				    "[M6_CHG] wait_soc_ready exist=%d type=%d bat_vol=%d temp=%d ui_soc2=%d soc=%d\n",
+				    BMT_status.charger_exist, BMT_status.charger_type,
+				    BMT_status.bat_vol, BMT_status.temperature,
+				    BMT_status.UI_SOC2, BMT_status.SOC);
 		return;
 	}
 

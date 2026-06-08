@@ -293,18 +293,31 @@ void hw_charging_enable_dp_voltage(int ison)
 
 int hw_charging_get_charger_type(void)
 {
+	unsigned int dcd_result;
+	unsigned int a1_result = 0;
+	unsigned int a2_result = 0;
+	unsigned int b2_result = 0;
+
 	CHR_Type_num = CHARGER_UNKNOWN;
 
 	hw_bc11_init();
 
-	if (hw_bc11_DCD()) {
-		if (hw_bc11_stepA1())
+	dcd_result = hw_bc11_DCD();
+	pr_err("[M6_CHG] bc11 DCD=%u\n", dcd_result);
+	if (dcd_result) {
+		a1_result = hw_bc11_stepA1();
+		pr_err("[M6_CHG] bc11 A1=%u\n", a1_result);
+		if (a1_result)
 			CHR_Type_num = APPLE_2_1A_CHARGER;
 		else
 			CHR_Type_num = NONSTANDARD_CHARGER;
 	} else {
-		if (hw_bc11_stepA2()) {
-			if (hw_bc11_stepB2())
+		a2_result = hw_bc11_stepA2();
+		pr_err("[M6_CHG] bc11 A2=%u\n", a2_result);
+		if (a2_result) {
+			b2_result = hw_bc11_stepB2();
+			pr_err("[M6_CHG] bc11 B2=%u\n", b2_result);
+			if (b2_result)
 				CHR_Type_num = STANDARD_CHARGER;
 			else
 				CHR_Type_num = CHARGING_HOST;
@@ -318,6 +331,8 @@ int hw_charging_get_charger_type(void)
 		pr_err("charger type: skip bc11 release for BC12 DCP SPEC\n");
 
 	dump_charger_name(CHR_Type_num);
+	pr_err("[M6_CHG] bc11 done type=%d dcd=%u a1=%u a2=%u b2=%u is_dcp=%d\n",
+		CHR_Type_num, dcd_result, a1_result, a2_result, b2_result, is_dcp_type);
 
 	return CHR_Type_num;
 
