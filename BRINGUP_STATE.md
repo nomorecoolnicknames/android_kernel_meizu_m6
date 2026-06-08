@@ -1,5 +1,95 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 MSDC2 callback compile-gate fix and CMD5 frontier
+
+PATCH HISTORY, **PROPER-FIX**, 2026-06-08: widen the MSDC2 SDIO callback
+compile gate so the active M6 combo configuration wires `mt_sdio_ops[2]` into
+the MSDC2 host even when `CONFIG_MTK_COMBO_COMM` is disabled. This is not a
+Wi-Fi/BT complete fix; it closes the proven `cb=NULL` WMT/MSDC2 integration
+blocker and exposes the next SDIO electrical/enumeration frontier.
+
+Hypothesis: FACT: the booted DT has `mtk-msdc.0/msdc2@11250000` enabled and
+runtime sysfs shows `mmc2` bound to that host, but the previous `#48` kernel
+did not contain the `M6 MSDC2 SDIO callbacks` marker string. FACT: the active
+out-dir `.config` has `CONFIG_MTK_COMBO=y`, `CONFIG_MTK_COMBO_WIFI=y`, and
+`CONFIG_MTK_COMBO_BT=y`, while `CONFIG_MTK_COMBO_COMM` is disabled. INFERENCE:
+the donor compile gate made `CFG_DEV_MSDC2` depend on the wrong combo symbol,
+so the MSDC2 host existed but never installed the WMT PM/EIRQ callbacks.
+
+Evidence:
+- Previous runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-0920-m6-msdc2-hif-diag-after-flash-711HEBSR277K5`.
+- Live DT/sysfs capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-live-dt-msdc2-711HEBSR277K5`.
+- New artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-0951-m6-msdc2-cfg-gate-fix-bootonly/boot-m6-msdc2-cfg-gate-fix-20260608.img`,
+  sha256 `f533f1eb027a1f54c6bec3241e43874de0dc326f59e646014414ed9520d157ff`.
+- New `Image.gz-dtb` sha256:
+  `ca7833c5a966a0bb96c9c4bff6da1e017f5a9c6cf69869f156ea0decb843f939`.
+- Matching `System.map` sha256:
+  `30fb32c0c7896562744a56b2e4377b6031516413c25c67325eda6a3cf3f35a64`.
+- Matching `vmlinux` sha256:
+  `5185470268f901d0bcc1aa6fb2fda23e2e796b60aa7d171d38718ef59faed09f`.
+- Matching `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Postflash capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-0951-m6-msdc2-cfg-gate-fix-after-flash-711HEBSR277K5`.
+- Flash identity: the first `dd` attempt did not write because toybox rejected
+  `conv=fsync`; the retry without `conv`, followed by `sync`, produced a full
+  16 MiB boot readback matching the new image sha256
+  `f533f1eb027a1f54c6bec3241e43874de0dc326f59e646014414ed9520d157ff`.
+- Runtime result: the phone rebooted to Android with
+  `Linux localhost 3.18.140 #49 SMP PREEMPT Mon Jun 8 09:50:11 CDT 2026
+  aarch64` and later reached `sys.boot_completed=yes`.
+- Closed blocker markers: `M6 CMB board_sdio_ctrl port=2 on=1
+  cb=ffffffc0008a5b00 data=ffffffc079858fc0`,
+  `M6 CMB SDIO on invoking pm cb=ffffffc0008a5b00 ... evt=272`, and
+  `M6 MSDC2 WMT resume: scheduling SDIO rescan`.
+- New frontier markers: `M6 MMC2 attach_sdio CMD5 probe err=0 ocr=0x0`,
+  `mtk-msdc 11250000.msdc2: no support for card's volts`, and
+  `mmc2: error -22 whilst initialising SDIO card`. `wlan0` is still absent.
+
+Files changed:
+- `kernel-3.18/drivers/mmc/host/mediatek/mt6755/mt_sd.h`: widens the
+  `CFG_DEV_MSDC2` gate from `CONFIG_MTK_COMBO_COMM` only to the active combo
+  family symbols `CONFIG_MTK_COMBO`, `CONFIG_MTK_COMBO_WIFI`, and
+  `CONFIG_MTK_COMBO_BT`.
+- `BRINGUP_STATE.md`: records artifact identity, flash/readback identity, closed
+  WMT callback blocker, and the next CMD5/OCR frontier.
+
+Why each file changed: `mt_sd.h` owns the compile-time gate that decides
+whether `msdc_io.c` can assign `request_sdio_eirq`, `enable_sdio_eirq`,
+`disable_sdio_eirq`, and `register_pm` for MSDC2. The active kernel config
+does build the combo/Wi-Fi/BT stack, but it does not enable the narrower donor
+`CONFIG_MTK_COMBO_COMM` symbol, so the old gate was inconsistent with the
+compiled WMT/HIF stack. This state file is the canonical M6 source-kernel
+handoff record for the resulting artifact and runtime boundary.
+
+Expected next marker: after the next SDIO power/pinctrl/voltage diagnostic or
+fix, CMD5 should return a nonzero SDIO OCR and move from `mmc2: error -22` to
+either `M6 SDIO probed-list add`/function enable markers or a more specific
+command/CRC/timeout/power marker. If CMD5 remains `ocr=0x0`, collect stock/DTS
+parity for MSDC2 `ocr_avail`, vmmc/vqmmc, pinctrl drive/pull, clock source,
+reset/CONSYS power sequencing, and card-detect/non-removable policy before
+changing higher Wi-Fi, BT, firmware, or NVRAM layers.
+
+Rollback condition: revert this fix if it regresses boot/ADB, eMMC/mmc0,
+external storage/mmc1, WMT chip power-on, or causes MSDC2 to lose the host/IRQ
+that existed before. Do not revert solely because Wi-Fi/BT still fail at the
+new CMD5/OCR frontier; that is expected until the SDIO electrical/enumeration
+path is fixed.
+
+Verification commands:
+
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+strings /srv/forge/work/m6-source-kernel-manual-20260520/out/vmlinux | rg 'M6 MSDC2 SDIO callbacks|M6 CMB SDIO register_pm'
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260608-0951-m6-msdc2-cfg-gate-fix-bootonly/boot-m6-msdc2-cfg-gate-fix-20260608.img
+CAP=/srv/forge/android/meizu_m6/captures/20260608-0951-m6-msdc2-cfg-gate-fix-after-flash-711HEBSR277K5
+rg -n 'M6 CMB board_sdio_ctrl|M6 CMB SDIO on invoking pm cb|M6 MSDC2 WMT resume|M6 MMC2 attach_sdio CMD5|no support for card.s volts|mmc2: error -22|M6 SDIO probed-list add' "$CAP/dmesg.after_reboot_early.txt" "$CAP/logcat.after_reboot_early.txt"
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'getprop sys.boot_completed; getprop service.wcn.driver.ready; ip link show wlan0 2>/dev/null || true'
+```
+
 ## 2026-06-08 display history audit
 
 STATE-ONLY AUDIT, 2026-06-08: display bring-up history was reread against the

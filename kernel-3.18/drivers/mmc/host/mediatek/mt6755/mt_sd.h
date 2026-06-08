@@ -157,7 +157,8 @@ enum {
 typedef void (*sdio_irq_handler_t)(void *);  /* external irq handler */
 typedef void (*pm_callback_t)(pm_message_t state, void *data);
 
-#ifdef CONFIG_MTK_COMBO_COMM
+#if defined(CONFIG_MTK_COMBO_COMM) || defined(CONFIG_MTK_COMBO) || \
+	defined(CONFIG_MTK_COMBO_WIFI) || defined(CONFIG_MTK_COMBO_BT)
 #include <mt-plat/mtk_wcn_cmb_stub.h>
 #define CFG_DEV_MSDC2
 #endif
@@ -829,4 +830,3 @@ void mmc_remove_card(struct mmc_card *card);
 	 ((x)->arg & (1 << 15)))
 
 #endif /* end of  MT_SD_H */
-
