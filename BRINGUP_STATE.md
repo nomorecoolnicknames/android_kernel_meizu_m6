@@ -87,9 +87,9 @@ Expected next marker: after flashing
 scrcpy UI and run:
 
 ```bash
-adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_truth_window:ui-visible" > /d/disp/dbg'
-adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_dsi_dcs_status:stock_pages" > /d/disp/dbg'
-adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_truth_window:after-stock-pages" > /d/disp/dbg'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_truth_window:ui-visible" > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_dsi_dcs_status:stock_pages" > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_truth_window:after-stock-pages" > /d/mtkfb'
 ```
 
 Fresh dmesg should contain the full `M6 DISPLAY truth[...]` set for
@@ -127,6 +127,73 @@ cmp Image.gz-dtb verify-unpack/zImage
 cmp initrd.img verify-unpack/initrd.img
 abootimg -i boot-m6-display-truth-window-20260608.img
 ```
+
+Runtime capture result, 2026-06-08:
+
+- Capture verdict:
+  `/srv/forge/android/meizu_m6/captures/20260608-132702-m6-display-truth-window-711HEBSR277K5/CAPTURE_VERDICT.md`.
+- Capture files:
+  `/srv/forge/android/meizu_m6/captures/20260608-132702-m6-display-truth-window-711HEBSR277K5`.
+- Valid flashed boot identity:
+  `identity-after-truth.txt` sha256
+  `97eb215b005b1e2332f0431ed41c14e051e251b816ed384817f5e153b4bfd61a`;
+  boot partition and `/data/local/tmp/boot-m6-display-truth-window-20260608.img`
+  both read back as
+  `f1f4291b385277cf7a7e51ddd5b96c9b31e5446878213d89f291daf94f9bb9a1`.
+- Capture hashes:
+  `truth-command-output.txt`
+  `4476248bdc818e614e19d535bfcf6fdb546cac9981cc939ba5f2dda559a561dc`;
+  `key-display-truth-lines.txt`
+  `05c2c43e86da6cf925de496f4ce42201db9a82ea9ba77bfc8468b72844a017e2`;
+  `dmesg-after-truth.txt`
+  `bec9e20e19b1138b05ea94521b87aa5c8fee836df2e72f595bf206dd382179dd`;
+  `logcat-after-truth.txt`
+  `02e9709c13401a3ca7c33fdcb1bb7e426d7e142cdfd089c2de26da67264734a6`;
+  `screen-after-truth.png`
+  `3a572da79c87e5946cddabe013cd69d61aed85c97a13139a8d03da028feb2680`.
+- Flash note: direct `adb push boot.img /dev/block/.../boot` appeared to write
+  but did not persist after reboot. The valid persistent path for this capture
+  was `adb push` to `/data/local/tmp`, then Android `dd` to the boot block
+  without `conv=fsync`; toybox rejected `conv=fsync` with
+  `dd: conv option disabled`.
+- FACT: Android booted with `sys.boot_completed=1`.
+- FACT: logical framebuffer content is not black. `screen-after-truth.png` is
+  720x1280 and ImageMagick reports red/green/blue channel means around
+  75/75/76 with min 0 and max 255.
+- FACT: OVL/RDMA/DDP/DSI/MIPITX are active in the truth window. OVL has L0
+  RGBA8888 and L1 PRGBA8888 720x1280-ish layers; RDMA0 is enabled with
+  `GLOBAL=0x101`, size `720x1280`, and moving in/out counters; direct
+  RDMA-to-DSI bits show `rdma_sout=1/1`, `rdma_dsi=1/1`, `dsi_in=1/1`;
+  DSI samples include `STATE7=.../Video data period`.
+- FACT: DSI/MIPITX visible state is stock-like: `MODE=0x3`, `TXRX=0x1003c`,
+  `PS=0x30870`, `VSA/VBP/VFP/VACT=0x14/0x18/0x40/0x500`,
+  `PHY_SYNCON=0xb8`, `VM_CMD=0xa511521`, lanes
+  `0x603/0x601/0x601/0x601/0x601`, lane map `0/1/2/3/4/0`, PLL on,
+  ISO off, and power ack set.
+- FACT: LP DCS reads work. `stock_pages` returns page5 sentinels including
+  `page5_2a=0x18`, `page5_54=0x28`, `page5_55=0x25`, and `page5_1a=0x50`.
+- FACT: the suspicious panel/backlight state is public DCS `0x51=0x00`,
+  public DCS `0x53=0x00`, LED cached `lcd-backlight bl=10 duty=21`, and no
+  fresh `M6 DISPLAY truth[backlight-write][panel]` marker in this capture.
+- INFERENCE: PQ, HWC/SF logical composition, ordinary OVL/RDMA scanout, and
+  normal DSI/MIPITX host state are demoted as first suspects for the physical
+  black LCD. Do not start the next cycle with another broad PQ/route patch
+  unless fresh evidence contradicts this capture.
+- Next branch: `DIAGNOSTIC` first, optionally manual `ISOLATION`, for a narrow
+  backlight/panel command-state timeline. Add a debugfs-only forced replay
+  path for `0x53`/`0x51`, before/after DCS readbacks, LED/PWM/PMIC snapshots,
+  and brightness 0/10/255 windows. If forced writes/readbacks are correct and
+  physical BIST/UI stay black while the logical screencap remains non-black,
+  escalate to panel HS-video acceptance or optical hardware rather than
+  HWC/PQ/RDMA.
+- Expected next marker: stable `truth[ui-visible]` tags without the shell
+  newline suffix, plus lines proving before/after values for DCS `0x51`,
+  `0x53`, `0x55`, LED/PWM/PMIC state, and optional RGB BIST observation
+  windows.
+- Rollback condition for the next replay patch: revert if it mutates boot-time
+  panel state without manual invocation, breaks LP DCS reads, regresses
+  `sys.boot_completed=1`, or destabilizes video after the debugfs command
+  returns.
 
 ## 2026-06-08 MSDC2 CMD-state diagnostic compile fix
 
