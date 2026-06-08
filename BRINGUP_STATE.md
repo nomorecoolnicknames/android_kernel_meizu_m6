@@ -1,5 +1,119 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 MSDC2 VCN rail power-enable and CMD5 reset/pinctrl frontier
+
+PATCH HISTORY, **PROPER-FIX / DIAGNOSTIC**, 2026-06-08: make the active MSDC2
+SDIO power path explicitly operate the Wi-Fi `vmmc` and `vqmmc` regulator
+handles, prove their voltage/enable state in the CMD5 window, and record the
+new Wi-Fi/BT frontier. This is a real board-power wiring fix and a diagnostic
+frontier advance; it does not claim WLAN is complete.
+
+Hypothesis: FACT: the previous `#51` boot proved that the compiled DTB binds
+MSDC2 to `vcn33_wifi` and `vcn18`, but the host id 2 `msdc_sdio_power()` branch
+only logged those handles and did not perform regulator enable/voltage work.
+FACT: WMT/CONSYS reaches chip id `0x00000326` and calls the MSDC2 PM callback,
+but CMD5 still returns `ocr=0x0` and no `wlan0` is created. HYPOTHESIS: if the
+missing SDIO-card response was caused by the MSDC2 branch leaving the Wi-Fi
+rails inactive or unverified, enabling/proving `vcn33_wifi` at 3.3 V and
+`vcn18` at 1.8 V before CMD5 would move enumeration past zero OCR. INFERENCE
+after flashing `#52`: both rails are present and enabled at the expected
+voltages when CMD5 runs, while OCR remains zero. The earliest remaining
+evidence-backed Wi-Fi/BT blocker is therefore SDIO physical enumeration:
+combo reset/enable GPIO, pinctrl pull/drive, SDIO clock/transaction timing,
+card-detect/non-removable rescan policy, or stock WMT/LK sequencing before
+CMD5. Do not chase Wi-Fi firmware, NVRAM, HAL, or Android networking until
+CMD5 returns a nonzero SDIO OCR or a lower-level command/reset marker.
+
+Evidence:
+- Source patch build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-msdc2-vcn-power-enable-20260608.log`.
+- New artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1039-m6-msdc2-vcn-power-enable-bootonly/boot-m6-msdc2-vcn-power-enable-20260608.img`,
+  sha256 `a04b88e3cf6234eb5f602478046c12313ce6f6d5933c4b727504fa87a4099ad1`.
+- New `Image.gz-dtb` sha256:
+  `c49862cf58541aa7477a980f126fed6a851c9045e3a40bb94a0919a02c4757a3`.
+- Matching compiled `meizu_m6.dtb` sha256:
+  `bdcecd02d7e3ea4ffcd558c88f1a17107ffbd067c9ccc6c908b8d3e2a29a03b8`.
+- Matching `System.map` sha256:
+  `03538ab097cfe4ade6d261e945d8db9d00f5918fb8d09db1b09bf62f553511fe`.
+- Matching `vmlinux` sha256:
+  `4e87302a17da3e908994423f8f57658824a4a5ffd1ec0748532dff56b4db1318`.
+- Matching `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Marker strings verified in the matching `vmlinux`: `M6 MSDC2 rail %s on=%u`,
+  `vmmc/vcn33_wifi`, `vqmmc/vcn18`, and `M6 MSDC2 sdio_power`.
+- Flash identity: the boot partition readback in
+  `/srv/forge/android/meizu_m6/captures/20260608-1039-m6-msdc2-vcn-power-enable-after-flash-711HEBSR277K5/postflash-readback-sha256.txt`
+  matches the local boot image sha256
+  `a04b88e3cf6234eb5f602478046c12313ce6f6d5933c4b727504fa87a4099ad1`.
+- Runtime identity: the phone rebooted with
+  `Linux localhost 3.18.140 #52 SMP PREEMPT Mon Jun 8 10:52:44 CDT 2026
+  aarch64`.
+- Android boot state: delayed status capture
+  `/srv/forge/android/meizu_m6/captures/20260608-1039-m6-msdc2-vcn-power-enable-after-flash-711HEBSR277K5/delayed-status-and-dmesg-tail.txt`
+  shows `sys.boot_completed=1`, `init.svc.bootanim=stopped`,
+  `service.wcn.driver.ready=yes`, and later `wlan.driver.status=unloaded`.
+- Rail proof markers from the same capture/logcat:
+  `M6 MSDC2 sdio_power on=1 ... g_io=1800000 g_flash=3300000`,
+  `M6 MSDC2 rail vmmc/vcn33_wifi on=1 target_uv=3300000 before_en=1
+  before_uv=3300000 set_ret=0 en_ret=0 dis_ret=0 after_en=1
+  after_uv=3300000 status=3300000`, and
+  `M6 MSDC2 rail vqmmc/vcn18 on=1 target_uv=1800000 before_en=1
+  before_uv=1800000 set_ret=0 en_ret=0 dis_ret=0 after_en=1
+  after_uv=1800000 status=1800000`.
+- Still-open frontier markers: `M6 MMC2 attach_sdio CMD5 probe err=0 ocr=0x0`,
+  `mtk-msdc 11250000.msdc2: no support for card's volts`,
+  `M6 MMC2 attach_sdio err=-22 ocr=0x0 rocr=0x0 funcs=0`,
+  `hif_sdio_stp_on:M6 SDIO no supported func probed`, and no live `wlan0`.
+- Capture-local report:
+  `/srv/forge/android/meizu_m6/captures/20260608-1039-m6-msdc2-vcn-power-enable-after-flash-711HEBSR277K5/wifi-msdc2-vcn-power-enable-result.md`.
+
+Files changed:
+- `kernel-3.18/drivers/mmc/host/mediatek/mt6755/msdc_io.c`: adds a bounded
+  M6 MSDC2 regulator helper and uses it in host id 2 `msdc_sdio_power()` to
+  prove/enable `vcn33_wifi` and `vcn18`; reapplies the 1.8 V tdsel/rdsel/drive
+  selection while the SDIO card is powered.
+- `BRINGUP_STATE.md`: records artifact identity, readback identity, runtime
+  markers, the closed rail-enable blocker, and the next SDIO enumeration
+  frontier.
+- `captures/20260608-1039-m6-msdc2-vcn-power-enable-after-flash-711HEBSR277K5/wifi-msdc2-vcn-power-enable-result.md`:
+  capture-local verdict for the flashed `#52` boot.
+
+Why each file changed: `msdc_io.c` owns the legacy MTK host power callback that
+WMT invokes through the fixed MSDC2 PM callback. The helper is local to the M6
+diagnostic path and uses the regulator handles proven by the previous DT patch,
+so it avoids a broad fake-ready or userspace workaround. This state file is the
+canonical M6 handoff record for the kernel tree. The capture-local report keeps
+the runtime verdict next to the logs used to derive it.
+
+Expected next marker: the next Wi-Fi/BT diagnostic patch should show the
+board-level reset/enable and pinctrl state before CMD5: combo/Wi-Fi reset GPIO
+number, direction, value, pull, mode, SDIO pin mode/pull/drive, host clock and
+command result around CMD5, plus whether WMT toggles any stock GPIO before
+`mtk_wcn_cmb_sdio_on()`. A successful proper fix should move from
+`CMD5 ocr=0x0` to a nonzero SDIO OCR and then into SDIO function registration
+or a more specific command/CRC/timeout error.
+
+Rollback condition: revert this patch if boot/ADB, eMMC/mmc0, external
+storage/mmc1, WMT chip power-on, regulator init, suspend/resume, or battery
+state regresses, or if stock-source evidence proves `vcn33_wifi`/`vcn18` must
+not be controlled from the MSDC2 power callback. Do not revert solely because
+Wi-Fi still fails at `CMD5 ocr=0x0`; the fresh capture proves that this is the
+new frontier after the rail-enable blocker is closed.
+
+Verification commands:
+
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git show --stat --oneline HEAD
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260608-1039-m6-msdc2-vcn-power-enable-bootonly/boot-m6-msdc2-vcn-power-enable-20260608.img
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260608-1039-m6-msdc2-vcn-power-enable-bootonly/SHA256SUMS
+CAP=/srv/forge/android/meizu_m6/captures/20260608-1039-m6-msdc2-vcn-power-enable-after-flash-711HEBSR277K5
+cmp /srv/forge/android/export/meizu_m6_artifacts/20260608-1039-m6-msdc2-vcn-power-enable-bootonly/boot-m6-msdc2-vcn-power-enable-20260608.img "$CAP/postflash-boot-readback-msdc2-vcn-power-enable-16m.img"
+rg -n 'Linux localhost 3.18.140 #52|M6 MSDC2 rail|M6 MSDC2 sdio_power|M6 MMC2 attach_sdio CMD5|no support for card.s volts|M6 SDIO no supported func|sys.boot_completed|wlan.driver.status' "$CAP"/*.txt
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'getprop sys.boot_completed; getprop init.svc.bootanim; getprop service.wcn.driver.ready; getprop wlan.driver.status; ip link show wlan0 2>/dev/null || true'
+```
+
 ## 2026-06-08 MSDC2 VCN rail DT binding and CMD5 power frontier
 
 PATCH HISTORY, **PROPER-FIX / DIAGNOSTIC**, 2026-06-08: bind MSDC2's SDIO

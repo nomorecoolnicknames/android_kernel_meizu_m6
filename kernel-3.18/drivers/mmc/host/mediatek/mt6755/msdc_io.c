@@ -19,6 +19,7 @@
 
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/err.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -102,6 +103,66 @@ void msdc_ldo_power(u32 on, struct regulator *reg, int voltage_mv, u32 *status)
 			pr_err("msdc not power on\n");
 		}
 	}
+}
+
+static int m6_msdc2_ldo_power(u32 on, const char *name,
+	struct regulator *reg, int voltage_mv, u32 *status)
+{
+	int voltage_uv = voltage_mv * 1000;
+	int before_en = -EINVAL;
+	int before_uv = -EINVAL;
+	int after_en = -EINVAL;
+	int after_uv = -EINVAL;
+	int set_ret = 0;
+	int en_ret = 0;
+	int dis_ret = 0;
+
+	if (IS_ERR_OR_NULL(reg)) {
+		pr_warn_ratelimited("M6 MSDC2 rail %s on=%u missing reg=%p status=%u\n",
+			name, on, reg, *status);
+		return -ENODEV;
+	}
+
+	before_en = regulator_is_enabled(reg);
+	before_uv = regulator_get_voltage(reg);
+
+	if (on) {
+		if (*status == 0) {
+			set_ret = regulator_set_voltage(reg, voltage_uv, voltage_uv);
+			if (!set_ret)
+				en_ret = regulator_enable(reg);
+			if (!set_ret && !en_ret)
+				*status = voltage_uv;
+		} else if (*status != voltage_uv) {
+			dis_ret = regulator_disable(reg);
+			if (!dis_ret) {
+				set_ret = regulator_set_voltage(reg, voltage_uv,
+					voltage_uv);
+				if (!set_ret)
+					en_ret = regulator_enable(reg);
+				if (!set_ret && !en_ret)
+					*status = voltage_uv;
+			}
+		}
+	} else {
+		if (*status != 0) {
+			dis_ret = regulator_disable(reg);
+			if (!dis_ret)
+				*status = 0;
+		}
+	}
+
+	after_en = regulator_is_enabled(reg);
+	after_uv = regulator_get_voltage(reg);
+	pr_warn_ratelimited("M6 MSDC2 rail %s on=%u target_uv=%d before_en=%d before_uv=%d set_ret=%d en_ret=%d dis_ret=%d after_en=%d after_uv=%d status=%u\n",
+		name, on, voltage_uv, before_en, before_uv, set_ret, en_ret,
+		dis_ret, after_en, after_uv, *status);
+
+	if (set_ret)
+		return set_ret;
+	if (en_ret)
+		return en_ret;
+	return dis_ret;
 }
 
 void msdc_dump_ldo_sts(struct msdc_host *host)
@@ -272,7 +333,24 @@ void msdc_sdio_power(struct msdc_host *host, u32 on)
 		pr_warn_ratelimited("M6 MSDC2 sdio_power on=%u vmmc=%p vqmmc=%p g_io=%u g_flash=%u\n",
 			on, host->mmc->supply.vmmc, host->mmc->supply.vqmmc,
 			g_msdc2_io, g_msdc2_flash);
-		g_msdc2_flash = g_msdc2_io;
+		if (on) {
+			m6_msdc2_ldo_power(on, "vmmc/vcn33_wifi",
+				host->mmc->supply.vmmc, VOL_3300,
+				&g_msdc2_flash);
+			m6_msdc2_ldo_power(on, "vqmmc/vcn18",
+				host->mmc->supply.vqmmc, VOL_1800,
+				&g_msdc2_io);
+			msdc_set_tdsel(host, MSDC_TDRDSEL_1V8, 0);
+			msdc_set_rdsel(host, MSDC_TDRDSEL_1V8, 0);
+			msdc_set_driving(host, host->hw, 1);
+		} else {
+			m6_msdc2_ldo_power(on, "vqmmc/vcn18",
+				host->mmc->supply.vqmmc, VOL_1800,
+				&g_msdc2_io);
+			m6_msdc2_ldo_power(on, "vmmc/vcn33_wifi",
+				host->mmc->supply.vmmc, VOL_3300,
+				&g_msdc2_flash);
+		}
 		break;
 #endif
 
