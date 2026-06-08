@@ -136,6 +136,55 @@ Boot image:
 `abootimg -x` verification passed: unpacked `zImage`, `initrd.img`, and
 `bootimg.cfg` match the artifact inputs.
 
+FLASH/CAPTURE RESULT, 2026-06-08: the boot-only artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260608-0909-m6-msdc2-hif-diag-bootonly/boot-m6-msdc2-hif-diag-20260608.img`
+was flashed to `/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot`
+on device `711HEBSR277K5`. A full 16 MiB postflash readback
+`postflash-boot-readback-msdc2-hif-diag-16m.img` matched the local boot image
+byte-for-byte, sha256
+`08837a1615800e0da47c7d863f64cb09e2cdce2f64f6962bf0175377ffdda531`.
+The phone rebooted to Android with `sys.boot_completed=1` and kernel
+`3.18.140 #48 SMP PREEMPT Mon Jun 8 09:08:26 CDT 2026`.
+
+Runtime capture:
+`/srv/forge/android/meizu_m6/captures/20260608-0920-m6-msdc2-hif-diag-after-flash-711HEBSR277K5`.
+FACT: Wi-Fi/BT still fails at the SDIO host boundary. WMT repeatedly reads
+CONSYS chip `0x00000326`, calls `SDIO_HW` for slot 2, and `board_sdio_ctrl()`
+still logs `cb=(null) data=(null)`, followed by `M6 SDIO no supported func
+probed` and `WMT turn on WIFI fail`. No `M6 MSDC2 probe`,
+`M6 MSDC2 of_parse`, `M6 MSDC2 register_pm`, or
+`M6 CMB SDIO register_pm` marker appears. `/sys/bus/mmc/devices` shows only
+`mmc0:0001` eMMC (`QE63MB`) and no SDIO function. INFERENCE: the current
+runtime blocker is earlier than WMT callback invocation: the active kernel/DTB
+is not binding/probing MSDC2 SDIO as assumed, or the donor-derived source/DTS
+does not represent the actually active hardware contract. Treat source/DTS as
+suspect until confirmed by the booted DTB and runtime probe markers.
+
+Root display refresh capture:
+`/srv/forge/android/meizu_m6/captures/20260608-0935-m6-display-lowlevel-root-refresh-711HEBSR277K5`.
+FACT: the same kernel `#48` still proves the low-level display boundary below
+SurfaceFlinger/HWC and below ordinary DDP/RDMA/DSI-controller state. The root
+capture shows backlight sysfs write to `255`, LCM backlight callback
+`request=255 dcs51=0xff`, SurfaceFlinger Built-in Screen `powerMode=2`,
+visible HWC layers plus `FB TARGET`, and DisplayManager state `ON`. DSI
+markers show RT-cal parity `raw_valid=1 raw=0x6666699` with LK/live/saved
+RT values `0x6/0x6/0x6/0x6/0x6`, MIPITX lanes
+`0x603/0x601/0x601/0x601/0x601`, active PLL/power state, and stable
+VM/timing snapshots. `m6_dsi_dcs_status:stock_pages` reads private panel pages
+and again reports `page5_2a=0x18`. RGB full-BIST latches controller self-test
+state (`BIST_CON=0x200446`, `self_pat=1`, `bist_en=1`, `fix=1`, `lane=4`)
+and disable clears `BIST_CON=0x0`. ATA/DCS reads still return panel identity
+`display_id=15 20 00`, `power_mode=9c`, and `pixel_format=07`.
+
+INFERENCE: if the physical panel remains lit black during these BIST windows,
+do not reopen PQ, HWC, RDMA/OVL, generic backlight, reset/bias/TPS, or the
+visible panel init table as the first frontier. The remaining display problem
+is below or beside controller-visible state: stock-only MIPITX/DSI/panel side
+effects, lane electrical polarity/mapping/drive/settle, private ILI9881P
+acceptance state, or board-level panel optical/LED behavior that Linux cannot
+observe through DCS/BIST registers. Stock boot/LK/runtime evidence wins over
+the donor source tree whenever they disagree.
+
 ## 2026-06-08 DSI PHY RT-cal / VM-payload diagnostic
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add bounded DSI markers for the
