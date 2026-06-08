@@ -6101,12 +6101,38 @@ static void primary_display_m6_dump_ovl_request_truth(const char *tag)
 	}
 }
 
+static void primary_display_m6_copy_tag(char *dst, size_t dst_size, const char *tag)
+{
+	const char *src = tag ? tag : "manual";
+	const char fallback[] = "manual";
+	size_t i = 0;
+
+	if (!dst_size)
+		return;
+
+	while (i + 1 < dst_size && src[i] &&
+	       src[i] != '\n' && src[i] != '\r' &&
+	       src[i] != ' ' && src[i] != '\t') {
+		dst[i] = src[i];
+		i++;
+	}
+	dst[i] = '\0';
+
+	if (dst[0])
+		return;
+
+	for (i = 0; i + 1 < dst_size && fallback[i]; i++)
+		dst[i] = fallback[i];
+	dst[i] = '\0';
+}
+
 int primary_display_m6_truth_window(const char *tag)
 {
 	DISP_MODULE_ENUM dst_module;
-	const char *safe_tag = tag ? tag : "manual";
+	char safe_tag[64];
 	int busy;
 
+	primary_display_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
 	_primary_path_lock(__func__);
 	dst_module = dpmgr_path_get_dst_module(pgc->dpmgr_handle);
 	busy = dpmgr_path_is_busy(pgc->dpmgr_handle);
@@ -6124,6 +6150,66 @@ int primary_display_m6_truth_window(const char *tag)
 	_primary_path_unlock(__func__);
 
 	return 0;
+}
+
+int primary_display_m6_route_probe(const char *tag, unsigned int action)
+{
+	DISP_MODULE_ENUM dst_module;
+	char safe_tag[64];
+	char before_tag[80];
+	char after_tag[80];
+	int busy;
+	int trigger_ret = 0;
+
+	primary_display_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+	snprintf(before_tag, sizeof(before_tag), "%s-before", safe_tag);
+	snprintf(after_tag, sizeof(after_tag), "%s-after", safe_tag);
+
+	_primary_path_lock(__func__);
+	dst_module = dpmgr_path_get_dst_module(pgc->dpmgr_handle);
+	busy = dpmgr_path_is_busy(pgc->dpmgr_handle);
+	DISPERR("M6 DISPLAY route_probe[%s]: begin action=0x%x state=%u session_mode=%d primary_mode=%d video=%d busy=%d dst=%s/%d cmdq=%d bypass_pq=%d\n",
+		safe_tag, action, pgc->state, pgc->session_mode,
+		primary_display_mode, primary_display_is_video_mode(), busy,
+		ddp_get_module_name(dst_module), dst_module,
+		primary_display_cmdq_enabled(),
+		disp_helper_get_option(DISP_OPT_BYPASS_PQ));
+	primary_display_m6_dump_ovl_request_truth(before_tag);
+	dpmgr_m6_dump_primary_video_truth(before_tag);
+	dsi_m6_dump_live(before_tag);
+
+	if (action & 0x1) {
+		DISPERR("M6 DISPLAY route_probe[%s]: manual trigger begin blocking=0\n",
+			safe_tag);
+		trigger_ret = primary_display_trigger_nolock(0, NULL, 0);
+		DISPERR("M6 DISPLAY route_probe[%s]: manual trigger end ret=%d busy=%d\n",
+			safe_tag, trigger_ret, dpmgr_path_is_busy(pgc->dpmgr_handle));
+	}
+
+	if (action & 0x2) {
+		if (pgc->cmdq_handle_trigger) {
+			DISPERR("M6 DISPLAY route_probe[%s]: trigger-loop rekick begin handle=%p\n",
+				safe_tag, pgc->cmdq_handle_trigger);
+			_cmdq_stop_trigger_loop();
+			_cmdq_build_trigger_loop();
+			_cmdq_start_trigger_loop();
+			DISPERR("M6 DISPLAY route_probe[%s]: trigger-loop rekick end busy=%d\n",
+				safe_tag, dpmgr_path_is_busy(pgc->dpmgr_handle));
+		} else {
+			DISPERR("M6 DISPLAY route_probe[%s]: trigger-loop rekick skipped null handle\n",
+				safe_tag);
+		}
+	}
+
+	msleep(80);
+	dpmgr_m6_dump_primary_video_truth(after_tag);
+	dsi_m6_dump_live(after_tag);
+	m6_led_dump_backlight_truth(after_tag);
+	DISPERR("M6 DISPLAY route_probe[%s]: end trigger_ret=%d busy=%d\n",
+		safe_tag, trigger_ret, dpmgr_path_is_busy(pgc->dpmgr_handle));
+	_primary_path_unlock(__func__);
+
+	return trigger_ret;
 }
 
 int primary_display_manual_lock(void)

@@ -231,6 +231,7 @@ int primary_display_manual_unlock(void);
 int primary_display_m6_lcm_reinit(unsigned int force_power);
 int primary_display_m6_lcm_stock_pages(void);
 int primary_display_m6_truth_window(const char *tag);
+int primary_display_m6_route_probe(const char *tag, unsigned int action);
 int primary_display_start(void);
 int primary_display_stop(void);
 int primary_display_esd_recovery(void);

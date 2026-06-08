@@ -1,5 +1,104 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 Display route-probe diagnostic
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add manual
+`m6_display_route_probe[:dump|trigger|rekick|mask]` debugfs instrumentation to
+verify whether the nonzero-brightness black image is actually reaching the
+OVL/RDMA/DSI scanout route. Default `trigger` runs one normal non-blocking
+primary trigger under the primary display lock and snapshots OVL request, DDP
+route/RDMA, DSI, and backlight before/after. `dump` is read-only. `rekick`
+also rebuilds/restarts the existing trigger loop and is manual-only isolation.
+
+Hypothesis: FACT: capture
+`/srv/forge/android/meizu_m6/captures/20260608-173253-m6-dsi-bist-route-kernelonly-711HEBSR277K5`
+was collected from verified boot image
+`f1f4291b385277cf7a7e51ddd5b96c9b31e5446878213d89f291daf94f9bb9a1`, Android
+had `sys.boot_completed=1`, and the backlight cache was nonzero/high. FACT:
+DSI self-pattern programming reached `BIST_CON=0x200446 self_pat=1 bist_en=1
+fix=1 lane=4`, but the ordinary route stayed `VALID=0x0`, RDMA counters stayed
+`0/0`, and OVL0 kept reporting abnormal SOF. HYPOTHESIS: the remaining gap is
+whether the real UI buffer is latched and scanned after userspace or
+stock-pages/BIST interactions; manual trigger/rekick probes should prove
+whether route valid/counters can recover or whether the frontier remains below
+OVL/RDMA trigger.
+
+Evidence:
+- Runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-173253-m6-dsi-bist-route-kernelonly-711HEBSR277K5`.
+- `identity-before-bist.txt`: `sys.boot_completed=1`, kernel
+  `Linux localhost 3.18.140 #55 SMP PREEMPT Mon Jun 8 13:18:20 CDT 2026`,
+  and boot partition sha256
+  `f1f4291b385277cf7a7e51ddd5b96c9b31e5446878213d89f291daf94f9bb9a1`.
+- `key-bist-route-lines.txt`: repeated `M6 DDP timeout[...] route VALID=0x0
+  READY=0x4000937a` in pre-bist, red, green, blue, post-bist, and
+  post-stock-pages windows.
+- `key-bist-route-lines.txt`: BIST red/green/blue snapshots with
+  `BIST_CON=0x200446 self_pat=1 bist_en=1 fix=1 lane=4`.
+- `dmesg-after-bist.txt`: continuous `IRQ: ovl0 abnormal SOF!`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-display-route-probe-diag-20260608.log`,
+  ending in `CAT arch/arm64/boot/Image.gz-dtb`.
+- Export artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1750-m6-display-route-probe-bootonly`.
+- Built `Image.gz-dtb` sha256:
+  `1c6a4326aab25144680dfab20aba8b994a57ff026057373ada21aa089445e5e4`.
+- Built `System.map` sha256:
+  `11c2e08002a57da6b1b461f243f4aaca0e03ae1a5a6d9b4a8642591863770940`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Built boot-only artifact sha256:
+  `e26a2b991cefba405604d8a184010dfba05216c146dd34702a97d56e97610ae6`.
+- `sha256sum -c SHA256SUMS` passed in the export directory. `cmp Image.gz-dtb
+  verify-unpack/zImage` and `cmp initrd.img verify-unpack/initrd.img` passed.
+- Marker string check includes `m6_display_route_probe` and
+  `M6 DISPLAY route_probe[%s]` begin/trigger/rekick/end anchors.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds
+  `m6_display_route_probe` debugfs parsing and help text.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: trims
+  manual diagnostic tags and dumps OVL/DDP/DSI before/after a manual trigger
+  or trigger-loop rekick.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.h`: exports
+  the route-probe helper.
+- `BRINGUP_STATE.md`: records the evidence, expected markers, rollback, and
+  verification commands.
+
+Why each file changed: `disp_debug.c` is the existing manual display command
+surface. `primary_display.c` owns the primary path lock, trigger helper,
+trigger loop, OVL request dump, and DDP/DSI snapshot calls, so it can answer
+the route question without boot-time behavior changes. `primary_display.h`
+keeps the debugfs call typed. This state file is the M6 handoff record.
+
+Expected next marker: after flashing, run `dump`, `trigger`, then only if
+needed `rekick`. If frame route is healthy, `*-after` must show route valid
+bits and RDMA in/out counters advancing. If `trigger` and `rekick` leave
+`VALID=0x0`, RDMA `0/0`, and abnormal SOF unchanged while DSI BIST remains
+programmable, the current frontier is OVL/RDMA trigger/scanout rather than
+brightness or HWC composition.
+
+Rollback condition: revert if the manual command deadlocks the primary display
+lock, regresses boot to ADB/SurfaceFlinger, floods logs beyond parseability, or
+if `rekick` destabilizes the video trigger loop. Do not promote this patch to
+`PROPER-FIX`; it is evidence only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_route_probe:dump" > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_route_probe:trigger" > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo "m6_display_route_probe:rekick" > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell dmesg | rg 'M6 DISPLAY route_probe|M6 DDP timeout|M6 DISPLAY truth|M6 DSI snapshot|abnormal SOF'
+```
+
 ## 2026-06-08 Display truth-window diagnostic boot
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add a read-only manual

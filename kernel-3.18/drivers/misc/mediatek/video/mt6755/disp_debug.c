@@ -132,6 +132,8 @@ char MTKFB_STR_HELP[] =
 	"\n"
 	"        m6_display_truth_window[:tag]\n"
 	"             Meizu M6 read-only DDP/OVL/RDMA/DSI/MIPITX/backlight truth dump\n"
+	"        m6_display_route_probe[:dump|trigger|rekick|mask]\n"
+	"             Meizu M6 DDP route probe with optional manual trigger/trigger-loop rekick\n"
 	"\n"
 	"        m6_ovl_greq_profile:[0|1|2|3]\n"
 	"             Meizu M6 isolation profiles for OVL RDMA/GREQ underflow triage\n"
@@ -638,6 +640,29 @@ void mtkfb_process_dbg_opt(const char *opt)
 			tag = opt + 24;
 		DISPERR("M6 DISPLAY truth command: tag=%s\n", tag);
 		primary_display_m6_truth_window(tag);
+		return;
+	} else if (0 == strncmp(opt, "m6_display_route_probe", 22)) {
+		const char *tag = "trigger";
+		unsigned int action = 0x1;
+
+		if (opt[22] == ':')
+			tag = opt + 23;
+		if (!strncmp(tag, "dump", 4)) {
+			action = 0x0;
+		} else if (!strncmp(tag, "trigger", 7)) {
+			action = 0x1;
+		} else if (!strncmp(tag, "rekick", 6)) {
+			action = 0x3;
+		} else {
+			ret = kstrtouint((char *)tag, 0, &action);
+			if (ret) {
+				pr_err("error to parse cmd %s\n", opt);
+				return;
+			}
+		}
+		DISPERR("M6 DISPLAY route probe command: tag=%s action=0x%x\n",
+			tag, action);
+		primary_display_m6_route_probe(tag, action);
 		return;
 	} else if (0 == strncmp(opt, "m6_dsi_dcs_status", 17)) {
 		const char *tag = "public";
