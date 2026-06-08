@@ -343,6 +343,9 @@ void msdc_sdio_power(struct msdc_host *host, u32 on)
 			msdc_set_tdsel(host, MSDC_TDRDSEL_1V8, 0);
 			msdc_set_rdsel(host, MSDC_TDRDSEL_1V8, 0);
 			msdc_set_driving(host, host->hw, 1);
+			pr_warn_ratelimited("M6 MSDC2 pad dump before CMD5 window power=%u\n",
+				on);
+			msdc_dump_padctl_by_id(host->id);
 		} else {
 			m6_msdc2_ldo_power(on, "vqmmc/vcn18",
 				host->mmc->supply.vqmmc, VOL_1800,

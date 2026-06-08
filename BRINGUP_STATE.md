@@ -1,5 +1,133 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 WMT GPIO/IRQ markers and MSDC2 CMD5 pad frontier
+
+PATCH HISTORY, **PROPER-FIX / DIAGNOSTIC**, 2026-06-08: guard the active
+combo-SDIO IRQ path against the real invalid sentinel `0xffffffff`, add bounded
+WMT GPIO / WMT detect / CMB SDIO markers, and dump MSDC2 pad registers in the
+CMD5 window. This is a proper fix for the proven invalid-IRQ test and a
+diagnostic frontier advance; it does not claim Wi-Fi is complete.
+
+Hypothesis: FACT: the previous `#52` boot proved `vcn33_wifi` and `vcn18` are
+enabled at 3.3 V / 1.8 V when WMT asks MSDC2 to enumerate, but CMD5 still
+returns `ocr=0x0`. FACT: the same boot showed `wifi_irq=4294967295`
+(`0xffffffff`) while the legacy code only rejected `0x0fffffff`, so invalid
+IRQ state could still flow into enable/disable/wake decisions. FACT: the active
+DTB has `consys@18070000` and `wifi@180f0000`, but no
+`mediatek,connectivity-combo` node. HYPOTHESIS: correcting the invalid IRQ
+guard and adding dense markers around WMT GPIO, WMT detect, CMB SDIO, and MSDC2
+pads would prove whether the next failure is bad EINT plumbing, missing combo
+GPIO/reset sequencing, or SDIO electrical/card-response state before Wi-Fi HAL.
+INFERENCE after flashing `#53`: the invalid IRQ is now correctly treated as
+invalid (`valid=0`, wake ret `-19`) and no request is made for the bogus
+`0xffffffff` IRQ. The WMT GPIO / WMT detect marker strings are present in the
+payload, but no runtime marker fires, so that parser is not on the active boot
+path. The earliest open Wi-Fi blocker remains below HAL and netdev:
+MSDC2 repeatedly enters the CMD5 window with rails on, pad registers dumped,
+and still gets `CMD5 ocr=0x0`; no live `wlan0` exists despite
+`wlan.driver.status=ok`.
+
+Evidence:
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-wmt-gpio-irq-pad-diag-20260608.log`.
+- Artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1137-m6-wmt-gpio-irq-pad-diag-bootonly/boot-m6-wmt-gpio-irq-pad-diag-20260608.img`,
+  sha256 `3d41f0b3c1358f2cd9528a2faceb81c6cd9068a186075d290cbbd479eaa18337`.
+- Matching `Image.gz-dtb` sha256:
+  `499ad4dc4122ebc980213d28cc18807443f336081dd54f6c4b209e30c0eb33ee`.
+- Matching `System.map` sha256:
+  `7ce598852aa7ed7c657cf4cb46bf352555d5f5190f14728376c0e9235ccc2483`.
+- Matching `vmlinux` sha256:
+  `aa2849fa5872a354c8d3241fb2ef985b6b60e65bb45618a27f62410547321d12`.
+- Matching `meizu_m6.dtb` sha256:
+  `bdcecd02d7e3ea4ffcd558c88f1a17107ffbd067c9ccc6c908b8d3e2a29a03b8`.
+- `abootimg` verification in the artifact directory proves unpacked `zImage`,
+  `initrd.img`, and `bootimg.cfg` match the artifact inputs; marker string
+  check found 13 marker strings including `M6 CMB SDIO request_eirq`,
+  `M6 WMT GPIO`, `M6 WMT detect`, and `M6 MSDC2 pad dump before CMD5`.
+- Flash identity:
+  `/srv/forge/android/meizu_m6/captures/20260608-1139-m6-wmt-gpio-irq-pad-diag-after-flash-711HEBSR277K5/retry1-postflash-readback-sha256.txt`
+  proves the boot partition readback matches the local boot image. The first
+  flash attempt in the same capture intentionally remains recorded as a
+  mismatch caused by Android `dd` rejecting `conv=fsync`; retry1 is the valid
+  flashed identity.
+- Runtime identity:
+  `/srv/forge/android/meizu_m6/captures/20260608-1139-m6-wmt-gpio-irq-pad-diag-after-flash-711HEBSR277K5/identity-and-props-after-reboot.txt`
+  shows `Linux localhost 3.18.140 #53 SMP PREEMPT Mon Jun 8 11:36:58 CDT 2026
+  aarch64`, `sys.boot_completed=1`, `init.svc.bootanim=stopped`,
+  `service.wcn.driver.ready=yes`, and `wlan.driver.status=ok`.
+- Runtime netdev proof:
+  `/srv/forge/android/meizu_m6/captures/20260608-1139-m6-wmt-gpio-irq-pad-diag-after-flash-711HEBSR277K5/runtime-components-state.txt`
+  shows no `wlan0` in `ip link` or `/sys/class/net`; the property is not proof
+  of a working Wi-Fi device.
+- Runtime failure markers:
+  `M6 CMB board_sdio_ctrl ... wifi_irq=4294967295 valid=0`,
+  `M6 CMB board_sdio_ctrl wake ... ret=-19`,
+  `M6 MSDC2 rail vmmc/vcn33_wifi ... status=3300000`,
+  `M6 MSDC2 rail vqmmc/vcn18 ... status=1800000`,
+  `M6 MSDC2 pad dump before CMD5 window power=1`,
+  `MSDC2 IES ... =0xff`, `MSDC2 SMT ... =0x38`,
+  `MSDC2 TDSEL ... =0x0`, `MSDC2 RDSEL0 ... =0x0`,
+  `MSDC2 PULL ... =0x11611660`, `MSDC2 PULL ... =0x1`,
+  `M6 MMC2 attach_sdio CMD5 probe err=0 ocr=0x0`,
+  `mtk-msdc 11250000.msdc2: no support for card's volts`,
+  and `hif_sdio_stp_on:M6 SDIO no supported func probed`.
+- Init/HAL context: current ramdisk/source paths include the bridge
+  `service.wcn.driver.ready -> setprop wlan.driver.status ok ->
+  write /dev/wmtWifi "1"`. The fresh log shows that write returns `-1` because
+  the kernel still has no SDIO function, while Wi-Fi HAL reports
+  `Failed to write wlan fw path param: I/O error` and
+  `Failed to start HAL for client mode`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/connectivity/common/common_detect/mtk_wcn_stub_alps.c`:
+  defines the real invalid Wi-Fi IRQ sentinel, centralizes validity testing,
+  skips bogus request/enable/disable/wake work for `0xffffffff`, and logs CMB
+  SDIO request/enable/disable/wake state.
+- `kernel-3.18/drivers/misc/mediatek/connectivity/common/common_detect/wmt_gpio.c`:
+  adds read-only dumps for key combo GPIO IDs, pinctrl state pointers, missing
+  node state, and parsed GPIO values.
+- `kernel-3.18/drivers/misc/mediatek/connectivity/common/common_detect/wmt_detect_pwr.c`:
+  adds read-only WMT detect power/reset GPIO entry/exit/read/write markers.
+- `kernel-3.18/drivers/mmc/host/mediatek/mt6755/msdc_io.c`: dumps MSDC2 pad
+  registers immediately before each CMD5 attempt.
+- `BRINGUP_STATE.md`: records artifact identity, flash identity, runtime
+  evidence, closed invalid-IRQ behavior, and the next CMD5/power/reset frontier.
+
+Why each file changed: `mtk_wcn_stub_alps.c` owns the active board-SDIO control
+path proven by the `mtk_wmtd` logs, so it is the correct place to guard
+`wifi_irq` and prove wake/eirq decisions. `wmt_gpio.c` and `wmt_detect_pwr.c`
+were instrumented because the active DTB lacks `connectivity-combo` and stock
+truth may still require a board reset/PMU path; the fresh capture proves those
+helpers are not currently executing. `msdc_io.c` owns the CMD5-adjacent pad
+state and is the earliest confirmed failing boundary after rails are enabled.
+The state file is the canonical M6 handoff record.
+
+Expected next marker: the next patch should prove or implement the missing
+combo-chip reset/enable/pad sequence before CMD5. A successful proper fix must
+move from `CMD5 ocr=0x0` to a nonzero SDIO OCR, a registered SDIO function, or
+a more specific command/CRC/timeout error. Good next markers are: explicit
+CONSYS/Wi-Fi reset or PMU GPIO number/value/mode before `board_sdio_ctrl(on)`,
+MSDC2 DAT/CMD line sampled state before CMD5, and a stock-derived LK/kernel
+sequence comparison for SDIO2 pad/power/reset.
+
+Rollback condition: revert this patch if boot/ADB, WMT chip-id detection,
+MSDC2 PM callback entry, regulator state, suspend/resume, or display boot
+state regresses. Do not revert solely because Wi-Fi still fails; this patch
+closed the bogus IRQ handling and proved the remaining failure is earlier than
+HAL/netdev.
+
+Verification commands:
+
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+sha256sum -c /srv/forge/android/export/meizu_m6_artifacts/20260608-1137-m6-wmt-gpio-irq-pad-diag-bootonly/SHA256SUMS
+CAP=/srv/forge/android/meizu_m6/captures/20260608-1139-m6-wmt-gpio-irq-pad-diag-after-flash-711HEBSR277K5
+cmp /srv/forge/android/export/meizu_m6_artifacts/20260608-1137-m6-wmt-gpio-irq-pad-diag-bootonly/boot-m6-wmt-gpio-irq-pad-diag-20260608.img "$CAP/postflash-boot-readback-wmt-gpio-irq-pad-diag-retry1-16m.img"
+rg -n 'Linux localhost 3.18.140 #53|M6 CMB board_sdio_ctrl|wifi_irq=4294967295 valid=0|M6 MSDC2 pad dump|M6 MMC2 attach_sdio CMD5|no support for card.s volts|M6 SDIO no supported func|Failed to write wlan fw path|Failed to start HAL|wlan.driver.status' "$CAP"/*.txt
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'uname -a; getprop sys.boot_completed; getprop service.wcn.driver.ready; getprop wlan.driver.status; ip link show wlan0 2>/dev/null || true; ls -l /sys/class/net'
+```
+
 ## 2026-06-08 MSDC2 VCN rail power-enable and CMD5 reset/pinctrl frontier
 
 PATCH HISTORY, **PROPER-FIX / DIAGNOSTIC**, 2026-06-08: make the active MSDC2
