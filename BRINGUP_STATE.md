@@ -105,6 +105,82 @@ sha256sum \
   /srv/forge/android/export/meizu_m6_artifacts/20260608-0815-m6-dsi-rtcal-safe-iomap-diag-bootonly/System.map
 ```
 
+CAPTURE RESULT, 2026-06-08: the safe-iomap DSI RT-cal diagnostic boot was
+flashed over the previously failed unsafe RT-cal image and reached Android.
+
+FACT: recovery preflash capture:
+`/srv/forge/android/meizu_m6/captures/20260608-2318-m6-rtcal-failedboot-recovery-preflash-711HEBSR277K5`.
+The preflash boot readback
+`/srv/forge/android/export/meizu_m6_artifacts/20260608-0815-m6-dsi-rtcal-safe-iomap-diag-bootonly/boot-readback-before-safe-flash.img`
+hashed to
+`aeb43ded75fa92dcd688c176fdc4892fd790ee5fecb67170061bfc64319399ea`,
+proving the failed unsafe RT-cal image was still installed before this flash.
+
+FACT: flashed boot artifact:
+`/srv/forge/android/export/meizu_m6_artifacts/20260608-0815-m6-dsi-rtcal-safe-iomap-diag-bootonly/boot-m6-dsi-rtcal-safe-iomap-diag-20260608.img`,
+sha256
+`22497e9bc4b25a6fadab5410fbf4e5be2dac97592652cb98c61e723391641bfa`.
+Post-flash recovery and Android boot readbacks both match that sha256:
+`boot-readback-after-safe-flash.img` and
+`boot-readback-current-safe-android.img`.
+
+FACT: after reboot, M6 serial `711HEBSR277K5` reached ADB `device`,
+`sys.boot_completed=1`, `ro.bootmode=normal`, Android `8.1.0`, and kernel
+`Linux localhost 3.18.140 #47 SMP PREEMPT Mon Jun 8 07:55:32 CDT 2026 aarch64`.
+Post-flash capture:
+`/srv/forge/android/meizu_m6/captures/20260608-2321-m6-rtcal-safe-iomap-after-flash-711HEBSR277K5`.
+`screencap-after-live-debugfs.png` is a valid 720x1280 PNG with nonblack RGB
+range `min=0 max=255 mean~75/75/77`, sha256
+`c44d212f0cf696569c03d98245f886705db9dbd1900800ff5f60bd2fcad3e6a1`.
+
+FACT: the live debugfs pass in that capture proves the safe-iomap RT-cal
+markers are present and the full-BIST path still works. `dmesg-live-dsi-debugfs.txt`
+contains `M6 DSI rtcal[...] phys10206190 raw_valid=1 raw=0x6666699` and decodes
+LK/live/saved RT values as `0x6/0x6/0x6/0x6/0x6`. DSI/MIPITX snapshots show
+`pll en=1`, `pwr_on=1`, `iso=0`, `ack=1`, `phy_map d0/d1/d2/d3/c/lprx=0/1/2/3/4/0`,
+and stable lane registers `0x603/0x601/0x601/0x601/0x601`.
+
+FACT: full-BIST RGB windows latch the stronger controller self-test bits:
+red `BIST_PATTERN=0xff0000`, green `BIST_PATTERN=0xff00`, blue
+`BIST_PATTERN=0xff`; each sets `BIST_CON=0x200446`, `self_pat=1`, `bist_en=1`,
+`fix=1`, `lane=4`, `timing=0x20`, and DSI `STATE7` samples in video data
+period. `m6_dsi_bist_full:0` clears the path back to `BIST_CON=0x0`,
+`self_pat=0`, `bist_en=0`.
+
+FACT: other live display evidence remains internally healthy: the backlight
+path writes `request=255 dcs51=0xff`; `/d/mtkfb` reports primary display alive,
+LCM `ili9881p_hd_dsi_txd`, 720x1280 DSI video mode + CMDQ, DIRECT_LINK, and
+RDMA0 transfer around 60 fps. `m6_dsi_dcs_status:stock_pages` still reads
+private ILI9881P pages; page5 register `0x2a` remains `0x18`.
+
+INFERENCE: if the physical LCD is still lit black during these verified full
+BIST windows, the next display frontier is not PQ/HWC/RDMA/public-DCS/backlight.
+It is below or beside the controller-visible path: stock LK hidden DSI/MIPITX
+side effects, panel-side HS video acceptance, lane electrical polarity/drive,
+or private page state that Linux still does not reproduce. Keep the safe-iomap
+boot as the current recoverable diagnostic baseline; do not reflash the unsafe
+`aeb43...` RT-cal image.
+
+FACT: non-display blockers visible in the same boot are still live. WMT/SDIO
+fails before function enumeration with repeated `hif_sdio_stp_on:M6 SDIO no
+supported func probed` and `SDIO_FUNC ctrl func=0 on=1 ret=-8`; Bluetooth is
+downstream of that. Charger markers are alive with USB type 1 and successful
+500 mA input/charge-current writes. RIL diagnostic markers run and parse the
+resident MD image, but modem state still needs a separate post-flash capture
+verdict.
+
+Expected next marker: a stock reverse / parity patch should compare stock LK
+DSI/MIPITX side effects against the safe-iomap runtime values above, especially
+MIPITX lane/polarity/drive/settle, VM payload, page5 transitions, and any
+post-`0x29` private writes. For Wi-Fi/BT, the next proof is an MSDC2/SDIO trace
+that reaches a real function under `/sys/bus/sdio/devices` or proves the power
+/ IRQ / pinctrl boundary that prevents enumeration.
+
+Rollback condition: revert only if a later patch loses this baseline:
+safe-iomap boot readback match, `sys.boot_completed=1`, nonblack screencap,
+DSI RT-cal markers, full-BIST latch/clear, or `/d/mtkfb` RDMA0 transfer. Do
+not revert this state-only record.
+
 ## 2026-06-08 integrated stock-pages/full-BIST display diagnostic boot
 
 PATCH HISTORY, **ISOLATION + DIAGNOSTIC**, 2026-06-08: integrate the pending
