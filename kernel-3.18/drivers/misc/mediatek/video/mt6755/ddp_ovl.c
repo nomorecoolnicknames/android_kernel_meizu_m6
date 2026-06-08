@@ -53,6 +53,8 @@ static struct OVL_REG reg_back[OVL_NUM][OVL_REG_BACK_MAX];
 static unsigned int gOVLBackground = 0xFF000000;
 static unsigned int m6_ovl_greq_profile_id;
 static unsigned int m6_ovl_greq_profile_apply_count;
+static struct m6_ovl_config_snapshot m6_ovl0_last_config_snapshot;
+static unsigned int m6_ovl0_last_config_seq;
 
 static inline int is_module_ovl(DISP_MODULE_ENUM module)
 {
@@ -351,6 +353,109 @@ static bool m6_ovl_scan_diag_sample(unsigned int *count)
 	unsigned int n = (*count)++;
 
 	return n < 24 || ((n & 0x3ff) == 0);
+}
+
+static unsigned long m6_ovl_calc_final_addr(const OVL_CONFIG_STRUCT * const cfg,
+	unsigned int *bpp_out, unsigned long *visible_last, unsigned long *pitch_end)
+{
+	unsigned int bpp = ufmt_get_Bpp(cfg->fmt);
+	unsigned int src_x = cfg->src_x;
+	unsigned int dst_w = cfg->dst_w;
+	unsigned int offset;
+	unsigned long final_addr;
+	unsigned long visible_span = 0;
+	unsigned long pitch_span = 0;
+
+	if (cfg->fmt == UFMT_UYVY || cfg->fmt == UFMT_VYUY ||
+	    cfg->fmt == UFMT_YUYV || cfg->fmt == UFMT_YVYU) {
+		if (src_x % 2) {
+			src_x -= 1;
+			dst_w += 1;
+		}
+		if ((src_x + dst_w) % 2)
+			dst_w += 1;
+	}
+
+	offset = src_x * bpp + cfg->src_y * cfg->src_pitch;
+	final_addr = cfg->addr + offset;
+	if (cfg->dst_h && dst_w && bpp)
+		visible_span = (cfg->dst_h - 1) * cfg->src_pitch + dst_w * bpp;
+	if (cfg->dst_h && cfg->src_pitch)
+		pitch_span = cfg->dst_h * cfg->src_pitch;
+
+	if (bpp_out)
+		*bpp_out = bpp;
+	if (visible_last)
+		*visible_last = visible_span ? final_addr + visible_span - 1 : final_addr;
+	if (pitch_end)
+		*pitch_end = pitch_span ? final_addr + pitch_span : final_addr;
+	return final_addr;
+}
+
+static void m6_ovl_capture_last_config(DISP_MODULE_ENUM module,
+		disp_ddp_path_config *pConfig, void *handle,
+		unsigned int enabled_layers, unsigned int first_global_layer,
+		unsigned int scanned_before, unsigned int has_sec_layer)
+{
+	struct m6_ovl_config_snapshot snap = { 0 };
+	unsigned int local_layer;
+
+	if (module != DISP_MODULE_OVL0 ||
+	    !disp_helper_get_option(DISP_OPT_BYPASS_PQ) ||
+	    primary_display_is_decouple_mode())
+		return;
+
+	snap.seq = ++m6_ovl0_last_config_seq;
+	snap.enabled_layers = enabled_layers;
+	snap.first_global_layer = first_global_layer;
+	snap.scanned_before = scanned_before;
+	snap.scanned_after = pConfig->ovl_layer_scanned;
+	snap.dst_w = pConfig->dst_w;
+	snap.dst_h = pConfig->dst_h;
+	snap.has_sec_layer = has_sec_layer;
+	snap.cmdq = !!handle;
+	snap.direct = !primary_display_is_decouple_mode();
+	snap.bypass_pq = disp_helper_get_option(DISP_OPT_BYPASS_PQ);
+
+	for (local_layer = 0; local_layer < ovl_layer_num(module); local_layer++) {
+		unsigned int global_layer = first_global_layer + local_layer;
+		OVL_CONFIG_STRUCT *cfg;
+		struct m6_ovl_layer_snapshot *layer = &snap.layer[local_layer];
+
+		if (global_layer >= ARRAY_SIZE(pConfig->ovl_config))
+			break;
+
+		cfg = &pConfig->ovl_config[global_layer];
+		layer->valid = 1;
+		layer->enabled = cfg->layer_en;
+		layer->global_layer = global_layer;
+		layer->source = cfg->source;
+		layer->fmt = cfg->fmt;
+		layer->security = cfg->security;
+		layer->src_x = cfg->src_x;
+		layer->src_y = cfg->src_y;
+		layer->src_w = cfg->src_w;
+		layer->src_h = cfg->src_h;
+		layer->src_pitch = cfg->src_pitch;
+		layer->dst_x = cfg->dst_x;
+		layer->dst_y = cfg->dst_y;
+		layer->dst_w = cfg->dst_w;
+		layer->dst_h = cfg->dst_h;
+		layer->addr = cfg->addr;
+		layer->final_addr = m6_ovl_calc_final_addr(cfg, &layer->bpp,
+			&layer->visible_last, &layer->pitch_end);
+	}
+
+	m6_ovl0_last_config_snapshot = snap;
+}
+
+int ovl_m6_get_last_config_snapshot(struct m6_ovl_config_snapshot *out)
+{
+	if (!out || !m6_ovl0_last_config_snapshot.seq)
+		return 0;
+
+	*out = m6_ovl0_last_config_snapshot;
+	return 1;
 }
 
 static int ovl_layer_config(DISP_MODULE_ENUM module,
@@ -964,6 +1069,8 @@ static int ovl_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, 
 	}
 
 	DISP_REG_SET(handle, ovl_base_addr(module) + DISP_REG_OVL_SRC_CON, enabled_layers);
+	m6_ovl_capture_last_config(module, pConfig, handle, enabled_layers,
+		first_global_layer, scanned_before, has_sec_layer);
 	if (module == DISP_MODULE_OVL0 &&
 	    disp_helper_get_option(DISP_OPT_BYPASS_PQ) &&
 	    !primary_display_is_decouple_mode()) {

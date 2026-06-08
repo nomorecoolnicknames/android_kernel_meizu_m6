@@ -1,5 +1,110 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-07 OVL per-layer IRQ snapshot diagnostic
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-07: after the OVL GREQ profiles proved the
+threshold variable is not a fix, this patch keeps behavior unchanged and adds
+per-layer evidence at the OVL0 underflow boundary.
+
+Hypothesis: FACT from
+`/srv/forge/android/meizu_m6/captures/20260607-ovl-greq-profile-isolation-flash-711HEBSR277K5/profile-rescan-ui`
+shows profiles `1..3` apply to OVL registers but still produce `RDMA0
+underflow`, `OVL0 frame underflow`, EOF-not-complete bits, and DISP_OVL0
+M4U faults. FACT: the old IRQ dump printed only L0 registers while fault lines
+and `intsta` bits implicate higher layers too. HYPOTHESIS: the next frontier is
+whether L1/L2/L3 live registers or the last requested OVL0 config point to a
+specific out-of-range MVA, wrong pitch/size, or CMDQ/CPU config skew.
+
+Evidence:
+- Current tested boot artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260607-m6-ovl-greq-profile-isolation/boot-m6-ovl-greq-profile-isolation-pgup.img`,
+  sha256 `94eba1038b48ce215ac548206b93f4bb22a87bbe44f973343bff23e72eaf1bbb`.
+- Matching tested `System.map` sha256
+  `886a499003704742cff76aecf33f319ef79f0f0cd2d2cc4451479cd3030029e5`.
+- Profile rescan FACT examples:
+  `profile-rescan-ui/profile-0/dmesg.txt` shows `intsta=0x74`, `src=0xf`,
+  `flow=0xf8c02`, and only an L0 decode before later `M4Ufault:
+  port=DISP_OVL0, mva=0x4484000, layer=1`;
+  `profile-rescan-ui/profile-1/dmesg.txt` shows profile `1` register values
+  plus repeated M4U faults at `0x6484000`, `0x6c84000`, and `0x6084000`;
+  `profile-rescan-ui/profile-2/dmesg.txt` still faults after profile `2` at
+  `0x7884000`; profile `3` still faults at `0x9c84000`.
+- Built diagnostic artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260607-m6-ovl-per-layer-irq-snapshot/boot-m6-ovl-per-layer-irq-snapshot.img`,
+  sha256 `2e0b8822af14c28487b45b47fd5465e4b297b0e6f0b2e9ebe144156b628bd70d`,
+  size `8867840`.
+- Built `Image.gz-dtb` sha256
+  `cfa11890c78abe7892162f7b4dbf88a78c4e8a920d0319ec07ce6dbcaae378b3`.
+- Built `System.map` sha256
+  `3655b4d591202bec68261fdacde26bf6b1f8d58b7ee3e8c9e1254208202c353a`.
+- Built `vmlinux` sha256
+  `d4b9a157386556d83bf5d7c48dcf7f02615c5103cd658f481cc5b9ae447361b7`.
+- Built `.config` sha256
+  `bc272726035c1a2eca9422e9bc230cf54f8295648a8865a98faba046ab01619e`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-ovl-per-layer-irq-snapshot-20260607.log`,
+  sha256 `78b36df0b79375caf3badc32fd7fcfe884b673cd825764666f5ec54137a6e78f`.
+- Flash/capture directory:
+  `/srv/forge/android/meizu_m6/captures/20260607-ovl-per-layer-irq-snapshot-flash-711HEBSR277K5`.
+- FACT: boot partition readback matched the local boot image before and after
+  reboot, `sys.boot_completed=1` reached at loop `24`, bootanim stopped,
+  SurfaceFlinger/SystemUI ran, `/d/mtkfb` reported `LCM
+  Driver=[ili9881p_hd_dsi_txd]`, `PathMode:DIRECT_LINK`, `RDMA0 Transfer`
+  about 61.71 fps, and `DISP_OPT_BYPASS_PQ=1`.
+- FACT: `ui-stimulus/dmesg.txt` shows the added L0..L3 snapshots at OVL0 IRQ
+  boundary. The decisive sample is `M6 OVL irq diag[7]`: L2 was live/requested
+  as `addr=0x2e00000`, `size=720x48`, `pitch=0xb40`, `pitch_end=0x2e21c00`,
+  while the previous full-screen L2 sample `diag[6]` had `addr=0x2e00000` and
+  `pitch_end=0x3184000`. The same stimulus later faulted at `M4Ufault:
+  port=DISP_OVL0, mva=0x3184000`, exactly the previous full-screen L2
+  `pitch_end`.
+- INFERENCE: the GREQ/PQ variable remains rejected for this frontier; the next
+  evidence-backed display test should isolate OVL/M4U end-prefetch or mapping
+  coverage at layer-size transitions, not add more RDMA EOF/CMDQ wait changes.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.h`: defines the M6
+  OVL0 last-config snapshot ABI shared between OVL config and IRQ diagnostic
+  code.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c`: records the
+  latest OVL0 direct-link/PQ-bypass config snapshot, including requested
+  addr/final/visible_last/pitch_end for L0..L3.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_irq.c`: expands bounded
+  `M6 OVL irq diag` from L0-only to L0..L3 live registers plus the matching
+  last requested layer config.
+- `BRINGUP_STATE.md`: records patch category, evidence, expected marker,
+  rollback condition, and verification commands.
+
+Why each file changed: `ddp_ovl.c` owns requested OVL layer configuration, while
+`ddp_irq.c` is where the failing underflow/EOF bits are observed. Printing both
+views at the same sampled IRQ boundary is the minimum evidence needed before a
+behavioral OVL/M4U/pitch fix.
+
+Expected next marker: after flashing the rebuilt boot and stimulating UI, dmesg
+should show `M6 OVL irq diag[*]: L0..L3 live ...` and `L0..L3 req seq=...`.
+The decisive marker is the first layer whose live `addr/size/pitch/rdma_dbg`
+or requested `visible_last/pitch_end` brackets the M4U fault MVA or contradicts
+the enabled layer mask.
+
+Rollback condition: revert this diagnostic if ADB/boot/SF regress, if log
+volume makes captures unusable, or if the IRQ snapshot itself perturbs OVL
+timing enough to remove the underflow without explaining it.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.h \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_irq.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg -c >/dev/null; input keyevent 3; input swipe 360 1050 360 250 250; sleep 3; dmesg | grep -E "M6 OVL irq diag|M4Ufault|RDMA0 underflow|frame underflow|not complete until EOF" | tail -260'
+```
+
 ## 2026-06-07 OVL GREQ profile isolation flashed
 
 PATCH HISTORY, ISOLATION, 2026-06-07: after the DSI HS-video diagnostic boot

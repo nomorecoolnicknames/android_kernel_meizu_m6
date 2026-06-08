@@ -61,19 +61,60 @@ static bool disp_irq_m6_diag_sample(unsigned int *count)
 {
 	unsigned int n = (*count)++;
 
-	return n < 64 || ((n & 0x3ff) == 0);
+	return n < 128 || ((n & 0x3ff) == 0);
+}
+
+static void disp_irq_m6_dump_ovl0_layer(unsigned int idx, unsigned long base,
+	unsigned int layer, const struct m6_ovl_config_snapshot *snap)
+{
+	unsigned long layer_off = layer * M6_OVL_LAYER_OFFSET;
+	unsigned long rdma_dbg_off = layer * M6_OVL_RDMA_DBG_OFFSET;
+	const struct m6_ovl_layer_snapshot *req = NULL;
+	unsigned int src_on = DISP_REG_GET(base + DISP_REG_OVL_SRC_CON);
+	unsigned int live_size = DISP_REG_GET(base + DISP_REG_OVL_L0_SRC_SIZE + layer_off);
+	unsigned int live_pitch = DISP_REG_GET(base + DISP_REG_OVL_L0_PITCH + layer_off);
+	unsigned int live_addr = DISP_REG_GET(base + DISP_REG_OVL_L0_ADDR + layer_off);
+
+	if (snap && snap->seq && layer < ARRAY_SIZE(snap->layer) &&
+	    snap->layer[layer].valid)
+		req = &snap->layer[layer];
+
+	DISPERR("M6 OVL irq diag[%u]: L%u live en=%u con=0x%x size=%ux%u off=0x%x addr=0x%x pitch=0x%x rdma_ctrl=0x%x gmc=0x%x slow=0x%x fifo=0x%x buflow=0x%x rdma_dbg=0x%x\n",
+		idx, layer, !!(src_on & (1U << layer)),
+		DISP_REG_GET(base + DISP_REG_OVL_L0_CON + layer_off),
+		live_size & 0xfff, (live_size >> 16) & 0xfff,
+		DISP_REG_GET(base + DISP_REG_OVL_L0_OFFSET + layer_off),
+		live_addr, live_pitch,
+		DISP_REG_GET(base + DISP_REG_OVL_RDMA0_CTRL + layer_off),
+		DISP_REG_GET(base + DISP_REG_OVL_RDMA0_MEM_GMC_SETTING + layer_off),
+		DISP_REG_GET(base + DISP_REG_OVL_RDMA0_MEM_SLOW_CON + layer_off),
+		DISP_REG_GET(base + DISP_REG_OVL_RDMA0_FIFO_CTRL + layer_off),
+		DISP_REG_GET(base + DISP_REG_OVL_RDMAn_BUF_LOW(layer)),
+		DISP_REG_GET(base + DISP_REG_OVL_RDMA0_DBG + rdma_dbg_off));
+
+	if (!req)
+		return;
+
+	DISPERR("M6 OVL irq diag[%u]: L%u req seq=%u global=%u en=%u src=%u fmt=0x%x bpp=%u sec=%u addr=0x%lx final=0x%lx visible_last=0x%lx pitch_end=0x%lx src=%u/%u/%u/%u pitch=%u dst=%u/%u/%u/%u\n",
+		idx, layer, snap->seq, req->global_layer, req->enabled,
+		req->source, req->fmt, req->bpp, req->security, req->addr,
+		req->final_addr, req->visible_last, req->pitch_end,
+		req->src_x, req->src_y, req->src_w, req->src_h,
+		req->src_pitch, req->dst_x, req->dst_y, req->dst_w,
+		req->dst_h);
 }
 
 static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 	unsigned int intsta)
 {
 	unsigned long base;
-	unsigned long layer0;
-	unsigned long rdma0;
 	unsigned int ovl_greq_num;
 	unsigned int ovl_greq_urg;
 	unsigned int larb0_greq;
 	unsigned int idx;
+	unsigned int layer;
+	struct m6_ovl_config_snapshot snap = { 0 };
+	int has_snap;
 
 	if (module != DISP_MODULE_OVL0 ||
 	    !disp_helper_get_option(DISP_OPT_BYPASS_PQ) ||
@@ -85,8 +126,7 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 
 	idx = m6_ovl0_irq_diag_count - 1;
 	base = ovl_base_addr(module);
-	layer0 = base;
-	rdma0 = base;
+	has_snap = ovl_m6_get_last_config_snapshot(&snap);
 	ovl_greq_num = DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_NUM);
 	ovl_greq_urg = DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_URG_NUM);
 	larb0_greq = DISP_REG_GET(DISP_REG_CONFIG_SMI_LARB0_GREQ);
@@ -130,20 +170,18 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 		(ovl_greq_urg >> 12) & 0x7,
 		(ovl_greq_urg >> 16) & 0x3ff,
 		(ovl_greq_urg >> 28) & 0x1);
-	DISPERR("M6 OVL irq diag[%u]: L0 con=0x%x size=0x%x off=0x%x addr=0x%x pitch=0x%x rdma_ctrl=0x%x gmc=0x%x slow=0x%x fifo=0x%x gmc_s2=0x%x buflow=0x%x rdma_dbg=0x%x\n",
-		idx,
-		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_CON),
-		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_SRC_SIZE),
-		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_OFFSET),
-		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_ADDR),
-		DISP_REG_GET(layer0 + DISP_REG_OVL_L0_PITCH),
-		DISP_REG_GET(layer0 + DISP_REG_OVL_RDMA0_CTRL),
-		DISP_REG_GET(layer0 + DISP_REG_OVL_RDMA0_MEM_GMC_SETTING),
-		DISP_REG_GET(layer0 + DISP_REG_OVL_RDMA0_MEM_SLOW_CON),
-		DISP_REG_GET(layer0 + DISP_REG_OVL_RDMA0_FIFO_CTRL),
-		DISP_REG_GET(base + DISP_REG_OVL_RDMA0_MEM_GMC_S2),
-		DISP_REG_GET(base + DISP_REG_OVL_RDMAn_BUF_LOW(0)),
-		DISP_REG_GET(rdma0 + DISP_REG_OVL_RDMA0_DBG));
+	if (has_snap)
+		DISPERR("M6 OVL irq diag[%u]: last cfg seq=%u enabled=0x%x first_global=%u scan=0x%x->0x%x dst=%ux%u sec=%u cmdq=%u direct=%u bypass_pq=%u\n",
+			idx, snap.seq, snap.enabled_layers, snap.first_global_layer,
+			snap.scanned_before, snap.scanned_after, snap.dst_w,
+			snap.dst_h, snap.has_sec_layer, snap.cmdq, snap.direct,
+			snap.bypass_pq);
+	else
+		DISPERR("M6 OVL irq diag[%u]: last cfg missing\n", idx);
+
+	for (layer = 0; layer < 4; layer++)
+		disp_irq_m6_dump_ovl0_layer(idx, base, layer,
+			has_snap ? &snap : NULL);
 }
 
 static DDP_IRQ_CALLBACK irq_module_callback_table[DISP_MODULE_NUM][DISP_MAX_IRQ_CALLBACK];
