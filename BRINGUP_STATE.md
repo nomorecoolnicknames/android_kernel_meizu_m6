@@ -1,5 +1,541 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 integrated camera and SDIO checkpoint
+
+PATCH HISTORY, PROPER-FIX + DIAGNOSTIC, 2026-06-08: integrate the current
+fresh-log worker results into a buildable source-kernel checkpoint. The grouped
+checkpoint covers camera sensor-list selection, bounded camera diagnostics, and
+MSDC2/SDIO WMT-resume rescan instrumentation/fix. It does not claim display,
+Wi-Fi, Bluetooth, camera, or torch are runtime-fixed until a flashed capture
+proves the next markers.
+
+Hypothesis: FACT: the verified all-layer capture
+`/srv/forge/android/meizu_m6/captures/20260608-040416-m6-all-layer-evidence-711HEBSR277K5`
+uses boot sha256 `1e82b12cfbbd857acec419d0314b5a037be1103694a559facbc486668b6e0c92`.
+FACT: the camera provider loads but registers zero devices after
+`KDCAMERAHWIOC_X_SET_DRIVER` returns `-EIO`; the old `.config` selected stale
+`imx278_mipi_raw ov8856jsl_mipi_raw` while the M6 source camera table and power
+table contain `ov13855`, `s5k3l8`, `hi846`, `hi846_holi`, and `s5k4h8`. FACT:
+Wi-Fi/BT fail above absent SDIO/STP bring-up (`wificond` has no interface and
+BT cannot open `/dev/stpbt`). INFERENCE: the next source-kernel step must build
+the stock-backed sensor list and schedule a real MSDC2 SDIO rescan after WMT
+resume, while preserving dense diagnostics for the next runtime capture.
+
+Evidence:
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-040416-m6-all-layer-evidence-711HEBSR277K5`.
+- Camera evidence: MTK provider loads, then reports `0 camera devices`; dmesg
+  markers show empty-name/null-init `kdSetDriver()` paths before any real
+  sensor-ID/I2C frontier.
+- Connectivity evidence: no SDIO function exists under `/sys/bus/sdio/devices`
+  in the fresh capture; Wi-Fi HAL cannot change firmware mode; BT loops on
+  `/dev/stpbt` and the HIDL close path crashes after partial init.
+- Build evidence: `build-m6-integrated-subagent-fixes-20260608.log` first
+  proved the regenerated `.config` selects
+  `ov13855_mipi_raw s5k3l8_mipi_raw hi846_mipi_raw hi846_mipi_raw_holi s5k4h8_mipi_raw`
+  and failed on a source-level missing prototype for `s4AF_ReadReg_I2C`.
+  `build-m6-integrated-subagent-fixes-20260608-retry1.log` then completed
+  `Image.gz-dtb` after making that prototype unconditional in the two sensor
+  headers whose source files call the exported helper unconditionally.
+
+Files changed:
+- `kernel-3.18/arch/arm64/configs/meizu_m6_defconfig`: selects the M6 camera
+  sensor list proven by the active source tables.
+- `kernel-3.18/arch/arm64/configs/meizu_m6_debug_defconfig`: mirrors the same
+  sensor list for debug builds.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/ov13855_mipi_raw/ov13855mipiraw_Sensor.h`:
+  exposes the already exported `s4AF_ReadReg_I2C()` prototype outside the
+  Huawei dev-flag config because the sensor source calls it unconditionally.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/s5k3l8_mipi_raw/s5k3l8mipiraw_Sensor.h`:
+  applies the same build fix for the next compiled sensor with the same
+  unconditional helper call.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.c`:
+  adds bounded `[M6_CAM]` markers around driver-index selection, null init,
+  selected sensor name/function, and ioctl return paths.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/camera_hw/kd_camera_hw.c`:
+  keeps bounded camera power markers and fixes the existing dirty marker
+  structure so the next sensor-ID/power frontier is visible.
+- `kernel-3.18/drivers/mmc/host/mediatek/mt6755/sd.c`: on MSDC2
+  WMT `PM_EVENT_USER_RESUME`, clears `rescan_entered` and schedules a bounded
+  SDIO rescan, with probe/add_host/pm markers for the next Wi-Fi/BT capture.
+- `BRINGUP_STATE.md`: records this grouped checkpoint and verification.
+
+Why each file changed: the defconfig lines decide which sensor objects/macros
+exist; the two headers unblock the exact compiled source selected by that list
+without changing runtime branch behavior; the camera diagnostic files mark the
+earliest proven zero-device boundary; and `sd.c` is the narrow kernel owner of
+the missing SDIO rediscovery after WMT brings connectivity power up.
+
+Expected next marker: after this exact `Image.gz-dtb` is packed into boot and
+flashed, camera dmesg should show named `ov13855` / `s5k3l8` / `hi846` sensor
+init paths instead of empty-name/null-init `kdSetDriver` entries; if camera
+still fails, the log should move to sensor-ID, I2C bus, or power-step evidence.
+Connectivity dmesg should show `M6 MSDC2 WMT resume` and a real SDIO rescan;
+if Wi-Fi/BT still fail, the next failure should be after SDIO function
+enumeration or a clearer WMT/STP marker.
+
+Rollback condition: revert the camera defconfig/header pieces if the exact
+rebuilt boot image still shows null init for indices `0..3`, if a named sensor
+compile/runtime path regresses provider startup earlier than ready-with-zero
+devices, or if a stock source comparison disproves the selected sensor set.
+Revert the SDIO rescan piece if it regresses boot, storage, ADB stability, or
+causes repeated unsafe rescans without SDIO progress.
+
+Verification result, 2026-06-08:
+- `git diff --check` passed for this scoped kernel patch set.
+- Build command regenerated `.config` from `meizu_m6_defconfig`, then built
+  `Image.gz-dtb` with `O=/srv/forge/work/m6-source-kernel-manual-20260520/out`.
+- Build log:
+  `build-m6-integrated-subagent-fixes-20260608-retry1.log`.
+- `Image.gz-dtb` sha256:
+  `6a54d915f6f0ef55256191f0c5edd25af8fb98c818a0312ffb6f186f0e98df43`.
+- `System.map` sha256:
+  `6d78f9ad194d15f8b2c67035652165e0550ef1e9d5303f0a8cfbfe7ab5123f4e`.
+- `vmlinux` sha256:
+  `39fbdf367cfe223ce6d55748ae76640391a3f4247a1e063fc62a866ff74d706d`.
+
+## 2026-06-08 camera sensor defconfig list fix
+
+PATCH HISTORY, PROPER-FIX, 2026-06-08: replace the stale M6 image-sensor
+defconfig list with the sensor folders already present in the active MT6755
+sensor init list and camera power table.
+
+Hypothesis: FACT: the verified all-layer capture
+`/srv/forge/android/meizu_m6/captures/20260608-040416-m6-all-layer-evidence-711HEBSR277K5`
+uses boot sha256 `1e82b12cfbbd857acec419d0314b5a037be1103694a559facbc486668b6e0c92`.
+FACT: camera provider loads the MTK module but reports zero devices. FACT:
+kernel camera markers show `kdSetDriver()` receives indices `0..3` with empty
+driver names and null init functions, returning `-EIO`, before real sensor ID
+probing. FACT: `kd_sensorlist.h` and `camera_hw/kd_camera_hw.c` already carry
+guarded entries/power sequences for `ov13855`, `s5k3l8`, `hi846`,
+`hi846_holi`, and `s5k4h8`, while the defconfigs still selected stale
+`imx278_mipi_raw ov8856jsl_mipi_raw`. INFERENCE: the zero-camera failure is
+caused by building the wrong sensor objects/macros for this M6 camera table.
+
+Evidence:
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-040416-m6-all-layer-evidence-711HEBSR277K5`.
+- `logcat-all-threadtime.txt`: MTK camera module loads, then provider
+  `legacy/0` is ready with `0 camera devices`.
+- `dmesg.txt`: `[M6_CAM] kdSetDriver ... drvIdx=0..3 name=` / null init /
+  `ret=-5`, proving the HAL's generic sensor mismatch line is above real I2C
+  ID readback.
+- Source checks: `Makefile.custom` maps
+  `CONFIG_CUSTOM_KERNEL_IMGSENSOR` tokens to sensor macros; `mt6755/Makefile`
+  builds those folders; `kd_sensorlist.h` and `kd_camera_hw.c` already list the
+  replacement candidates.
+
+Files changed:
+- `kernel-3.18/arch/arm64/configs/meizu_m6_defconfig`: sets
+  `CONFIG_CUSTOM_KERNEL_IMGSENSOR` to
+  `ov13855_mipi_raw s5k3l8_mipi_raw hi846_mipi_raw hi846_mipi_raw_holi s5k4h8_mipi_raw`.
+- `kernel-3.18/arch/arm64/configs/meizu_m6_debug_defconfig`: mirrors the same
+  sensor list for debug builds.
+
+Why each file changed: these defconfigs select which sensor driver objects and
+preprocessor symbols exist. The active source camera table and power table
+already match the new list, so no sensor-table or GPIO rewrite is needed before
+testing the proper compiled set.
+
+Expected next marker: build output should print the new image-sensor platform
+list. Runtime dmesg should stop showing empty-name/null-init `kdSetDriver`
+for indices `0..3` and instead show selected sensor names/functions, followed
+by camera power markers and either real sensor ID success or a concrete I2C /
+power-ID failure. If a camera device registers, test flashlight/torch after
+camera enumeration moves.
+
+Rollback condition: revert these two defconfig lines if a full kernel build
+fails on the new sensor objects, if the exact rebuilt boot image still shows
+null init for indices `0..3`, or if camera provider regresses from ready-with-0
+devices into an earlier crash/hang.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- \
+  kernel-3.18/arch/arm64/configs/meizu_m6_defconfig \
+  kernel-3.18/arch/arm64/configs/meizu_m6_debug_defconfig \
+  BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell \
+  'dmesg | grep -E "M6_CAM|kdSetDriver|Camera|sensor ID|KDCAMERAHWIOC" | tail -220'
+```
+
+## 2026-06-08 camera zero-device diagnostic
+
+PATCH HISTORY, DIAGNOSTIC, 2026-06-08: add bounded M6 camera markers around
+the MTK sensor driver selection and camera power sequence. This does not change
+the sensor table, GPIO/regulator settings, flashlight behavior, device nodes,
+or policy. It only makes the next camera-provider boot prove whether the HAL's
+`KDCAMERAHWIOC_X_SET_DRIVER` `-EIO` comes from the compiled sensor list, a null
+sensor init/function, an out-of-range driver index, or a later power-list path.
+
+Hypothesis: FACT: the verified boot image for capture
+`/srv/forge/android/meizu_m6/captures/20260608-040416-m6-all-layer-evidence-711HEBSR277K5`
+matches local artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260608-m6-dsi-bist-full-isolation/boot-m6-dsi-bist-full-isolation.img`
+with sha256
+`1e82b12cfbbd857acec419d0314b5a037be1103694a559facbc486668b6e0c92`.
+FACT: the camera provider and MTK HAL load, but HAL sensor search repeatedly
+gets `KDCAMERAHWIOC_X_SET_DRIVER` `I/O error` and ends with zero detected
+camera IDs. FACT at diagnostic-build time: the active
+`/srv/forge/work/m6-source-kernel-manual-20260520/out/.config` still selected
+`imx278_mipi_raw ov8856jsl_mipi_raw` and `leds_AW3643`, and the matching
+diagnostic `System.map` contains `IMX278_MIPI_RAW_SensorInit`,
+`OV8856JSLMIPIRAW_SensorInit`, `flashlight_init`, and
+`leds_AW3643_flashlight_init`. FACT after a concurrent update: the current
+source defconfigs now carry the separate PROPER-FIX entry above this section
+and select `ov13855/s5k3l8/hi846/hi846_holi/s5k4h8`; the diagnostic build
+result below does not verify that defconfig fix because the out `.config` was
+not regenerated. HYPOTHESIS for this diagnostic layer: if a boot still uses the
+old compiled list or any other bad list, the new markers will prove the exact
+`kdSetDriver()` failure branch before power/I2C behavior is guessed.
+
+Evidence:
+- `service-list.txt`: `media.camera` is registered.
+- `logcat-all-threadtime.txt:6651-6652`: provider loads
+  `android.hardware.camera.provider@2.4-impl.so` and
+  `/vendor/lib64/hw/camera.mt6750.so`.
+- `logcat-all-threadtime.txt:6680-6750`: first `impSearchSensor` pass starts,
+  every attempted `set sensor driver id` returns
+  `ERROR:KDCAMERAHWIOC_X_SET_DRIVER` / `Err-ctrlCode (I/O error)`, then
+  `Error No sensor found!!` and
+  `SENSOR search end: 0x0 /[0xffffff][255]/...`.
+- `logcat-all-threadtime.txt:6791`: `Loaded "MediaTek Camera Module"`.
+- `logcat-all-threadtime.txt:6800-6874`: second pass repeats the same zero-ID
+  result.
+- `logcat-all-threadtime.txt:6918-6919`: provider `legacy/0` is ready with
+  `0 camera devices`.
+- `dev-nodes.txt`: `/dev/kd_camera_hw`, `/dev/kd_camera_hw_bus2`, and
+  `/dev/kd_camera_flashlight` exist as `system:camera` with
+  `u:object_r:mtk_camera_device:s0`; `/dev/flashlight*` does not exist.
+- `sysfs/leds.txt`: `/sys/class/leds/flashlight` exists with `brightness=0`
+  and `max_brightness=255`. No torch enable/open failure is present in this
+  capture.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.c`:
+  emits bounded `[M6_CAM]` markers for the first four compiled list slots,
+  decoded HAL driver indices, selected sensor ID/name/init function, null init,
+  null sensor function, and out-of-range index.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/camera_hw/kd_camera_hw.c`:
+  preserves existing `[M6_CAM]` power markers and fixes their power-off branch
+  structure so they compile without changing power sequencing.
+- `BRINGUP_STATE.md`: records this diagnostic evidence and rollback contract.
+
+Why each file changed: `kd_sensorlist.c` owns the exact ioctl path returning
+`-EIO` to the HAL. `kd_camera_hw.c` owns the next power boundary if
+`kdSetDriver()` succeeds, and the existing dirty markers needed structural
+repair before build verification. No flashlight file changed because the
+capture proves flashlight node/class presence but no torch command failure.
+
+Expected next marker: next boot/camera-provider log should show `[M6_CAM]
+list[0..3]`, `[M6_CAM] kdSetDriver enter raw0/raw1`, `[M6_CAM] selected
+invoke=... drvIdx=... id/name/init`, then either a specific null/out-of-range
+`-EIO`, an enabled sensor name/function followed by sensor ID mismatch/I2C
+failure, or `[M6_CAM] power on/off ...` with the exact matched power-list step
+and failing type/voltage. If provider registers a camera, record the detected
+sensor ID/name and then test torch separately.
+
+Rollback condition: revert this diagnostic patch if it breaks the kernel
+build, prevents camera provider startup, changes detected sensor behavior
+without a corresponding marker explanation, floods hot paths beyond one
+bounded sensor-search sequence, or if a fresh capture proves a stock-backed
+proper fix should replace the markers.
+
+Verification result, 2026-06-08: `git diff --check` passed for the three
+touched files. `make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out
+ARCH=arm64 ... -j8 Image.gz-dtb` completed successfully. Built hashes:
+`Image.gz-dtb` =
+`fedb53b7f08faf6fc16fce2e271eed023ae0246e4eae6a4aa0d05eff7274ed5f`,
+`System.map` =
+`3796d588f46ea5f7a49e0c8a7c6262d526b3354d513c79874b0e55196170724c`,
+`vmlinux` =
+`908284ca9b818b49416f2c770c612a8037c406746cb79d6ced2e56a9dc9050a2`.
+This build used the pre-existing out `.config`, so it verifies marker
+compilation only, not the concurrent defconfig PROPER-FIX. `vmlinux` contains
+the `[M6_CAM]` marker strings; the matching `System.map` contains
+`kdSetDriver`, `kdCISModulePowerOn`, `IMX278_MIPI_RAW_SensorInit`,
+`OV8856JSLMIPIRAW_SensorInit`, `flashlight_init`, and
+`leds_AW3643_flashlight_init`.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- \
+  kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.c \
+  kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/camera_hw/kd_camera_hw.c \
+  BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell \
+  'logcat -b all -d -v threadtime | grep -E "M6_CAM|CameraProvider|impSearchSensor|KDCAMERAHWIOC|No sensor|camera devices"'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell \
+  'ls -lZ /dev/kd_camera_hw /dev/kd_camera_hw_bus2 /dev/kd_camera_flashlight; ls -l /sys/class/leds/flashlight; cat /sys/class/leds/flashlight/{brightness,max_brightness}'
+```
+
+## 2026-06-08 DSI BIST-full physical-path isolation
+
+PATCH HISTORY, ISOLATION + DIAGNOSTIC, 2026-06-08: add a root-triggered
+`m6_dsi_bist_full:<color>` debugfs command that enables the DSI controller's
+real `BIST_ENABLE` bit in addition to the existing self-pattern bit. This is
+not a normal display-path fix and does not change boot-time DDP, OVL, panel
+init, fences, or SurfaceFlinger behavior.
+
+Hypothesis: FACT: the previous `dsipattern` command wrote `BIST_PATTERN` and
+set `SELF_PAT_MODE`, but the fresh capture showed `BIST_ENABLE=0`. FACT:
+stock/LK/current source parity checks show the active `ili9881p_hd_dsi_txd`
+panel table already matches the visible stock surface: 720x1280, 4 lanes,
+RGB888/24-bit packet, PLL 230, porch timings, ESD `0x0a -> 0x9c`, and the
+72-entry init table. HYPOTHESIS: a full DSI BIST pattern with `BIST_ENABLE=1`,
+`BIST_FIX_PATTERN=1`, `SELF_PAT_MODE=1`, `BIST_LANE_NUM=4`, and
+`BIST_TIMING=0x20` separates controller-side video/BIST generation from
+panel/PHY/lane electrical acceptance. If physical red is visible during the
+test window, the panel/lane path can display controller-generated pixels and
+the frontier returns to RDMA/DDP-to-DSI stream handoff. If physical red is not
+visible while these markers are set and MIPITX stays powered, stop chasing
+OVL/fences/HWC and move to panel electrical state, lane mapping, or compiled
+DTB/MIPITX parity.
+
+Evidence:
+- Stock reverse agent result, 2026-06-08: LK `ili9881p_hd_dsi_txd` table and
+  current source match the visible LCM/DSI init surface; do not change panel
+  name, init table, PLL, porch, lane count, or RGB format without new evidence.
+- Built artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-m6-dsi-bist-full-isolation/boot-m6-dsi-bist-full-isolation.img`,
+  sha256
+  `1e82b12cfbbd857acec419d0314b5a037be1103694a559facbc486668b6e0c92`,
+  size `8876032`.
+- Built `Image.gz-dtb` sha256
+  `cde3eb997c7a4698b3419cedf7552cc56bc04079ed9ac698f98c28b496f55186`;
+  matching `System.map` sha256
+  `4cd52859037b67487340428a1161cb0579daf3b935577d280b5d63a08f864dbb`;
+  `vmlinux` sha256
+  `dbf891943084070e5bcfbd96d738bbe37188e1eb5727aa923616351ac22206b5`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-dsi-bist-full-isolation-20260608.log`,
+  sha256 `97bc04eb6a0a4bdcf76bb51bee9f08be0b7fcdf1b750a18cad3dbf0b7d2e90b6`.
+- Android-root flash verification: `/dev/block/mmcblk0p21` was written from
+  `/data/local/tmp/boot-m6-dsi-bist-full-isolation.img`; device-side and
+  pulled readback both matched boot sha256
+  `1e82b12cfbbd857acec419d0314b5a037be1103694a559facbc486668b6e0c92`.
+  The direct `adb exec-out dd | sha256sum` path produced a mismatched hash and
+  is not trusted for this capture; use device-side sha256 or pulled readback.
+- Invalid first capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-034920-m6-dsi-bist-full-isolation-711HEBSR277K5`.
+  FACT: after reboot, adbd was not root and `/d/mtkfb` writes failed with
+  `Permission denied`; this capture is superseded.
+- Valid root capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-035010-m6-dsi-bist-full-root-711HEBSR277K5`.
+  FACT: Android reached `sys.boot_completed=1`, `bootanim=stopped`,
+  SurfaceFlinger running, `input` found, and logical `screencap.png` remained
+  720x1280 RGBA.
+- Valid BIST-full markers:
+  `M6 DSI snapshot[bist-full-post]` shows
+  `BIST_PATTERN=0xff0000`, `BIST_CON=0x200446`, `self_pat=1`,
+  `bist_en=1`, `fix=1`, `lane=4`, `timing=0x20`,
+  `STATE7=0x2020/Video data period`; after 500 ms the same BIST bits remain
+  set and MIPITX lanes/PLL remain powered. `bist-full-post-disable` shows
+  `BIST_CON=0x0`, `self_pat=0`, `bist_en=0`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  `DSI_M6_BIST_Full_Test()` with bounded pre/post/after-500ms/disable
+  snapshots and explicit BIST fields.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the new
+  diagnostic helper for the debug parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  `/d/mtkfb` command `m6_dsi_bist_full:<color>`.
+- `BRINGUP_STATE.md`: records evidence, artifact identity, expected marker,
+  rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the DSI BIST register programming and
+already contains the bounded M6 DSI snapshot decoder. `disp_debug.c` is the
+existing root-controlled MTKFB command surface used for display isolation
+without changing normal boot behavior. `ddp_dsi.h` is required only for the
+local helper declaration.
+
+Expected next marker: if the human observes red during
+`echo m6_dsi_bist_full:0x00ff0000 > /d/mtkfb`, record physical BIST visible
+and move to DDP/RDMA-to-DSI handoff. If the panel remains physically black
+while valid markers show `bist_en=1`, move to passive panel electrical and DTB
+parity diagnostics: reset GPIO, ENP/ENN/TPS65132 readback, MIPITX lane
+mapping/electrical registers, compiled DTB `dsi0`/`mipi_tx0`/pinctrl/backlight
+nodes. Do not repeat `m6_lcm_reinit:1`; it is proven harmful in booted Android.
+
+Rollback condition: revert this patch if the command causes ADB/runtime
+instability, SurfaceFlinger or input regression, persistent BIST mode after
+disable, new fence timeouts, or display underflow/M4U churn not present before
+the BIST-full command. This patch is diagnostic only and should not ship in a
+release ROM unless debugfs diagnostics are intentionally kept.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 root
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_dsi_bist_full:0x00ff0000 > /d/mtkfb; sleep 10; echo m6_dsi_bist_full:0 > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 DSI snapshot\\[bist-full|M6 LCM backlight|M4Ufault|underflow|not complete until EOF" | tail -220'
+```
+
+## 2026-06-08 OVL bounds-default and stale-layer clear isolation
+
+PATCH HISTORY, ISOLATION + DIAGNOSTIC, 2026-06-08: the full ROM boot reached
+late Android userspace but the physical panel stayed black and ADB later went
+offline. The recovery capture verified that the boot partition still contained
+the intended full-ROM boot image, then showed OVL0 layer-transition faults with
+the bounds profile still at `0`. This patch promotes the already-tested M6
+OVL bounds profile to the default and tightens the inactive-layer clear path
+for stale OVL0 layers during direct-link/PQ-bypass composition. This is still
+an isolation patch, not a proper display fix.
+
+Hypothesis: FACT: recovery readback in
+`/srv/forge/android/meizu_m6/captures/20260608-025410-m6-fullrom-c81boot-after-offline-recovery-711HEBSR277K5/boot-readback-recovery.sha256`
+is `c81c52bba8c04707a92c0157917a53a2f72432225b24cf2955d64e4e6ee4d797`,
+matching the full-ROM boot image embedded in
+`/srv/forge/android/export/meizu_m6_artifacts/20260608-m6-full-rom-c81boot/lineage-15.1-20260608-UNOFFICIAL-meizu_m6-c81boot.zip`
+sha256 `04f05e467a101d31a8cdfd323f655863041fdb7459d492d0174204841ce313e2`.
+FACT: the target pstore/last_kmsg in the same capture shows backlight DCS
+`0x51` writes, nonzero OVL buffer samples, then
+`M6 OVL cpu preclear[2]: old_src=0xf enabled=0x7 stale=0x8`, followed by
+OVL0 frame underflow, `L3 not complete until EOF`, and an IRQ snapshot where
+`src=0x7`, `scan=0x0->0xf`, and `L3 live en=0` while `bounds=0` for active
+layers. FACT from the previous profile scan in this file: runtime-selected
+`m6_ovl_bounds_profile:1` removed the short-stimulus OVL/RDMA/M4U fault
+markers while profile `0` reproduced them. HYPOTHESIS: the full-ROM black
+runtime is still exercising the unfixed profile-0 OVL prefetch/stale-layer
+transition path; starting with profile `1` and clearing stale disabled layer
+registers plus the stale layer EOF IRQ should remove the proven OVL0
+transition fault or move the frontier to DSI/panel-side evidence.
+
+Evidence:
+- Fresh capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-025410-m6-fullrom-c81boot-after-offline-recovery-711HEBSR277K5`.
+- Capture evidence file:
+  `display-runtime-evidence.txt`, especially the backlight lines, nonzero
+  `M6 OVL m4u sample[...]` lines, and the OVL IRQ block at lines 59-74.
+- Previous bounds-profile evidence in this file:
+  `2026-06-07 OVL bounds profile end-prefetch isolation`.
+- Built artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-m6-ovl-default1-staleclear/boot-m6-ovl-default1-staleclear.img`,
+  sha256
+  `24937c5ced2aefae4d165d6ba49d30d8fb3d65df44e4577d72607a78d2b9f1f0`,
+  size `8876032`.
+- Built `Image.gz-dtb` sha256
+  `498f012c8ca0cf4134677a0d3efc2bb4526d0afd26a297602ac2e1a571c609da`;
+  matching `System.map` sha256
+  `da7b8f87acba6e21c3a78f19093054ae150ce68955920893dfe48bb0daed081b`;
+  `vmlinux` sha256
+  `31e65991655757dd80fe33181c7e2c101dea09a7341f1b75cc2caf50ae446a14`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-ovl-default1-staleclear-20260608.log`,
+  sha256 `445797badc8f28d2af5a795969ab5e1c2dd578bc5bb9f801ebf34f6e7b357fa4`.
+- Recovery flash verification: `/dev/block/mmcblk0p21` sized readback matched
+  the new boot sha256
+  `24937c5ced2aefae4d165d6ba49d30d8fb3d65df44e4577d72607a78d2b9f1f0`
+  before rebooting Android.
+- Live capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-031634-m6-ovl-default1-staleclear-live-711HEBSR277K5`.
+  FACT: Android reached `sys.boot_completed=1`, `bootanim=stopped`,
+  SurfaceFlinger and `input` were running, and `screencap.png` is non-black
+  720x1280 RGBA. FACT: this clean logical display result moves the physical
+  black-screen frontier below Android UI/HWC composition.
+- Root OVL stimulus capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-032225-m6-ovl-default1-stimulus-root-711HEBSR277K5`.
+  FACT: after explicitly writing `m6_ovl_bounds_profile:1`, fresh dmesg
+  showed twelve `M6 OVL bounds profile apply[...] dst_h=1280->1279` markers
+  and no fresh `M4Ufault`, `frame underflow`, `not complete until EOF`, or
+  `RDMA0 underflow` in that stimulus window.
+- DSI BIST capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-032427-m6-dsi-bist-pattern-root-711HEBSR277K5`.
+  FACT: writing `dsipattern:0x00ff0000` toggled DSI registers to
+  `BIST_PATTERN=0xff0000`, `BIST_CON=0x200040`, `self_pat=1`; MIPITX lane
+  LDO/PLL state stayed powered. This proves the DSI BIST register path is
+  writable, but it does not prove physical pixels without human observation.
+- LCM reinit capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-032504-m6-lcm-reinit-root-711HEBSR277K5`.
+  FACT: `m6_lcm_reinit:1` completed the 72-entry init table and returned
+  `ret=0`, then poisoned the runtime with display fence timeouts and
+  `service check input` temporarily reported `not found`. INFERENCE: manual
+  LCM reinit is a harmful isolation probe in the current booted Android state,
+  not a fix path to automate.
+- Clean post-reboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-032840-m6-clean-post-reboot-root-711HEBSR277K5`.
+  FACT: after rebooting away from the harmful reinit state, Android again
+  reached `sys.boot_completed=1`, `bootanim=stopped`, SurfaceFlinger running,
+  `input` found, and non-empty 720x1280 `screencap.png`. Remaining non-display
+  blockers include Bluetooth enable timeout/crash and `emdlogger1` SIGABRT.
+- Live bounds-profile rerun:
+  `/srv/forge/android/meizu_m6/captures/20260608-042729-m6-live-bounds0-input-ab-711HEBSR277K5`.
+  FACT: `m6_ovl_bounds_profile:0` returned `ret=0`, but the attempted Android
+  `input` stimulus processes were killed and the post-probe OVL snapshot still
+  showed `last cfg seq=1827`, `bounds=1`, live L0 `720x1279`, `valid=0x0`,
+  `ready=0x4000937a`, and RDMA `in=0/0 out=0/0`. INFERENCE: this capture only
+  proves the runtime setter changed the future profile value; it does not test
+  profile-0 behavior because no new OVL MEM layer config occurred after the
+  switch. Capture-local verdict:
+  `/srv/forge/android/meizu_m6/captures/20260608-042729-m6-live-bounds0-input-ab-711HEBSR277K5/runtime-bounds0-result.md`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c`: defaults
+  `m6_ovl_bounds_profile_id` to `1`, adds a bounded inactive-layer register
+  clear helper, applies it to stale disabled OVL0 layers in the direct-link /
+  PQ-bypass path, and clears stale layer EOF IRQ bits with the same inverted
+  `INTSTA` write pattern used by the IRQ handler.
+- `BRINGUP_STATE.md`: records patch category, evidence, expected marker,
+  rollback condition, and verification commands.
+
+Why each file changed: `ddp_ovl.c` owns the exact OVL0 layer source/size/address
+programming and already contains the tested bounds profile and stale-layer
+preclear marker that fired immediately before the fresh `L3 not complete`
+event. No DSI, panel, PQ, fence, or userspace behavior is changed by this patch.
+
+Expected next marker: a fresh runtime stimulus with explicit
+`m6_ovl_bounds_profile:1` should continue to show
+`M6 OVL bounds profile apply[...] profile=1` without fresh OVL/RDMA/M4U
+transition faults. The remaining physical black-screen frontier is below
+logical framebuffer composition: DSI/panel stream acceptance, MIPI lane
+mapping/timing, panel command state, or LK-to-kernel panel handoff. Do not
+reuse `m6_lcm_reinit:1` as an automatic fix; it is currently a harmful
+isolation probe.
+
+Rollback condition: revert this patch if the device regresses before ADB,
+SurfaceFlinger, backlight DCS `0x51`, or if `bounds=1` causes visible
+composition cropping beyond the known one-line isolation, new M4U faults, or
+new OVL/RDMA underflows that were not present with the verified profile-1
+runtime scan.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+gzip -cd /srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb 2>/tmp/m6-ovl-default1-gzip.err | strings | grep -E 'M6 OVL stale clear|M6 OVL bounds profile apply'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 OVL stale clear|M6 OVL bounds profile apply|M6 OVL irq diag|not complete until EOF|frame underflow|M4Ufault|M6 OVL m4u sample|M6 LCM backlight" | tail -360'
+```
+
 ## 2026-06-07 OVL bounds profile end-prefetch isolation
 
 PATCH HISTORY, ISOLATION + DIAGNOSTIC, 2026-06-07: after the per-layer IRQ
@@ -620,6 +1156,86 @@ transitions for new `M4Ufault`, `M4UM6`, `OVL irq`, `frame underflow`, and
 `L2 not complete until EOF`. Only patch OVL/M4U behavior if the fresh capture
 proves the fault recurs with the physical black state. Do not classify a
 larger `+4K` bypass or fake fence/EOF release as a proper fix.
+
+## 2026-06-06 charger power_supply Android export diagnostics
+
+PATCH HISTORY, PROPER-FIX + DIAGNOSTIC, 2026-06-06: expose Android-standard
+battery voltage/temperature units from the MTK fuel-gauge driver and add
+bounded charger/SOC-ready markers.
+
+Hypothesis: the charger hardware path is alive, but Android userspace sees
+stale default battery state because stock `fuelgauged` is not running and the
+kernel's standard `power_supply` attributes are incomplete/wrong for Android
+healthd. Once `fuelgauged` can set SOC-ready, Android should read standard
+`voltage_now` in microvolts and `temp` in tenths of a degree C instead of
+falling into zero-valued or MTK-private attributes.
+
+Evidence:
+- Fresh capture:
+  `/srv/forge/android/meizu_m6/captures/20260606-101042-m6-nondisplay-runtime-711HEBSR277K5`.
+- Kernel logs in that capture repeatedly show charger hardware present and
+  active: `vbus` about 4.3 V, `chrdet:1`, `CHR_Type 1`, `CC mode charge`, and
+  `bq2415x_charging: enable charger successfully`.
+- The same capture and live readback show Android battery defaults:
+  `dumpsys battery` reports USB/AC false, status `4`, level `50`, voltage `0`,
+  and temperature `0`; live `/sys/class/power_supply/battery/uevent` reports
+  `POWER_SUPPLY_BATT_VOL=4214` but `POWER_SUPPLY_VOLTAGE_NOW=0` and
+  `POWER_SUPPLY_BATT_TEMP=0`.
+- `BatteryMonitor.cpp` chooses `voltage_now` before the MTK-private `batt_vol`
+  fallback and divides it by 1000, so `voltage_now` must be microvolts.
+- `kernel-3.18/include/linux/power_supply.h` defines both
+  `POWER_SUPPLY_PROP_VOLTAGE_NOW` and `POWER_SUPPLY_PROP_TEMP`.
+- Build verification completed:
+  `env CCACHE_DIR=/srv/forge/android/ccache make -C .../kernel-3.18
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out ARCH=arm64
+  CROSS_COMPILE=...aarch64-linux-android- -j8 Image.gz-dtb`.
+- Built artifact hashes:
+  `Image.gz-dtb` sha256
+  `4b66c82e160577af9b82baa6ad8d15c8910292eb09aa0b837cdc482e7d1b07e2`;
+  `System.map` sha256
+  `aa08f558b28e5a5b1792f434d3b9700e820810de60bd4800642f32e310aef21a`;
+  `vmlinux` sha256
+  `88adc0f35b7a9e40714b3105a30fca65ad0fcf010b23de0caf9ec840005c7bf7`.
+- `strings` on the built `Image.gz-dtb` finds
+  `[M6_CHG] soc_ready update ...` and `[M6_CHG] wait_soc_ready ...`.
+
+Files changed:
+- `kernel-3.18/drivers/power/mediatek/battery_common_fg_20.c`: adds standard
+  `POWER_SUPPLY_PROP_TEMP`, returns `voltage_now` in microvolts with a fallback
+  to the MTK battery mV field, and adds rate-limited `[M6_CHG]` markers around
+  the `g_battery_soc_ready` gate and published AC/USB/battery state.
+
+Why each file changed: this is the compiled M6 MTK fuel-gauge driver that owns
+the `battery`, `usb`, and `ac` `power_supply` nodes. The fresh capture proves
+hardware charging is active below this layer while Android sees stale exported
+state above it.
+
+Expected next marker: with the rebuilt kernel and rebuilt system image flashed,
+fresh dmesg should show either `[M6_CHG] wait_soc_ready ...` if `fuelgauged`
+still cannot initialize, or `[M6_CHG] soc_ready update ...` with nonzero
+voltage/temp and the correct USB/AC online value if the daemon unlocks the
+SOC-ready path. `dumpsys battery` should then stop showing voltage `0` and
+temperature `0`.
+
+Rollback condition: revert this kernel change if a fresh capture with the
+rebuilt image shows malformed `power_supply` sysfs files, healthd parse
+failures caused by these attributes, or a charger regression where bq2415x no
+longer enables charging.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/power/mediatek/battery_common_fg_20.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+sha256sum /srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb /srv/forge/work/m6-source-kernel-manual-20260520/out/System.map
+gzip -cd /srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb 2>/tmp/m6-chg-gzip.err | strings | grep -E 'M6_CHG|soc_ready|wait_soc_ready'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep M6_CHG | tail -40; dumpsys battery; for d in /sys/class/power_supply/*; do echo ===$d===; cat $d/uevent; done'
+```
 
 ## 2026-06-06 display awake capture after mediaserver hotfix
 
@@ -6440,4 +7056,183 @@ Verification commands:
 cd /srv/forge/android/meizu_m6/captures/20260606-080219-m6-scrcpy-image-physical-black-live
 grep -n "WindowHashMap\|SurfaceComposerClient::createSurface\|handleAppDiedLocked\|appDiedLocked\|SET_HAS_OVERLAY_UI" anr/anr_2026-06-06-09-06-38-695
 grep -E "WATCHDOG KILLING|WaitForDisplay|Display device added|Display device changed state|system_server" logcat-boot-timeline-tail.txt logcat-watchdog-blockers-tail.txt
+```
+
+## 2026-06-07 runtime4 lit-black panel marker boot
+
+Patch category: **DIAGNOSTIC / ARTIFACT**. This checkpoint records a boot-only
+artifact for the black-but-lit physical panel split. The artifact preserves the
+runtime4 ramdisk/cmdline and changes only the kernel payload, but it was built
+from the current dirty kernel tree, which also contains parallel Wi-Fi, camera,
+and charger edits. Those edits are not claimed as display fixes here.
+
+Hypothesis: FACT: runtime4 shows scrcpy/UI alive, SurfaceFlinger flips, display
+state ON, direct link, RDMA0 transfer, PQ bypassed, and DCS/backlight `0x51`
+at `0xff`, while the human reports the physical LCD remains black with glow.
+FACT: live DSI BIST red/green/blue probes set `BIST_CON=0x200040` and
+`self_pat=1` with DSI video-state samples. HYPOTHESIS: the next missing signal
+is panel-side physical visibility readback: VSP/VSN/RST GPIO state and
+TPS65132 reg0/reg1 after Linux reinit, then MIPI lane/electrical/timing parity
+if those are healthy.
+
+Evidence:
+- Runtime4 capture:
+  `/srv/forge/android/meizu_m6/captures/20260607-135927-m6-runtime4-wifiowner-afterboot-711HEBSR277K5`.
+- Live BIST capture:
+  `/srv/forge/android/meizu_m6/captures/20260607-141447-m6-live-litblack-dsi-bist-window-711HEBSR277K5`.
+- Capture-local report:
+  `/srv/forge/android/meizu_m6/captures/20260607-141447-m6-live-litblack-dsi-bist-window-711HEBSR277K5/display-bist-hs-result.md`.
+- Artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260607-m6-runtime4-litblack-panel-markers-boot`.
+- Source runtime4 boot sha256:
+  `4d19675fa7b2d35930c5a54b70162666b238a2aa9232ce6665cec2471d87ed0c`.
+- New boot sha256:
+  `31a494473c1fd12e3b87367979c763688e69ce4172091620aca21e1bc8852e95`.
+- New `Image.gz-dtb` sha256:
+  `da4f27c80333ee69923b2466cbd3fa4816b62b551fea80cd244afa0c20b9d964`.
+- Matching `System.map` sha256:
+  `0177bdbfddf0405425b7627c597364bbf1893e4ef798513744b29cc8fdc49d13`.
+- Runtime4 ramdisk sha256:
+  `d17a4fb06cb4005e8e2f8e02f2e558a3c87d0755dd682c6454675f9e0200d016`.
+
+Files changed:
+- `captures/20260607-141447-m6-live-litblack-dsi-bist-window-711HEBSR277K5/display-bist-hs-result.md`:
+  state-only capture verdict for the lit-black BIST split.
+- `BRINGUP_STATE.md`: artifact identity, hypothesis, expected markers, and
+  rollback condition for the runtime4-preserving marker boot.
+
+Why each file changed: the capture-local report keeps DSI BIST evidence next to
+the capture. This state file records the artifact identity required before
+flashing and interpreting `M6 gpio[...]`, TPS readback, LED route, PWM guard,
+and DSI BIST markers.
+
+Expected next marker: after flashing
+`boot-m6-runtime4-litblack-panel-markers-expanded.img`, run `m6_lcm_reinit:1`,
+`ata`, and a short BIST sequence. Dmesg should contain `M6 gpio[...]` for
+VSP/VSN/RST, `M6 LCM tps65132 read addr=0x00 ret=15` and `addr=0x01 ret=15`,
+LED route markers for `lcd-backlight`, DCS `brightness/ctrl_display/cabc`
+readbacks, and `M6 DSI snapshot[bist-post-enable] ... self_pat=1`.
+
+Rollback condition: revert to the runtime4 boot if the marker boot regresses
+before ADB, SurfaceFlinger, direct-link/RDMA transfer, or backlight/DCS `0x51`.
+If GPIO/TPS readbacks are healthy and physical BIST remains invisible, do not
+reopen PQ/HWC; move to MIPI TX electrical/lane/timing parity or stock LK hidden
+panel/PHY side effects.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260607-m6-runtime4-litblack-panel-markers-boot
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-expanded-unpack/zImage
+cmp runtime4-ramdisk.img verify-expanded-unpack/initrd.img
+abootimg -i boot-m6-runtime4-litblack-panel-markers-expanded.img
+gzip -cd Image.gz-dtb 2>/tmp/m6-runtime4-litblack-image-gzip.err | strings | grep -E 'M6 gpio\[|M6 LCM tps65132 read|M6 LED path|M6 LED drv path|M6 DSI snapshot\[bist|DISP PWM%d base is NULL'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'svc power stayon true; settings put system screen_off_timeout 2147483647; input keyevent 224; settings put system screen_brightness 255; echo 255 > /sys/class/leds/lcd-backlight/brightness'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_lcm_reinit:1 > /d/mtkfb; sleep 2; echo ata > /d/mtkfb; echo dsipattern:0x00ff0000 > /d/mtkfb; sleep 4; echo dsipattern:0 > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'dmesg | grep -E "M6 gpio\\[|M6 LCM tps65132 read|M6 LCM ATA dcs|power_mode|M6 DSI snapshot\\[bist|BIST_PATTERN|self_pat|M6 LED path|M6 LCM backlight" | tail -260'
+```
+
+## 2026-06-07 runtime4 lit-black root marker result
+
+Patch category: **DIAGNOSTIC / STATE-ONLY**. This checkpoint records the
+post-flash root marker capture for the black-but-lit physical panel split. No
+source code or device behavior is changed by this entry.
+
+Hypothesis: FACT: the physical display is black but lit/glowing while scrcpy/UI
+is alive. FACT: the previous runtime4 and BIST captures already reject
+SurfaceFlinger, PQ, HWC policy, direct-link route construction, RDMA transfer,
+DSI LP DCS transport, and generic backlight-off as the first frontier. This
+root marker capture was meant to close the remaining Linux-side panel
+power/reset/bias/readback questions before moving below the DSI controller.
+
+Evidence:
+- Root marker capture:
+  `/srv/forge/android/meizu_m6/captures/20260607-145745-m6-rootmarkers-runtime4-litblack-panel-markers-711HEBSR277K5`.
+- Capture-local report:
+  `/srv/forge/android/meizu_m6/captures/20260607-145745-m6-rootmarkers-runtime4-litblack-panel-markers-711HEBSR277K5/display-rootmarkers-result.md`.
+- Runtime4 capture:
+  `/srv/forge/android/meizu_m6/captures/20260607-135927-m6-runtime4-wifiowner-afterboot-711HEBSR277K5`.
+- Live BIST capture:
+  `/srv/forge/android/meizu_m6/captures/20260607-141447-m6-live-litblack-dsi-bist-window-711HEBSR277K5`.
+- Boot identity caveat: preflash artifact sha256 is
+  `31a494473c1fd12e3b87367979c763688e69ce4172091620aca21e1bc8852e95`, but
+  postboot readback sha256 is
+  `d565eae0d3ea38f93a9c92edc8d3afe11c9381cfa108d5fe875a55b40d2a286d`. Runtime
+  marker lines are valid evidence for the running kernel, but any future
+  symbol/address decoding must use the readback image and its matching map, not
+  the `31a494...` artifact map.
+- Root/runtime state: root shell, SELinux permissive, `sys.boot_completed=1`,
+  SurfaceFlinger running, and boot animation stopped.
+- GPIO/TPS evidence: VSP GPIO17, VSN GPIO90, and reset GPIO158 reach
+  output/input high during manual reinit; TPS65132 on adapter 0 client
+  `0x3e/i2c_lcd_bias` reads back `0x0f` from reg0 and reg1 after writes.
+- DCS evidence: after reinit the panel returns `display_id=15 20 00`,
+  `display_status=80 03 06 00`, `power_mode=9c`, `pixel_format=07`, and ID
+  registers `15/20/00`. `0x51`, `0x53`, and `0x55` read back `00`; keep this as
+  a panel-state clue, but it does not reopen generic backlight-off because the
+  user reports glow and prior runtime markers show the backlight callback
+  writing `dcs51=0xff`.
+- DSI BIST evidence: red, green, and blue self-pattern windows set
+  `BIST_CON=0x200040` and `self_pat=1`, show DSI `STATE7` video data period
+  samples, and print stable MIPITX lane/PLL snapshots. Disabling BIST clears
+  `BIST_CON=0x0` and `self_pat=0`.
+- Side-effect note: the forced reinit/BIST window also logs CMDQ
+  `RDMA0_EOF` waits, DEVAPC SMI_LARB violations, and OVL diagnostics while
+  SurfaceFlinger/SystemUI are active. Treat those as stress/interaction
+  evidence from the manual BIST window unless they reproduce without forced
+  reinit/BIST; they are not the earliest physical-black frontier yet.
+
+Files changed:
+- `captures/20260607-145745-m6-rootmarkers-runtime4-litblack-panel-markers-711HEBSR277K5/display-rootmarkers-result.md`:
+  capture-local verdict for the root marker pass.
+- `BRINGUP_STATE.md`: durable state, evidence, expected next marker, and
+  rollback condition for the next display diagnostic patch.
+
+Why each file changed: the capture-local report keeps the raw marker verdict
+next to the capture. This state file records the closed branches and prevents
+future agents from looping back into PQ, HWC, RDMA, TPS bus, reset, or
+generic-backlight hypotheses that the current evidence already rejects.
+
+INFERENCE: if the physical panel stayed black/lit during the verified RGB BIST
+windows, the earliest open frontier is below Linux reset/bias/init and below
+the DSI controller self-pattern register write. The remaining candidates are
+MIPI TX electrical lane mapping/state, lane swap or polarity, PHY settle/drive
+settings, panel-side acceptance of HS video despite healthy LP reads, panel LED
+electrical routing, or a stock LK-only DSI/PHY/panel side effect that Linux does
+not reproduce.
+
+Expected next marker: add a bounded **DIAGNOSTIC** patch, preferably in the DSI
+snapshot path rather than policy/userspace, that decodes MIPITX/DSI lane/PHY
+acceptance state around `DSI_Start()`, `start-after-hs`, and BIST post-enable:
+lane swap, PHY select, SW control, RT code/state bits, PLL/clock lane/data lane
+enable bits, and the exact mode/porch/PLL values of the running image. If those
+match stock LK-derived expectations and BIST remains physically invisible, move
+to stock LK hidden DSI/PHY/panel side effects or board-level panel LED/electrical
+routing. Do not build a full zip for this; a boot-only diagnostic kernel is
+enough.
+
+Rollback condition: none for this state-only note. Revert the next diagnostic
+kernel patch if it changes display timing/route behavior, regresses
+ADB/SurfaceFlinger/RDMA/backlight compared with runtime4, or causes new DSI/CMDQ
+failures before producing the expected lane/PHY markers.
+
+Verification commands:
+
+```bash
+CAP=/srv/forge/android/meizu_m6/captures/20260607-145745-m6-rootmarkers-runtime4-litblack-panel-markers-711HEBSR277K5
+grep -E "M6 gpio\\[|M6 LCM tps65132 read|M6 LCM ATA dcs|power_mode|M6 DSI snapshot\\[bist|BIST_PATTERN|self_pat|MIPITX lanes" "$CAP/reinit-ata-rgb-bist-markers.txt"
+cat "$CAP/boot-readback-sha256.txt"
+sha256sum "$CAP/unpack-readback/zImage" "$CAP/unpack-readback/initrd.img"
+
+A="/usr/bin/adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5"
+NEXT=/srv/forge/android/meizu_m6/captures/$(date +%Y%m%d-%H%M%S)-m6-litblack-dsi-phy-lanes-711HEBSR277K5
+mkdir -p "$NEXT"
+$A root
+$A wait-for-device
+$A shell 'svc power stayon true; settings put system screen_off_timeout 2147483647; input keyevent 224; settings put system screen_brightness 255; echo 255 > /sys/class/leds/lcd-backlight/brightness'
+$A shell 'echo m6_lcm_reinit:1 > /d/mtkfb; sleep 2; echo ata > /d/mtkfb; echo dsipattern:0x00ff0000 > /d/mtkfb; sleep 3; echo dsipattern:0x0000ff00 > /d/mtkfb; sleep 3; echo dsipattern:0x000000ff > /d/mtkfb; sleep 3; echo dsipattern:0 > /d/mtkfb'
+$A shell dmesg > "$NEXT/dmesg-after-rgb-bist.txt"
+$A shell 'cat /d/mtkfb 2>&1' > "$NEXT/mtkfb.txt"
+$A shell 'dumpsys display; dumpsys SurfaceFlinger; dumpsys power' > "$NEXT/dumpsys-display-sf-power.txt"
 ```

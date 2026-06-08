@@ -905,6 +905,7 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 
 	int pwListIdx, pwIdx;
 	BOOL sensorInPowerList = KAL_FALSE;
+	PowerInformation pwInfo;
 
 	if (DUAL_CAMERA_MAIN_SENSOR == SensorIdx) {
 		pinSetIdx = 0;
@@ -916,6 +917,9 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 	/* power ON */
 	if (On) {
 		PK_DBG("kdCISModulePowerOn -on:currSensorName=%s pinSetIdx=%d\n", currSensorName, pinSetIdx);
+		PK_ERR("[M6_CAM] power on sensorIdx=%d name=%s pinSetIdx=%d has_mipi_switch=%d mode=%s\n",
+			SensorIdx, currSensorName ? currSensorName : "null", pinSetIdx,
+			has_mipi_switch, mode_name ? mode_name : "null");
 
 
     /* MIPI SWITCH */
@@ -938,14 +942,20 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				//PK_DBG("sensorIdx:%d\n", SensorIdx);
 
 				sensorInPowerList = KAL_TRUE;
+				PK_ERR("[M6_CAM] power on match pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName);
 
 				for (pwIdx = 0; pwIdx < 10; pwIdx++) {
 					if (PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx].
 					    PowerType != VDD_None) {
-						if (hwpoweron
-						    (PowerOnList.PowerSeq[pwListIdx].
-						     PowerInfo[pwIdx], mode_name) == FALSE)
+						pwInfo = PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx];
+						PK_ERR("[M6_CAM] power on step idx=%d type=%d volt=%d delay=%d\n",
+							pwIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay);
+						if (hwpoweron(pwInfo, mode_name) == FALSE) {
+							PK_ERR("[M6_CAM] power on fail idx=%d type=%d volt=%d\n",
+								pwIdx, pwInfo.PowerType, pwInfo.Voltage);
 							goto _kdCISModulePowerOn_exit_;
+						}
 					} else {
 						/* PK_DBG("pwIdx=%d\n", pwIdx); */
 						break;
@@ -953,6 +963,8 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				}
 				break;
 			} else if (PowerOnList.PowerSeq[pwListIdx].SensorName == NULL) {
+				PK_ERR("[M6_CAM] power on no match before null pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName ? currSensorName : "null");
 				break;
 			} else {
 			}
@@ -1169,16 +1181,22 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				strcmp(PowerOnList.PowerSeq[pwListIdx].SensorName,
 				       currSensorName))) {
 				PK_DBG("kdCISModulePowerOn -off:currSensorName=%s pinSetIdx=%d\n", currSensorName, pinSetIdx);
+				PK_ERR("[M6_CAM] power off match pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName);
 
 				sensorInPowerList = KAL_TRUE;
 
 				for (pwIdx = 9; pwIdx >= 0; pwIdx--) {
 					if (PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx].
 					    PowerType != VDD_None) {
-						if (hwpowerdown
-						    (PowerOnList.PowerSeq[pwListIdx].
-						     PowerInfo[pwIdx], mode_name) == FALSE)
+						pwInfo = PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx];
+						PK_ERR("[M6_CAM] power off step idx=%d type=%d volt=%d delay=%d\n",
+							pwIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay);
+						if (hwpowerdown(pwInfo, mode_name) == FALSE) {
+							PK_ERR("[M6_CAM] power off fail idx=%d type=%d volt=%d\n",
+								pwIdx, pwInfo.PowerType, pwInfo.Voltage);
 							goto _kdCISModulePowerOn_exit_;
+						}
 						if (pwIdx > 0) {
 							if (PowerOnList.PowerSeq[pwListIdx].
 							    PowerInfo[pwIdx - 1].Delay > 0)
@@ -1191,6 +1209,8 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 					}
 				}
 			} else if (PowerOnList.PowerSeq[pwListIdx].SensorName == NULL) {
+				PK_ERR("[M6_CAM] power off no match before null pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName ? currSensorName : "null");
 				break;
 			} else {
 			}
@@ -1319,9 +1339,15 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 #endif
 	}			/*  */
 
+	PK_ERR("[M6_CAM] power exit ok on=%d sensorIdx=%d name=%s in_list=%d pinSetIdx=%d\n",
+		On, SensorIdx, currSensorName ? currSensorName : "null",
+		sensorInPowerList, pinSetIdx);
 	return 0;
 
 _kdCISModulePowerOn_exit_:
+	PK_ERR("[M6_CAM] power exit fail on=%d sensorIdx=%d name=%s in_list=%d pinSetIdx=%d\n",
+		On, SensorIdx, currSensorName ? currSensorName : "null",
+		sensorInPowerList, pinSetIdx);
 	return -EIO;
 }
 
@@ -1805,6 +1831,7 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 
 	int pwListIdx, pwIdx;
 	BOOL sensorInPowerList = KAL_FALSE;
+	PowerInformation pwInfo;
 
 	if (DUAL_CAMERA_MAIN_SENSOR == SensorIdx) {
 		pinSetIdx = 0;
@@ -1816,6 +1843,9 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 	/* power ON */
 	if (On) {
 		PK_DBG("kdCISModulePowerOn -on:currSensorName=%s pinSetIdx=%d\n", currSensorName, pinSetIdx);
+		PK_ERR("[M6_CAM] power on sensorIdx=%d name=%s pinSetIdx=%d mode=%s\n",
+			SensorIdx, currSensorName ? currSensorName : "null", pinSetIdx,
+			mode_name ? mode_name : "null");
 
 		for (pwListIdx = 0; pwListIdx < 16; pwListIdx++) {
 			if (currSensorName && (PowerOnList.PowerSeq[pwListIdx].SensorName != NULL)
@@ -1825,14 +1855,20 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				//PK_DBG("sensorIdx:%d\n", SensorIdx);
 
 				sensorInPowerList = KAL_TRUE;
+				PK_ERR("[M6_CAM] power on match pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName);
 
 				for (pwIdx = 0; pwIdx < 10; pwIdx++) {
 					if (PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx].
 					    PowerType != VDD_None) {
-						if (hwpoweron
-						    (PowerOnList.PowerSeq[pwListIdx].
-						     PowerInfo[pwIdx], mode_name) == FALSE)
+						pwInfo = PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx];
+						PK_ERR("[M6_CAM] power on step idx=%d type=%d volt=%d delay=%d\n",
+							pwIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay);
+						if (hwpoweron(pwInfo, mode_name) == FALSE) {
+							PK_ERR("[M6_CAM] power on fail idx=%d type=%d volt=%d\n",
+								pwIdx, pwInfo.PowerType, pwInfo.Voltage);
 							goto _kdCISModulePowerOn_exit_;
+						}
 					} else {
 						/* PK_DBG("pwIdx=%d\n", pwIdx); */
 						break;
@@ -1840,6 +1876,8 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				}
 				break;
 			} else if (PowerOnList.PowerSeq[pwListIdx].SensorName == NULL) {
+				PK_ERR("[M6_CAM] power on no match before null pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName ? currSensorName : "null");
 				break;
 			} else {
 			}
@@ -2050,16 +2088,22 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				strcmp(PowerOnList.PowerSeq[pwListIdx].SensorName,
 				       currSensorName))) {
 				PK_DBG("kdCISModulePowerOn -off:currSensorName=%s pinSetIdx=%d\n", currSensorName, pinSetIdx);
+				PK_ERR("[M6_CAM] power off match pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName);
 
 				sensorInPowerList = KAL_TRUE;
 
 				for (pwIdx = 9; pwIdx >= 0; pwIdx--) {
 					if (PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx].
 					    PowerType != VDD_None) {
-						if (hwpowerdown
-						    (PowerOnList.PowerSeq[pwListIdx].
-						     PowerInfo[pwIdx], mode_name) == FALSE)
+						pwInfo = PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx];
+						PK_ERR("[M6_CAM] power off step idx=%d type=%d volt=%d delay=%d\n",
+							pwIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay);
+						if (hwpowerdown(pwInfo, mode_name) == FALSE) {
+							PK_ERR("[M6_CAM] power off fail idx=%d type=%d volt=%d\n",
+								pwIdx, pwInfo.PowerType, pwInfo.Voltage);
 							goto _kdCISModulePowerOn_exit_;
+						}
 						if (pwIdx > 0) {
 							if (PowerOnList.PowerSeq[pwListIdx].
 							    PowerInfo[pwIdx - 1].Delay > 0)
@@ -2072,6 +2116,8 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 					}
 				}
 			} else if (PowerOnList.PowerSeq[pwListIdx].SensorName == NULL) {
+				PK_ERR("[M6_CAM] power off no match before null pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName ? currSensorName : "null");
 				break;
 			} else {
 			}
@@ -2199,9 +2245,15 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 		}
 	}			/*  */
 
+	PK_ERR("[M6_CAM] power exit ok on=%d sensorIdx=%d name=%s in_list=%d pinSetIdx=%d\n",
+		On, SensorIdx, currSensorName ? currSensorName : "null",
+		sensorInPowerList, pinSetIdx);
 	return 0;
 
 _kdCISModulePowerOn_exit_:
+	PK_ERR("[M6_CAM] power exit fail on=%d sensorIdx=%d name=%s in_list=%d pinSetIdx=%d\n",
+		On, SensorIdx, currSensorName ? currSensorName : "null",
+		sensorInPowerList, pinSetIdx);
 	return -EIO;
 }
 #endif

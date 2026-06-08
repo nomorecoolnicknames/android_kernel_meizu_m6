@@ -1356,15 +1356,25 @@ int kdSetDriver(unsigned int *pDrvIndex)
     ACDK_KD_SENSOR_INIT_FUNCTION_STRUCT *pSensorList = NULL;
     u32 drvIdx[KDIMGSENSOR_MAX_INVOKE_DRIVERS] = {0, 0};
     u32 i;
+    u32 listIdx;
 
     /* set driver for MAIN or SUB sensor */
     PK_INF("pDrvIndex:0x%08x/0x%08x\n", pDrvIndex[KDIMGSENSOR_INVOKE_DRIVER_0], pDrvIndex[KDIMGSENSOR_INVOKE_DRIVER_1]);
+    PK_ERR("[M6_CAM] kdSetDriver enter raw0=0x%08x raw1=0x%08x\n",
+        pDrvIndex[KDIMGSENSOR_INVOKE_DRIVER_0], pDrvIndex[KDIMGSENSOR_INVOKE_DRIVER_1]);
     gDrvIndex = pDrvIndex[KDIMGSENSOR_INVOKE_DRIVER_0];
 
     if (0 != kdGetSensorInitFuncList(&pSensorList))
     {
-    PK_ERR("ERROR:kdGetSensorInitFuncList()\n");
+    PK_ERR("[M6_CAM] ERROR:kdGetSensorInitFuncList()\n");
     return -EIO;
+    }
+
+    for (listIdx = 0; listIdx < 4 && listIdx < MAX_NUM_OF_SUPPORT_SENSOR; listIdx++) {
+    PK_ERR("[M6_CAM] list[%u] id=0x%08x name=%s init=%p\n",
+        listIdx, pSensorList[listIdx].SensorId,
+        pSensorList[listIdx].drvname,
+        (void *)pSensorList[listIdx].SensorInit);
     }
 
     for (i = KDIMGSENSOR_INVOKE_DRIVER_0; i < KDIMGSENSOR_MAX_INVOKE_DRIVERS; i++) {
@@ -1375,7 +1385,10 @@ int kdSetDriver(unsigned int *pDrvIndex)
     spin_unlock(&kdsensor_drv_lock);
     drvIdx[i] = (pDrvIndex[i] & KDIMGSENSOR_DUAL_MASK_LSB);
     /*  */
-    if (DUAL_CAMERA_NONE_SENSOR == g_invokeSocketIdx[i]) { continue; }
+    if (DUAL_CAMERA_NONE_SENSOR == g_invokeSocketIdx[i]) {
+        PK_ERR("[M6_CAM] invoke[%d] none raw=0x%08x drvIdx=%u\n", i, pDrvIndex[i], drvIdx[i]);
+        continue;
+    }
 #if 0
             if (DUAL_CAMERA_MAIN_SENSOR == g_invokeSocketIdx[i] || DUAL_CAMERA_SUB_SENSOR == g_invokeSocketIdx[i] || DUAL_CAMERA_MAIN_2_SENSOR == g_invokeSocketIdx[i]) {
             spin_lock(&kdsensor_drv_lock);
@@ -1405,16 +1418,24 @@ int kdSetDriver(unsigned int *pDrvIndex)
 #endif
     PK_XLOG_INFO("[kdSetDriver]g_invokeSocketIdx[%d] = %d\n", i, g_invokeSocketIdx[i]);
     PK_XLOG_INFO("[kdSetDriver]drvIdx[%d] = %d\n", i, drvIdx[i]);
+    PK_ERR("[M6_CAM] invoke[%d] socket=%d drvIdx=%u i2c_bus=%u max=%u\n",
+        i, g_invokeSocketIdx[i], drvIdx[i], gI2CBusNum, MAX_NUM_OF_SUPPORT_SENSOR);
     /*  */
     if (MAX_NUM_OF_SUPPORT_SENSOR > drvIdx[i]) {
+        PK_ERR("[M6_CAM] selected invoke=%d drvIdx=%u id=0x%08x name=%s init=%p\n",
+            i, drvIdx[i], pSensorList[drvIdx[i]].SensorId,
+            pSensorList[drvIdx[i]].drvname,
+            (void *)pSensorList[drvIdx[i]].SensorInit);
         if (NULL == pSensorList[drvIdx[i]].SensorInit) {
-        PK_ERR("ERROR:kdSetDriver()\n");
+        PK_ERR("[M6_CAM] ERROR:kdSetDriver null init invoke=%d drvIdx=%u name=%s\n",
+            i, drvIdx[i], pSensorList[drvIdx[i]].drvname);
         return -EIO;
         }
 
         pSensorList[drvIdx[i]].SensorInit(&g_pInvokeSensorFunc[i]);
         if (NULL == g_pInvokeSensorFunc[i]) {
-        PK_ERR("ERROR:NULL g_pSensorFunc[%d]\n", i);
+        PK_ERR("[M6_CAM] ERROR:NULL g_pSensorFunc[%d] drvIdx=%u name=%s\n",
+            i, drvIdx[i], pSensorList[drvIdx[i]].drvname);
         return -EIO;
         }
         /*  */
@@ -1426,8 +1447,15 @@ int kdSetDriver(unsigned int *pDrvIndex)
         /* return sensor ID */
         /* pDrvIndex[0] = (unsigned int)pSensorList[drvIdx].SensorId; */
         PK_XLOG_INFO("[kdSetDriver] :[%d][%d][%d][%s][%lu]\n", i, g_bEnableDriver[i], g_invokeSocketIdx[i], g_invokeSensorNameStr[i], sizeof(pSensorList[drvIdx[i]].drvname));
+        PK_ERR("[M6_CAM] invoke[%d] enabled=%d socket=%d name=%s func=%p\n",
+            i, g_bEnableDriver[i], g_invokeSocketIdx[i],
+            g_invokeSensorNameStr[i], g_pInvokeSensorFunc[i]);
+    } else {
+        PK_ERR("[M6_CAM] ERROR:drvIdx out of range invoke=%d drvIdx=%u max=%u raw=0x%08x\n",
+            i, drvIdx[i], MAX_NUM_OF_SUPPORT_SENSOR, pDrvIndex[i]);
     }
     }
+    PK_ERR("[M6_CAM] kdSetDriver exit ok gDrvIndex=0x%08x\n", gDrvIndex);
     return 0;
 }
 
@@ -3787,7 +3815,10 @@ static long CAMERA_HW_Ioctl(
         break;
 #endif
     case KDIMGSENSORIOC_X_SET_DRIVER:
+        PK_ERR("[M6_CAM] ioctl SET_DRIVER size=%u pBuff=%p raw0=0x%08x raw1=0x%08x\n",
+            _IOC_SIZE(a_u4Command), pBuff, pIdx ? pIdx[0] : 0, pIdx ? pIdx[1] : 0);
         i4RetValue = kdSetDriver((unsigned int *)pBuff);
+        PK_ERR("[M6_CAM] ioctl SET_DRIVER ret=%d\n", i4RetValue);
         break;
     case KDIMGSENSORIOC_T_OPEN:
         i4RetValue = adopt_CAMERA_HW_Open();
@@ -4947,8 +4978,5 @@ module_exit(CAMERA_HW_i2C_exit);
 MODULE_DESCRIPTION("CAMERA_HW driver");
 MODULE_AUTHOR("Jackie Su <jackie.su@Mediatek.com>");
 MODULE_LICENSE("GPL");
-
-
-
 
 

@@ -140,9 +140,7 @@ extern int iReadRegI2C(u8 *a_pSendData , u16 a_sizeSendData, u8 * a_pRecvData, u
 extern int iWriteRegI2C(u8 *a_pSendData , u16 a_sizeSendData, u16 i2cId);
 extern void kdSetI2CSpeed(u16 i2cSpeed);
 extern bool S5K3L8_read_eeprom( kal_uint16 addr, BYTE* data, kal_uint32 size);
-#ifdef CONFIG_HUAWEI_HW_I2C_DCT
 extern int s4AF_ReadReg_I2C(u16 i2cId);
-#endif
 #endif 
 
 /*
