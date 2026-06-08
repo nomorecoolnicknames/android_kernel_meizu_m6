@@ -1,5 +1,137 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-07 OVL bounds profile end-prefetch isolation
+
+PATCH HISTORY, ISOLATION + DIAGNOSTIC, 2026-06-07: after the per-layer IRQ
+snapshot proved at least one DISP_OVL0 fault occurs exactly at the previous
+full-screen layer `pitch_end`, this patch adds a runtime-selectable
+`m6_ovl_bounds_profile:[0|1]` command and extends M4U handoff sampling to all
+OVL MEM layers. Profile `0` preserves current behavior. Profile `1` programs
+OVL0 normal MEM layers with hardware height `dst_h - 1` while keeping the
+userspace request visible in logs; this is an isolation probe, not a proper
+fix.
+
+Hypothesis: FACT from
+`/srv/forge/android/meizu_m6/captures/20260607-ovl-per-layer-irq-snapshot-flash-711HEBSR277K5/ui-stimulus/dmesg.txt`
+shows `M6 OVL irq diag[6]` L2 full-screen `addr=0x2e00000` and
+`pitch_end=0x3184000`, then `diag[7]` reuses L2 at `720x48`, and the same
+stimulus later reports `M4Ufault: port=DISP_OVL0, mva=0x3184000`. FACT:
+ION/MM and FB heap `phys()` paths call `m4u_alloc_mva_sg(..., buffer->size,
+...)`, so a guard page cannot be assumed at the MVA end. HYPOTHESIS: OVL0 is
+prefetching one burst/line past the programmed visible end during fast
+full-screen-to-small-layer transitions; cropping the programmed height by one
+line should move or remove the exact `pitch_end` M4U fault if this is the
+active frontier.
+
+Evidence:
+- Current baseline diagnostic commit: `576f1551632` (`diag(m6-display): dump
+  ovl layer state on irq`).
+- Current tested boot artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260607-m6-ovl-per-layer-irq-snapshot/boot-m6-ovl-per-layer-irq-snapshot.img`,
+  sha256 `2e0b8822af14c28487b45b47fd5465e4b297b0e6f0b2e9ebe144156b628bd70d`.
+- Matching tested `System.map` sha256
+  `3655b4d591202bec68261fdacde26bf6b1f8d58b7ee3e8c9e1254208202c353a`.
+- Baseline capture:
+  `/srv/forge/android/meizu_m6/captures/20260607-ovl-per-layer-irq-snapshot-flash-711HEBSR277K5`.
+- Source FACT: `kernel-3.18/drivers/staging/android/ion/mtk/ion_mm_heap.c`
+  and `ion_fb_heap.c` allocate display MVA through `m4u_alloc_mva_sg` with
+  `buffer->size`, not with an explicit display guard page.
+- Built isolation artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260607-m6-ovl-bounds-profile-isolation/boot-m6-ovl-bounds-profile-isolation.img`,
+  sha256 `0b0762968f67496ee951c5283fed27475c7e4df790f353aa7a4e3795b313af7a`,
+  size `8871936`.
+- Built `Image.gz-dtb` sha256
+  `8473a3c61b8e37ab1061c05dabc1e58135955943c4e298a7f6a1bcf12725a1f5`;
+  matching `System.map` sha256
+  `f22e5e70a73ab7b2ebbd17e354315d26cae7c34738ab7ec6267df9ad112a7170`;
+  `vmlinux` sha256
+  `6612e51bdff344b80a19584971c79ce236b85910782487eace01da6f5c300a3e`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-ovl-bounds-profile-isolation-20260607.log`,
+  sha256 `66ce2911e983ded0d48bb151c23b2fe6beca88bc0e9bf851e683870d87059253`.
+- Flash/capture directory:
+  `/srv/forge/android/meizu_m6/captures/20260607-ovl-bounds-profile-isolation-flash-711HEBSR277K5`.
+  The boot partition was written as `/dev/block/mmcblk0p21`; pre-reboot and
+  postboot sized readbacks both matched the local boot image, and the device
+  reached `sys.boot_completed=1` with SurfaceFlinger/SystemUI running.
+- Profile scan result:
+  `/srv/forge/android/meizu_m6/captures/20260607-ovl-bounds-profile-isolation-flash-711HEBSR277K5/profile-scan-ui`.
+  Profile `0` reproduced the active display frontier in a short UI stimulus:
+  `M6 OVL irq diag=88`, `RDMA0 underflow=1`, `frame underflow=8`, and
+  `not complete until EOF=8`. Profile `1` in the same short stimulus showed
+  `M6 OVL bounds profile apply=96`, `M6 OVL irq diag=0`, `RDMA0 underflow=0`,
+  `frame underflow=0`, `not complete until EOF=0`, and no `M4Ufault`.
+- Extended profile `1` result:
+  `/srv/forge/android/meizu_m6/captures/20260607-ovl-bounds-profile-isolation-flash-711HEBSR277K5/profile-scan-ui/profile-1-extended`.
+  Twelve mixed HOME/swipe/menu windows showed `M4Ufault=0`, `M6 M4U=0`,
+  `M6 OVL fault corr=0`, `M6 OVL bounds profile apply=96`,
+  `M6 OVL irq diag=0`, `M6 OVL m4u sample=18`, `RDMA0 underflow=0`,
+  `frame underflow=0`, and `not complete until EOF=0`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c`: adds the M6
+  bounds profile state, applies profile `1` only to OVL0 direct-link/PQ-bypass
+  normal MEM layers, logs `dst_h -> hw_h`, and carries programmed height into
+  the diagnostic end-address calculator.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.h`: exposes
+  `ovl_m6_set_bounds_profile()` and adds `hw_dst_h` / `bounds_profile` to the
+  last-config snapshot.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  `/d/mtkfb` command parser and help text for `m6_ovl_bounds_profile`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_irq.c`: prints
+  requested `dst_h`, programmed `hw_h`, and bounds profile in IRQ snapshots.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: expands
+  M4U sample logging from only layer 0 to all normal MEM OVL layers and prints
+  `layer_end`, `real_end`, `end_gap`, and `exact_end`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_drv.c`: adds bounded
+  `M6 OVL fault corr[...]` lines in the DISP_OVL0 M4U fault callback, linking
+  fault MVA, M4U valid end, live OVL0 registers, and the latest requested OVL0
+  layer snapshot at fault time.
+- `BRINGUP_STATE.md`: records patch category, evidence, expected marker,
+  rollback condition, and verification commands.
+
+Why each file changed: `ddp_ovl.c` is the only place that programs OVL layer
+`SRC_SIZE` and calculates the effective read window. `disp_debug.c` is the
+existing runtime command path used for M6 display isolation. `ddp_irq.c`,
+`primary_display.c`, and `ddp_drv.c` provide before/after/fault-time evidence
+needed to tell whether profile `1` changed the actual fault boundary instead
+of hiding a userspace configuration bug.
+
+Expected next marker: with profile `0`, fresh UI stimulus should reproduce
+M4U faults at an L1/L2 `pitch_end` or show an exact `M6 OVL m4u sample` end
+boundary. With profile `1`, `M6 OVL bounds profile apply[...]` should appear,
+IRQ snapshots should show `hw_h=dst_h-1 bounds=1`, and the decisive marker is
+whether `M6 OVL fault corr[...]` shows `fault_minus_end=0` at M4U valid end
+while current live/requested layer ends have already moved, and whether
+`M4Ufault` disappears, moves down by exactly one pitch, or persists at the old
+full-screen `pitch_end`.
+
+Rollback condition: revert this patch if profile `0` no longer reproduces the
+baseline, if profile `1` regresses boot/ADB/SurfaceFlinger/RDMA transfer, if
+the one-line crop visibly breaks otherwise working screencap composition, or if
+faults continue at unchanged old `pitch_end` values after `hw_h=dst_h-1` is
+proven active.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.h \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_irq.c \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_drv.c BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_ovl_bounds_profile:0 > /d/mtkfb; dmesg -c >/dev/null; input keyevent 3; input swipe 360 1050 360 250 250; sleep 3; dmesg | grep -E "M6 OVL bounds|M6 OVL m4u sample|M6 OVL fault corr|M6 OVL irq diag|M4Ufault|M6 M4U|RDMA0 underflow|frame underflow|not complete until EOF" | tail -320'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_ovl_bounds_profile:1 > /d/mtkfb; dmesg -c >/dev/null; input keyevent 3; input swipe 360 1050 360 250 250; sleep 3; dmesg | grep -E "M6 OVL bounds|M6 OVL m4u sample|M6 OVL fault corr|M6 OVL irq diag|M4Ufault|M6 M4U|RDMA0 underflow|frame underflow|not complete until EOF" | tail -360'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_ovl_bounds_profile:0 > /d/mtkfb'
+```
+
 ## 2026-06-07 OVL per-layer IRQ snapshot diagnostic
 
 PATCH HISTORY, DIAGNOSTIC, 2026-06-07: after the OVL GREQ profiles proved the

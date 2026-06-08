@@ -2681,7 +2681,7 @@ static void m6_sample_primary_ovl_m4u_buffer(const char *stage,
 	    primary_display_is_decouple_mode())
 		return;
 	if (!input->layer_enable || !ovl->layer_en ||
-	    ovl->layer != 0 || ovl->source != OVL_LAYER_SOURCE_MEM ||
+	    ovl->source != OVL_LAYER_SOURCE_MEM ||
 	    ovl->security != DISP_NORMAL_BUFFER || !ovl->addr)
 		return;
 	idx = m6_m4u_sample_count++;
@@ -2764,14 +2764,23 @@ static void m6_sample_primary_ovl_m4u_buffer(const char *stage,
 		}
 	}
 
-	DISPERR("M6 OVL m4u sample[%u:%s]: mva=0x%x layer=0x%x real=0x%x/0x%x off=0x%x map=0x%x/0x%x usable=0x%x words=%u samples=%u nonzero=%u first_nz=%u xor=0x%x sum=0x%llx w=%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x input_src=%u/%u/%u/%u pitch_px=%u ovl_pitch=%u fmt=%s/0x%x\n",
-		idx, stage ? stage : "null", mva, layer_size, real_mva,
-		real_size, mva_offset, map_size, mapped_size, sample_bytes,
-		sample_words, sample_count, nonzero, first_nonzero, xorv, sum,
-		w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7],
-		input->src_offset_x, input->src_offset_y, input->src_width,
-		input->src_height, input->src_pitch, ovl->src_pitch,
-		unified_color_fmt_name(ovl->fmt), ovl->fmt);
+	{
+		unsigned int layer_end = mva + layer_size;
+		unsigned int real_end = real_mva + real_size;
+		unsigned int end_gap = layer_end <= real_end ?
+			real_end - layer_end : 0xffffffff;
+
+		DISPERR("M6 OVL m4u sample[%u:%s]: L%u mva=0x%x layer_size=0x%x layer_end=0x%x real=0x%x/0x%x real_end=0x%x end_gap=0x%x exact_end=%u off=0x%x map=0x%x/0x%x usable=0x%x words=%u samples=%u nonzero=%u first_nz=%u xor=0x%x sum=0x%llx w=%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x input_src=%u/%u/%u/%u pitch_px=%u ovl_pitch=%u fmt=%s/0x%x\n",
+			idx, stage ? stage : "null", ovl->layer, mva,
+			layer_size, layer_end, real_mva, real_size, real_end,
+			end_gap, layer_end == real_end, mva_offset, map_size,
+			mapped_size, sample_bytes, sample_words, sample_count,
+			nonzero, first_nonzero, xorv, sum, w[0], w[1], w[2],
+			w[3], w[4], w[5], w[6], w[7], input->src_offset_x,
+			input->src_offset_y, input->src_width, input->src_height,
+			input->src_pitch, ovl->src_pitch,
+			unified_color_fmt_name(ovl->fmt), ovl->fmt);
+	}
 
 	m4u_mva_unmap_kernel(real_mva, map_size, kva);
 }

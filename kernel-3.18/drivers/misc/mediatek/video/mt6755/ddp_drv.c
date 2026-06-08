@@ -64,11 +64,17 @@
 #include "disp_log.h"
 #include "ddp_irq.h"
 #include "ddp_info.h"
+#include "ddp_ovl.h"
 #include "ddp_dpi_reg.h"
 #include "disp_helper.h"
+#include "fbconfig_kdebug.h"
 
 
 #define DISP_DEVNAME "DISPSYS"
+#define M6_OVL_FAULT_LAYER_OFFSET	0x20
+#define M6_OVL_FAULT_RDMA_DBG_OFFSET	0x4
+extern int m4u_query_mva_info(unsigned int mva, unsigned int size,
+	unsigned int *real_mva, unsigned int *real_size);
 /* device and driver */
 static dev_t disp_devno;
 static struct cdev *disp_cdev;
@@ -218,6 +224,72 @@ static int disp_is_intr_enable(DISP_REG_ENUM module)
 	}
 }
 
+static void disp_m6_dump_ovl0_fault_corr(int port, unsigned int fault_mva)
+{
+	static unsigned int m6_ovl_fault_corr_count;
+	struct m6_ovl_config_snapshot snap = { 0 };
+	unsigned long base;
+	unsigned int src_on;
+	unsigned int valid_mva = 0;
+	unsigned int valid_size = 0;
+	unsigned int valid_end = 0;
+	unsigned int idx;
+	unsigned int layer;
+	int has_snap;
+	int qret;
+
+	if (port != M4U_PORT_DISP_OVL0)
+		return;
+	if (!disp_helper_get_option(DISP_OPT_BYPASS_PQ))
+		return;
+
+	idx = m6_ovl_fault_corr_count++;
+	if (idx >= 96 && (idx & 0x3f))
+		return;
+
+	qret = m4u_query_mva_info(fault_mva ? fault_mva - 1 : fault_mva,
+		0, &valid_mva, &valid_size);
+	if (!qret && valid_mva && valid_size)
+		valid_end = valid_mva + valid_size;
+
+	has_snap = ovl_m6_get_last_config_snapshot(&snap);
+	base = ovl_base_addr(DISP_MODULE_OVL0);
+	src_on = DISP_REG_GET(base + DISP_REG_OVL_SRC_CON);
+
+	DISPERR("M6 OVL fault corr[%u]: port=%d fault=0x%x query=%d valid=0x%x/0x%x end=0x%x fault_minus_end=0x%x src=0x%x snap=%d seq=%u enabled=0x%x bounds0=%u\n",
+		idx, port, fault_mva, qret, valid_mva, valid_size, valid_end,
+		fault_mva - valid_end, src_on, has_snap,
+		has_snap ? snap.seq : 0, has_snap ? snap.enabled_layers : 0,
+		has_snap ? snap.layer[0].bounds_profile : 0);
+
+	for (layer = 0; layer < 4; layer++) {
+		unsigned long layer_off = layer * M6_OVL_FAULT_LAYER_OFFSET;
+		unsigned long rdma_dbg_off = layer * M6_OVL_FAULT_RDMA_DBG_OFFSET;
+		unsigned int live_size = DISP_REG_GET(base + DISP_REG_OVL_L0_SRC_SIZE + layer_off);
+		unsigned int live_addr = DISP_REG_GET(base + DISP_REG_OVL_L0_ADDR + layer_off);
+		unsigned int live_pitch_reg = DISP_REG_GET(base + DISP_REG_OVL_L0_PITCH + layer_off);
+		unsigned int live_pitch = live_pitch_reg & 0xffff;
+		unsigned int live_w = live_size & 0xfff;
+		unsigned int live_h = (live_size >> 16) & 0xfff;
+		unsigned int live_end = live_addr + live_h * live_pitch;
+		const struct m6_ovl_layer_snapshot *req = NULL;
+
+		if (has_snap && layer < ARRAY_SIZE(snap.layer) &&
+		    snap.layer[layer].valid)
+			req = &snap.layer[layer];
+
+		DISPERR("M6 OVL fault corr[%u]: L%u live en=%u size=%ux%u addr=0x%x pitch=0x%x/%u end=0x%x fault_minus_live_end=0x%x rdma_dbg=0x%x req_end=0x%lx fault_minus_req_end=0x%lx dst_h=%u hw_h=%u bounds=%u\n",
+			idx, layer, !!(src_on & (1U << layer)), live_w, live_h,
+			live_addr, live_pitch_reg, live_pitch, live_end,
+			fault_mva - live_end,
+			DISP_REG_GET(base + DISP_REG_OVL_RDMA0_DBG + rdma_dbg_off),
+			req ? req->pitch_end : 0,
+			req ? (unsigned long)fault_mva - req->pitch_end : 0,
+			req ? req->dst_h : 0, req ? req->hw_dst_h : 0,
+			req ? req->bounds_profile : 0);
+	}
+}
+
 m4u_callback_ret_t disp_m4u_callback(int port, unsigned int mva, void *data)
 {
 	DISP_MODULE_ENUM module = DISP_MODULE_OVL0;
@@ -254,6 +326,7 @@ m4u_callback_ret_t disp_m4u_callback(int port, unsigned int mva, void *data)
 	ret = M4U_CALLBACK_NOT_HANDLED;
 		DISPERR("unknown port=%d\n", port);
 	}
+	disp_m6_dump_ovl0_fault_corr(port, mva);
 	ddp_dump_analysis(module);
 	ddp_dump_reg(module);
 	return ret;

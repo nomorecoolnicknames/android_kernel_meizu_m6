@@ -130,6 +130,9 @@ char MTKFB_STR_HELP[] =
 	"        m6_ovl_greq_profile:[0|1|2|3]\n"
 	"             Meizu M6 isolation profiles for OVL RDMA/GREQ underflow triage\n"
 	"\n"
+	"        m6_ovl_bounds_profile:[0|1]\n"
+	"             Meizu M6 isolation profile for OVL end-prefetch/M4U boundary triage\n"
+	"\n"
 	"        cabc:[ui|mov|still]\n"
 	"             cabc mode, UI/Moving picture/Still picture\n"
 	"\n"
@@ -621,6 +624,21 @@ void mtkfb_process_dbg_opt(const char *opt)
 		ret = ovl_m6_set_greq_profile(profile);
 		primary_display_manual_unlock();
 		DISPERR("M6 OVL greq profile command: profile=%u ret=%d\n",
+			profile, ret);
+		return;
+	} else if (0 == strncmp(opt, "m6_ovl_bounds_profile:", 22)) {
+		char *p = (char *)opt + 22;
+		unsigned int profile;
+
+		ret = kstrtouint(p, 0, &profile);
+		if (ret) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		primary_display_manual_lock();
+		ret = ovl_m6_set_bounds_profile(profile);
+		primary_display_manual_unlock();
+		DISPERR("M6 OVL bounds profile command: profile=%u ret=%d\n",
 			profile, ret);
 		return;
 	} else if (0 == strncmp(opt, "ata", 3)) {

@@ -41,6 +41,8 @@ struct m6_ovl_layer_snapshot {
 	unsigned int dst_y;
 	unsigned int dst_w;
 	unsigned int dst_h;
+	unsigned int hw_dst_h;
+	unsigned int bounds_profile;
 	unsigned long addr;
 	unsigned long final_addr;
 	unsigned long visible_last;
@@ -93,6 +95,7 @@ unsigned long ovl_to_index(DISP_MODULE_ENUM module);
 void ovl_get_info(DISP_MODULE_ENUM module, void *data);
 unsigned int ddp_ovl_get_cur_addr(bool rdma_mode, int layerid);
 int ovl_m6_set_greq_profile(unsigned int profile);
+int ovl_m6_set_bounds_profile(unsigned int profile);
 int ovl_m6_get_last_config_snapshot(struct m6_ovl_config_snapshot *out);
 
 #endif

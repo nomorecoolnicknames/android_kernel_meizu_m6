@@ -95,13 +95,13 @@ static void disp_irq_m6_dump_ovl0_layer(unsigned int idx, unsigned long base,
 	if (!req)
 		return;
 
-	DISPERR("M6 OVL irq diag[%u]: L%u req seq=%u global=%u en=%u src=%u fmt=0x%x bpp=%u sec=%u addr=0x%lx final=0x%lx visible_last=0x%lx pitch_end=0x%lx src=%u/%u/%u/%u pitch=%u dst=%u/%u/%u/%u\n",
+	DISPERR("M6 OVL irq diag[%u]: L%u req seq=%u global=%u en=%u src=%u fmt=0x%x bpp=%u sec=%u addr=0x%lx final=0x%lx visible_last=0x%lx pitch_end=0x%lx src=%u/%u/%u/%u pitch=%u dst=%u/%u/%u/%u hw_h=%u bounds=%u\n",
 		idx, layer, snap->seq, req->global_layer, req->enabled,
 		req->source, req->fmt, req->bpp, req->security, req->addr,
 		req->final_addr, req->visible_last, req->pitch_end,
 		req->src_x, req->src_y, req->src_w, req->src_h,
 		req->src_pitch, req->dst_x, req->dst_y, req->dst_w,
-		req->dst_h);
+		req->dst_h, req->hw_dst_h, req->bounds_profile);
 }
 
 static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,

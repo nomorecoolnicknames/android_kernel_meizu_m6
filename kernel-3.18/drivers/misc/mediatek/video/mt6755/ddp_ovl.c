@@ -53,6 +53,8 @@ static struct OVL_REG reg_back[OVL_NUM][OVL_REG_BACK_MAX];
 static unsigned int gOVLBackground = 0xFF000000;
 static unsigned int m6_ovl_greq_profile_id;
 static unsigned int m6_ovl_greq_profile_apply_count;
+static unsigned int m6_ovl_bounds_profile_id;
+static unsigned int m6_ovl_bounds_profile_apply_count;
 static struct m6_ovl_config_snapshot m6_ovl0_last_config_snapshot;
 static unsigned int m6_ovl0_last_config_seq;
 
@@ -307,6 +309,7 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 		unsigned int bpp,
 		unsigned int adjusted_src_x,
 		unsigned int adjusted_dst_w,
+		unsigned int programmed_dst_h,
 		unsigned int byte_offset,
 		unsigned long final_addr,
 		unsigned int con_value)
@@ -321,12 +324,12 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 	if (!is_module_ovl(module) || m6_ovl_diag_count >= 72)
 		return;
 
-	if (cfg->dst_h && adjusted_dst_w && bpp)
-		visible_span = (cfg->dst_h - 1) * cfg->src_pitch + adjusted_dst_w * bpp;
+	if (programmed_dst_h && adjusted_dst_w && bpp)
+		visible_span = (programmed_dst_h - 1) * cfg->src_pitch + adjusted_dst_w * bpp;
 	if (visible_span)
 		visible_end = final_addr + visible_span - 1;
-	if (cfg->dst_h && cfg->src_pitch)
-		pitch_span = cfg->dst_h * cfg->src_pitch;
+	if (programmed_dst_h && cfg->src_pitch)
+		pitch_span = programmed_dst_h * cfg->src_pitch;
 	if (pitch_span)
 		pitch_end = final_addr + pitch_span;
 
@@ -336,12 +339,12 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 		cfg->layer_en, cfg->source, unified_color_fmt_name(cfg->fmt),
 		cfg->fmt, bpp, cfg->security, cfg->aen, cfg->alpha,
 		cfg->const_bld, cfg->keyEn, cfg->key, con_value);
-	DISPERR("M6 OVL diag cfg[%u]: mod=%s addr=0x%lx vaddr=0x%lx final=0x%lx low=0x%lx byte_off=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u pitch=%u adj_src_x=%u adj_dst_w=%u\n",
+	DISPERR("M6 OVL diag cfg[%u]: mod=%s addr=0x%lx vaddr=0x%lx final=0x%lx low=0x%lx byte_off=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u hw_h=%u pitch=%u adj_src_x=%u adj_dst_w=%u bounds=%u\n",
 		idx, m6_ovl_module_name(module), cfg->addr, cfg->vaddr,
 		final_addr, final_addr & 0xfff, byte_offset, cfg->src_x,
 		cfg->src_y, cfg->src_w, cfg->src_h, cfg->dst_x, cfg->dst_y,
-		cfg->dst_w, cfg->dst_h, cfg->src_pitch, adjusted_src_x,
-		adjusted_dst_w);
+		cfg->dst_w, cfg->dst_h, programmed_dst_h, cfg->src_pitch,
+		adjusted_src_x, adjusted_dst_w, m6_ovl_bounds_profile_id);
 	DISPERR("M6 OVL diag end[%u]: mod=%s L%u final=0x%lx visible_span=0x%lx visible_last=0x%lx next=0x%lx pitch_span=0x%lx pitch_end=0x%lx fault_if_next=0x%lx\n",
 		idx, m6_ovl_module_name(module), local_layer, final_addr,
 		visible_span, visible_end, visible_end + 1, pitch_span,
@@ -355,7 +358,29 @@ static bool m6_ovl_scan_diag_sample(unsigned int *count)
 	return n < 24 || ((n & 0x3ff) == 0);
 }
 
-static unsigned long m6_ovl_calc_final_addr(const OVL_CONFIG_STRUCT * const cfg,
+static bool m6_ovl_bounds_profile_active(DISP_MODULE_ENUM module,
+	const OVL_CONFIG_STRUCT * const cfg)
+{
+	return m6_ovl_bounds_profile_id == 1 &&
+		module == DISP_MODULE_OVL0 &&
+		disp_helper_get_option(DISP_OPT_BYPASS_PQ) &&
+		!primary_display_is_decouple_mode() &&
+		cfg->layer_en &&
+		cfg->source == OVL_LAYER_SOURCE_MEM &&
+		cfg->security == DISP_NORMAL_BUFFER &&
+		cfg->dst_h > 1;
+}
+
+static unsigned int m6_ovl_programmed_dst_h(DISP_MODULE_ENUM module,
+	const OVL_CONFIG_STRUCT * const cfg)
+{
+	if (m6_ovl_bounds_profile_active(module, cfg))
+		return cfg->dst_h - 1;
+	return cfg->dst_h;
+}
+
+static unsigned long m6_ovl_calc_final_addr(DISP_MODULE_ENUM module,
+	const OVL_CONFIG_STRUCT * const cfg, unsigned int programmed_dst_h,
 	unsigned int *bpp_out, unsigned long *visible_last, unsigned long *pitch_end)
 {
 	unsigned int bpp = ufmt_get_Bpp(cfg->fmt);
@@ -378,10 +403,10 @@ static unsigned long m6_ovl_calc_final_addr(const OVL_CONFIG_STRUCT * const cfg,
 
 	offset = src_x * bpp + cfg->src_y * cfg->src_pitch;
 	final_addr = cfg->addr + offset;
-	if (cfg->dst_h && dst_w && bpp)
-		visible_span = (cfg->dst_h - 1) * cfg->src_pitch + dst_w * bpp;
-	if (cfg->dst_h && cfg->src_pitch)
-		pitch_span = cfg->dst_h * cfg->src_pitch;
+	if (programmed_dst_h && dst_w && bpp)
+		visible_span = (programmed_dst_h - 1) * cfg->src_pitch + dst_w * bpp;
+	if (programmed_dst_h && cfg->src_pitch)
+		pitch_span = programmed_dst_h * cfg->src_pitch;
 
 	if (bpp_out)
 		*bpp_out = bpp;
@@ -389,6 +414,7 @@ static unsigned long m6_ovl_calc_final_addr(const OVL_CONFIG_STRUCT * const cfg,
 		*visible_last = visible_span ? final_addr + visible_span - 1 : final_addr;
 	if (pitch_end)
 		*pitch_end = pitch_span ? final_addr + pitch_span : final_addr;
+	(void)module;
 	return final_addr;
 }
 
@@ -441,9 +467,12 @@ static void m6_ovl_capture_last_config(DISP_MODULE_ENUM module,
 		layer->dst_y = cfg->dst_y;
 		layer->dst_w = cfg->dst_w;
 		layer->dst_h = cfg->dst_h;
+		layer->hw_dst_h = m6_ovl_programmed_dst_h(module, cfg);
+		layer->bounds_profile = m6_ovl_bounds_profile_id;
 		layer->addr = cfg->addr;
-		layer->final_addr = m6_ovl_calc_final_addr(cfg, &layer->bpp,
-			&layer->visible_last, &layer->pitch_end);
+		layer->final_addr = m6_ovl_calc_final_addr(module, cfg,
+			layer->hw_dst_h, &layer->bpp, &layer->visible_last,
+			&layer->pitch_end);
 	}
 
 	m6_ovl0_last_config_snapshot = snap;
@@ -477,6 +506,7 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 	enum UNIFIED_COLOR_FMT format = cfg->fmt;
 	unsigned int src_x = cfg->src_x;
 	unsigned int dst_w = cfg->dst_w;
+	unsigned int programmed_dst_h = m6_ovl_programmed_dst_h(module, cfg);
 
 	if (cfg->dst_w > OVL_MAX_WIDTH)
 		BUG();
@@ -579,16 +609,28 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 
 	DISP_REG_SET(handle, DISP_REG_OVL_L0_CLR + ovl_base + layer * 4, 0xff000000);
 
-	DISP_REG_SET(handle, DISP_REG_OVL_L0_SRC_SIZE + layer_offset, cfg->dst_h << 16 | dst_w);
+	if (programmed_dst_h != cfg->dst_h &&
+	    m6_ovl_bounds_profile_apply_count < 96) {
+		DISPERR("M6 OVL bounds profile apply[%u]: profile=%u mod=%s L%u global=%u dst_h=%u->%u dst_w=%u addr=0x%lx pitch=%u fmt=%s/0x%x\n",
+			m6_ovl_bounds_profile_apply_count,
+			m6_ovl_bounds_profile_id, m6_ovl_module_name(module),
+			layer, cfg->layer, cfg->dst_h, programmed_dst_h,
+			dst_w, cfg->addr, cfg->src_pitch,
+			unified_color_fmt_name(cfg->fmt), cfg->fmt);
+		m6_ovl_bounds_profile_apply_count++;
+	}
+
+	DISP_REG_SET(handle, DISP_REG_OVL_L0_SRC_SIZE + layer_offset,
+		programmed_dst_h << 16 | dst_w);
 
 	if (rotate)
-		offset = (src_x + dst_w) * Bpp + (cfg->src_y + cfg->dst_h - 1) * cfg->src_pitch - 1;
+		offset = (src_x + dst_w) * Bpp + (cfg->src_y + programmed_dst_h - 1) * cfg->src_pitch - 1;
 	else
 		offset = src_x * Bpp + cfg->src_y * cfg->src_pitch;
 
 	final_addr = cfg->addr + offset;
 	m6_ovl_diag_log_config(module, layer, cfg, Bpp, src_x, dst_w,
-		offset, final_addr, value);
+		programmed_dst_h, offset, final_addr, value);
 
 	if (!is_engine_sec) {
 		DISP_REG_SET(handle, DISP_REG_OVL_L0_ADDR + layer_offset, final_addr);
@@ -596,7 +638,7 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 		unsigned int size;
 		int m4u_port;
 
-		size = (cfg->dst_h - 1) * cfg->src_pitch + dst_w * Bpp;
+		size = (programmed_dst_h - 1) * cfg->src_pitch + dst_w * Bpp;
 		m4u_port = ovl_to_m4u_port(module);
 		if (cfg->security != DISP_SECURE_BUFFER) {
 			/* ovl is sec but this layer is non-sec */
@@ -1557,6 +1599,22 @@ int ovl_m6_set_greq_profile(unsigned int profile)
 	DISPERR("M6 OVL greq profile set: profile=%u; applying OVL0 CPU registers now\n",
 		profile);
 	ovl_golden_setting(DISP_MODULE_OVL0, DST_MOD_REAL_TIME, NULL);
+
+	return 0;
+}
+
+int ovl_m6_set_bounds_profile(unsigned int profile)
+{
+	if (profile > 1) {
+		DISPERR("M6 OVL bounds profile reject: profile=%u valid=0..1\n",
+			profile);
+		return -EINVAL;
+	}
+
+	m6_ovl_bounds_profile_id = profile;
+	m6_ovl_bounds_profile_apply_count = 0;
+	DISPERR("M6 OVL bounds profile set: profile=%u; future OVL0 MEM layer configs will use it\n",
+		profile);
 
 	return 0;
 }
