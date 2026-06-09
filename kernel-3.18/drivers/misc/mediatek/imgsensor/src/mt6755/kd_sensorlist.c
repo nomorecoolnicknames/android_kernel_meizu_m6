@@ -159,6 +159,29 @@ struct device *sensor_device = NULL;
 
 #endif
 
+#define M6_CAM_DIAG(fmt, arg...) \
+	pr_info_ratelimited("[M6_PERIPH_DIAG][CAM] " fmt, ##arg)
+
+static const char *m6_cam_power_type_name(PowerType type)
+{
+	switch (type) {
+	case AVDD:
+		return "AVDD";
+	case DVDD:
+		return "DVDD";
+	case DOVDD:
+		return "DOVDD";
+	case AFVDD:
+		return "AFVDD";
+	case SUB_DVDD:
+		return "SUB_DVDD";
+	case MAIN2_DVDD:
+		return "MAIN2_DVDD";
+	default:
+		return "UNKNOWN";
+	}
+}
+
 /*******************************************************************************
 * Proifling
 ********************************************************************************/
@@ -285,6 +308,9 @@ UINT32 kdGetSensorInitFuncList(ACDK_KD_SENSOR_INIT_FUNCTION_STRUCT **ppSensorLis
     return 1;
     }
     *ppSensorList = &kdSensorList[0];
+    M6_CAM_DIAG("CAM_SENSOR_LIST ptr=%p first_id=0x%08x first_name=%s max=%u\n",
+        *ppSensorList, kdSensorList[0].SensorId, kdSensorList[0].drvname,
+        MAX_NUM_OF_SUPPORT_SENSOR);
     return 0;
 } /* kdGetSensorInitFuncList() */
 
@@ -3394,6 +3420,7 @@ bool _hwPowerOn(PowerType type, int powerVolt)
 {
     bool ret = FALSE;
 	struct regulator *reg = NULL;
+	int reg_enabled = -1;
 
 	PK_DBG("[_hwPowerOn]powertype:%d powerId:%d\n", type, powerVolt);
     if (type == AVDD) {
@@ -3408,8 +3435,13 @@ bool _hwPowerOn(PowerType type, int powerVolt)
 	reg = regSubVCAMD;
     } else if (type == MAIN2_DVDD) {
 	reg = regMain2VCAMD;
-    } else
+    } else {
+	M6_CAM_DIAG("CAM_RAIL_ON bad_type type=%d uV=%d\n", type, powerVolt);
     	return ret;
+    }
+
+	M6_CAM_DIAG("CAM_RAIL_ON enter type=%s(%d) uV=%d reg=%p is_err=%d\n",
+		m6_cam_power_type_name(type), type, powerVolt, reg, IS_ERR(reg));
 
 	if (!IS_ERR(reg)) {
 #ifdef CONFIG_MTK_PMIC_CHIP_MT6353
@@ -3418,36 +3450,53 @@ bool _hwPowerOn(PowerType type, int powerVolt)
 			PK_DBG("[_hwPowerOn] PMIC_CHIP_MT6353 DVDD 1.2v\n");
 			powerVolt = Vol_1220;
 			if (regulator_set_voltage(reg , powerVolt, powerVolt) != 0) {
+				M6_CAM_DIAG("CAM_RAIL_ON set_voltage_fail type=%s(%d) uV=%d reg=%p\n",
+					m6_cam_power_type_name(type), type, powerVolt, reg);
 				PK_ERR("[_hwPowerOn]fail to regulator_set_voltage, powertype:%d powerId:%d\n", type, powerVolt);
 				return ret;
 			}
 			if(pmic_set_register_value(PMIC_RG_VCAMD_CAL,0x1))//-20mv
 			{
+				M6_CAM_DIAG("CAM_RAIL_ON pmic_cal_fail type=%s(%d) uV=%d reg=%p\n",
+					m6_cam_power_type_name(type), type, powerVolt, reg);
 				PK_ERR("[_hwPowerOn]fail to set PMIC_RG_VCAMD_CAL, powertype:%d powerId:%d\n", type, powerVolt);
 				return ret;
 			}
 		} else {
 			if (regulator_set_voltage(reg , powerVolt, powerVolt) != 0) {
+				M6_CAM_DIAG("CAM_RAIL_ON set_voltage_fail type=%s(%d) uV=%d reg=%p\n",
+					m6_cam_power_type_name(type), type, powerVolt, reg);
 				PK_ERR("[_hwPowerOn]fail to regulator_set_voltage, powertype:%d powerId:%d\n", type, powerVolt);
 				return ret;
 			}
 		}
 #else
 		if (regulator_set_voltage(reg , powerVolt, powerVolt) != 0) {
+			M6_CAM_DIAG("CAM_RAIL_ON set_voltage_fail type=%s(%d) uV=%d reg=%p\n",
+				m6_cam_power_type_name(type), type, powerVolt, reg);
 			PK_ERR("[_hwPowerOn]fail to regulator_set_voltage, powertype:%d powerId:%d\n", type, powerVolt);
 			return ret;
 	    }
 #endif
 		if (regulator_enable(reg) != 0) {
+			M6_CAM_DIAG("CAM_RAIL_ON enable_fail type=%s(%d) uV=%d reg=%p\n",
+				m6_cam_power_type_name(type), type, powerVolt, reg);
 			PK_ERR("[_hwPowerOn]fail to regulator_enable, powertype:%d powerId:%d\n", type, powerVolt);
 			return ret;
 		}
 		ret = true;
     } else {
+		M6_CAM_DIAG("CAM_RAIL_ON invalid_reg type=%s(%d) uV=%d reg=%p\n",
+			m6_cam_power_type_name(type), type, powerVolt, reg);
 		PK_ERR("[_hwPowerOn]IS_ERR_OR_NULL powertype:%d reg %p\n", type,reg);
 		return ret;
     }
 
+	if (!IS_ERR(reg))
+		reg_enabled = regulator_is_enabled(reg);
+	M6_CAM_DIAG("CAM_RAIL_ON exit type=%s(%d) uV=%d ret=%d enabled=%d reg=%p\n",
+		m6_cam_power_type_name(type), type, powerVolt, ret,
+		reg_enabled, reg);
 	return ret;
 }
 
@@ -3455,6 +3504,7 @@ bool _hwPowerDown(PowerType type)
 {
     bool ret = FALSE;
 	struct regulator *reg = NULL;
+	int reg_enabled = -1;
 
 	if (type == AVDD) {
 	 reg = regVCAMA;
@@ -3468,24 +3518,36 @@ bool _hwPowerDown(PowerType type)
 	 reg = regSubVCAMD;
 	 } else if (type == MAIN2_DVDD) {
 	 reg = regMain2VCAMD;
-	 } else
+	 } else {
+		M6_CAM_DIAG("CAM_RAIL_OFF bad_type type=%d\n", type);
 		return ret;
+	 }
 
 
+	M6_CAM_DIAG("CAM_RAIL_OFF enter type=%s(%d) reg=%p is_err=%d\n",
+		m6_cam_power_type_name(type), type, reg, IS_ERR(reg));
 
     if (!IS_ERR(reg)) {
-		if (regulator_is_enabled(reg) != 0) {
-			PK_DBG("[_hwPowerDown]%d is enabled\n", type);
-			if (regulator_disable(reg) != 0) {
-				PK_ERR("[_hwPowerDown]fail to regulator_disable, powertype: %d\n\n", type);
-				return ret;
+			if (regulator_is_enabled(reg) != 0) {
+				PK_DBG("[_hwPowerDown]%d is enabled\n", type);
+				if (regulator_disable(reg) != 0) {
+					M6_CAM_DIAG("CAM_RAIL_OFF disable_fail type=%s(%d) reg=%p\n",
+						m6_cam_power_type_name(type), type, reg);
+					PK_ERR("[_hwPowerDown]fail to regulator_disable, powertype: %d\n\n", type);
+					return ret;
+				}
 			}
-		}
-		ret = true;
+			ret = true;
     } else {
-		PK_ERR("[_hwPowerDown]%d fail to power down  due to regVCAM == NULL\n", type);
-		return ret;
+			M6_CAM_DIAG("CAM_RAIL_OFF invalid_reg type=%s(%d) reg=%p\n",
+				m6_cam_power_type_name(type), type, reg);
+			PK_ERR("[_hwPowerDown]%d fail to power down  due to regVCAM == NULL\n", type);
+			return ret;
     }
+	if (!IS_ERR(reg))
+		reg_enabled = regulator_is_enabled(reg);
+	M6_CAM_DIAG("CAM_RAIL_OFF exit type=%s(%d) ret=%d enabled=%d reg=%p\n",
+		m6_cam_power_type_name(type), type, ret, reg_enabled, reg);
     return ret;
 }
 

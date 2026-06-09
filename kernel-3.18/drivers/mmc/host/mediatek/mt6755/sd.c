@@ -1285,6 +1285,32 @@ static void m6_msdc2_trace_state(struct msdc_host *host, const char *phase,
 		host->hclk, host->power_mode, host->bus_width, host->timing);
 }
 
+static void m6_msdc2_trace_cmd5(struct msdc_host *host, struct mmc_command *cmd,
+	const char *phase, u32 rawcmd, u32 intsts)
+{
+	static int budget = 80;
+	struct mmc_host *mmc;
+	struct mmc_card *card;
+	unsigned int funcs;
+
+	if (!m6_msdc2_trace_host(host) || !cmd ||
+	    cmd->opcode != SD_IO_SEND_OP_COND)
+		return;
+	if (budget <= 0)
+		return;
+	budget--;
+
+	mmc = host->mmc;
+	card = mmc ? mmc->card : NULL;
+	funcs = card ? card->sdio_funcs : 0;
+	pr_warn_ratelimited("M6 MSDC2 CMD5 %s arg=0x%x raw=0x%x err=%d resp0=0x%x int=0x%x ocr_avail=0x%x ocr_sdio=0x%x card=%p funcs=%u bus_ops=%p power=%u clk=%u/%u width=%u timing=%u\n",
+		phase, cmd->arg, rawcmd, (int)cmd->error, cmd->resp[0],
+		intsts, mmc ? mmc->ocr_avail : 0,
+		mmc ? mmc->ocr_avail_sdio : 0, card, funcs,
+		mmc ? mmc->bus_ops : NULL, host->power_mode, host->mclk,
+		host->sclk, host->bus_width, host->timing);
+}
+
 static void m6_msdc2_trace_power(struct msdc_host *host, const char *phase,
 	u8 mode)
 {
@@ -1312,6 +1338,7 @@ static void m6_msdc2_trace_cmd(struct msdc_host *host, struct mmc_command *cmd,
 
 	m6_msdc2_trace_state(host, phase, cmd->opcode, rawcmd, cmd->arg,
 		(int)cmd->error, cmd->resp[0], intsts);
+	m6_msdc2_trace_cmd5(host, cmd, phase, rawcmd, intsts);
 }
 
 static void msdc_set_power_mode(struct msdc_host *host, u8 mode)

@@ -266,6 +266,51 @@ INT32 mtk_wcn_hif_sdio_irq_flag_set(INT32 flag)
 	return 0;
 }
 
+static _osal_inline_ INT32 m6_hif_sdio_count_probed_funcs(VOID)
+{
+	INT32 i;
+	INT32 count = 0;
+
+	for (i = 0; i < CFG_CLIENT_COUNT; i++) {
+		if (g_hif_sdio_probed_func_list[i].func)
+			count++;
+	}
+
+	return count;
+}
+
+static _osal_inline_ VOID m6_hif_sdio_trace_probe_list(const char *phase,
+	INT32 selected)
+{
+	static INT32 budget = 64;
+	INT32 i;
+	INT32 count;
+	struct sdio_func *func;
+
+	if (budget <= 0)
+		return;
+
+	count = m6_hif_sdio_count_probed_funcs();
+	pr_warn_ratelimited("M6 WMT HIF %s selected=%d probed=%d ref=%d irq_ref=%d\n",
+		phase, selected, count, gRefCount,
+		atomic_read(&hif_sdio_irq_enable_flag));
+	budget--;
+
+	for (i = 0; i < CFG_CLIENT_COUNT && budget > 0; i++) {
+		func = g_hif_sdio_probed_func_list[i].func;
+		if (!func)
+			continue;
+		pr_warn_ratelimited("M6 WMT HIF %s probed[%d] func=%p vendor=0x%x device=0x%x num=%u class=0x%x cur_blk=%u max_blk=%u clt=%d on=%d irq_en=%d card=%p host=%p\n",
+			phase, i, func, func->vendor, func->device, func->num,
+			func->class, func->cur_blksize, func->max_blksize,
+			g_hif_sdio_probed_func_list[i].clt_idx,
+			g_hif_sdio_probed_func_list[i].on_by_wmt,
+			g_hif_sdio_probed_func_list[i].sdio_irq_enabled,
+			func->card, func->card ? func->card->host : NULL);
+		budget--;
+	}
+}
+
 
 /*!
  * \brief register the callback funciton for record the timestamp of sdio access
@@ -1698,8 +1743,9 @@ static INT32 hif_sdio_probe(struct sdio_func *func, const struct sdio_device_id 
 	MTK_WCN_HIF_SDIO_CLT_PROBE_WORKERINFO *clt_probe_worker_info = 0;
 #endif
 
-	HIF_SDIO_INFO_FUNC("M6 SDIO probe start ref=%d irq=%d\n",
-		gRefCount, atomic_read(&hif_sdio_irq_enable_flag));
+	HIF_SDIO_INFO_FUNC("M6 SDIO probe start ref=%d irq=%d probed=%d\n",
+		gRefCount, atomic_read(&hif_sdio_irq_enable_flag),
+		m6_hif_sdio_count_probed_funcs());
 	HIF_SDIO_ASSERT(func);
 #if !(DELETE_HIF_SDIO_CHRDEV)
 	hif_sdio_match_chipid_by_dev_id(id);
@@ -1736,6 +1782,7 @@ static INT32 hif_sdio_probe(struct sdio_func *func, const struct sdio_device_id 
 					   func->num, hif_sdio_probed_funcp->clt_idx,
 					   func->card,
 					   func->card ? func->card->host : NULL);
+			m6_hif_sdio_trace_probe_list("probe-add", probe_index);
 			break;
 		}
 		/* probed spin unlock */
@@ -1826,6 +1873,7 @@ static INT32 hif_sdio_probe(struct sdio_func *func, const struct sdio_device_id 
 
 
 	hif_sdio_dump_probe_list();
+	m6_hif_sdio_trace_probe_list("probe-done", probe_index);
 
 out:
 	/* 4 <last> error handling */
@@ -2068,6 +2116,7 @@ static _osal_inline_ INT32 hif_sdio_stp_on(VOID)
 
 	HIF_SDIO_INFO_FUNC("M6 SDIO stp_on start ref=%d irq=%d\n",
 		gRefCount, atomic_read(&hif_sdio_irq_enable_flag));
+	m6_hif_sdio_trace_probe_list("stp_on-entry", -1);
 
 	/* 4 <1> If stp client drv has not been probed, return error code */
 	/* MT6620 */
@@ -2112,6 +2161,7 @@ static _osal_inline_ INT32 hif_sdio_stp_on(VOID)
 		/* 4 <2> If stp client drv has not been probed, return error code */
 		/* client func has not been probed */
 		HIF_SDIO_INFO_FUNC("M6 SDIO no supported func probed, dumping probed list\n");
+		m6_hif_sdio_trace_probe_list("stp_on-no-supported", -1);
 		for (i = 0; i < CFG_CLIENT_COUNT; i++) {
 			func = g_hif_sdio_probed_func_list[i].func;
 			if (!func)
@@ -2127,6 +2177,7 @@ static _osal_inline_ INT32 hif_sdio_stp_on(VOID)
 stp_on_exist:
 	HIF_SDIO_INFO_FUNC("M6 SDIO stp_on found probe=%d chip=0x%x func_num=%u\n",
 		probe_index, chip_id, func_num);
+	m6_hif_sdio_trace_probe_list("stp_on-selected", probe_index);
 	/* 4 <3> If stp client drv has been on by wmt, return error code */
 	if (MTK_WCN_BOOL_FALSE != g_hif_sdio_probed_func_list[probe_index].on_by_wmt) {
 		HIF_SDIO_INFO_FUNC("already on...\n");
@@ -2356,6 +2407,7 @@ static _osal_inline_ INT32 hif_sdio_wifi_on(VOID)
 	const MTK_WCN_HIF_SDIO_FUNCINFO *func_info = NULL;
 
 	HIF_SDIO_INFO_FUNC("start!\n");
+	m6_hif_sdio_trace_probe_list("wifi_on-entry", -1);
 
 	/* 4 <1> If wifi client drv has not been probed, return error code */
 	/* MT6620 */
@@ -2396,10 +2448,12 @@ static _osal_inline_ INT32 hif_sdio_wifi_on(VOID)
 	else {
 		/* 4 <2> If wifi client drv has not been probed, return error code */
 		/* client func has not been probed */
+		m6_hif_sdio_trace_probe_list("wifi_on-no-supported", -1);
 		return HIF_SDIO_ERR_NOT_PROBED;
 	}
 
 wifi_on_exist:
+	m6_hif_sdio_trace_probe_list("wifi_on-selected", probe_index);
 	/* 4 <3> If wifi client drv has been on by wmt, return error code */
 	if (g_hif_sdio_probed_func_list[probe_index].on_by_wmt) {
 		HIF_SDIO_INFO_FUNC("probe_index (%d), already on...\n", probe_index);

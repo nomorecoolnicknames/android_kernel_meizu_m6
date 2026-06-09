@@ -1,5 +1,154 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #94 MIPITX/VM payload plus WMT/MSDC/CAM diagnostic bundle
+
+PATCH HISTORY, **ISOLATION + DIAGNOSTIC**, 2026-06-09: add one grouped,
+evidence-backed diagnostic bundle after #93 closed the fixed DSI debug-mux
+line-counter gap. The display part temporarily writes/restores the MIPITX debug
+mux selector while dumping VM command payload and DSI/MIPITX state at the proven
+HS-video edge. The non-display parts are read-only WMT/MSDC/HIF SDIO and camera
+rail/list markers from the same current blocker set. This patch does not change
+display timing, DDP routing, panel command tables, WMT return values, SDIO power
+sequencing, camera sensor selection, or regulator behavior.
+
+Hypothesis: FACT: #93 boot was flashed and read back as
+`c412fbe497588f30ea67762d24ece539a601da94beb747da57d393ae8b86cf69`, boots as
+`#92 SMP PREEMPT Tue Jun 9 13:17:19 CDT 2026`, and reaches
+`sys.boot_completed=1`. FACT: the fresh #93 bootdiag run shows DSI START,
+INTSTA, RDMA IN/OUT movement, and changing DSI debug words, but every
+`DSI_DEBUG_SEL` selection `0x0..0x1f` at `ddp-edge-0ms`, `edge-8ms`, and
+`edge-33ms` still decodes `line=0`; each sweep restores `orig=0 now=0`.
+HYPOTHESIS: the remaining display frontier is below the fixed DSI debug view:
+VM packet generation, MIPITX/PHY debug state, panel HS-video acceptance, or an
+unmirrored stock-LK DSI/PHY side effect. FACT: the same current bring-up set
+still has Wi-Fi/BT blocked at WMT/MSDC/HIF SDIO and camera blocked before useful
+provider output. HYPOTHESIS: bounded markers at those entry/exit/state points
+will let the next capture split "host never enumerates" from "firmware/STP/HAL
+later" for connectivity and split camera rail/list power from sensor I2C.
+
+Evidence:
+- #93 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1332-m6-dsi-debug-mux-edge-sweep-bootonly`.
+- #93 postboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1336-m6-dsi-debug-mux-postboot-711HEBSR277K5`.
+- Fresh #93 bootdiag run, selected by kernel string rather than directory mtime:
+  `/srv/forge/android/meizu_m6/captures/20260609-1336-m6-dsi-debug-mux-postboot-711HEBSR277K5/cache-bootdiag/run-20260610-042418-323`.
+- #93 identity: `Linux version 3.18.140 ... #92 SMP PREEMPT Tue Jun 9
+  13:17:19 CDT 2026`, `sys.boot_completed=1`, battery `6 Charging`, and boot
+  hash `c412fbe497588f30ea67762d24ece539a601da94beb747da57d393ae8b86cf69`.
+- #93 display proof:
+  `M6D10 start-after-hs S=1 M=3 I=80000790 H=0/124 V=2020 B=200000 L=603/601`;
+  `M6 DSI HS edge[ddp-edge-0ms] ... rdma=0x101 in=358/571 out=516/567
+  dsi=0x1/0x80000790 state=0x2020/0x0 vm=0x21/0x0`;
+  all `M6 DSI dbg_mux[ddp-edge-0ms]`, `edge-8ms`, and `edge-33ms` selections
+  keep `line=0` while debug `word` changes, then restore `orig=0 now=0`.
+- #94 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1345-m6-mipitx-vmcmd-wmt-camera-diag-bootonly`.
+- #94 boot sha256:
+  `7145b580e06ce030918f0ad16059bec12da173e772d25acf1e85c524d822d8dc`.
+- #94 `Image.gz-dtb` sha256:
+  `ec946ff790f59bdd76e70b45e8c84d02dbc1deccf81f6d2a0851cb7fc32d3e43`.
+- #94 `System.map` sha256:
+  `c61ef945d4ece5335f65b86050f7ed377590e4e34a6d5450152cbf5d8fe9f48d`.
+- #94 embedded kernel identity:
+  `#93 SMP PREEMPT Tue Jun 9 13:45:14 CDT 2026`.
+- #94 build/packaging verification: `make Image.gz-dtb` completed, `git diff
+  --check` passed, `abootimg -i` reports a 16 MiB boot image with unchanged
+  cmdline, unpacked `zImage` and `initrd.img` compare with the packaged inputs,
+  `sha256sum -c SHA256SUMS` passed, and gzip-expanded string search found 39
+  markers including `M6 MIPITX dbg_mux`, `M6 DSI vm_payload`,
+  `M6 DSI dbg_mux`, `M6 CMB`, `M6 WMT HIF`, `M6 MSDC2 CMD5`, and
+  `M6_PERIPH_DIAG`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: dumps the VM
+  command payload at `DSI_Set_VM_CMD()` and at the HS edge, and sweeps/restores
+  the MIPITX debug mux for `ddp-edge-0ms`, `edge-8ms`, and `edge-33ms`.
+- `kernel-3.18/drivers/misc/mediatek/connectivity/common/common_detect/mtk_wcn_stub_alps.c`:
+  logs the `connectivity-combo` IRQ node, parsed IRQ, handler/data, and SDIO PM
+  callback entry/exit around WMT SDIO control.
+- `kernel-3.18/drivers/misc/mediatek/connectivity/common/common_main/linux/hif_sdio.c`:
+  logs selected/probed HIF SDIO state and each probed SDIO function during WMT
+  turn-on paths.
+- `kernel-3.18/drivers/mmc/host/mediatek/mt6755/sd.c`: logs MSDC2 CMD5/OCR
+  state, response, host power, clock, width, and timing at the SDIO attach
+  frontier.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.c`:
+  logs compiled camera sensor-list identity and camera regulator power on/off
+  entry, failure, and exit state.
+- `BRINGUP_STATE.md`: records the #93 result, #94 artifact identity, grouped
+  patch categories, expected markers, rollback conditions, and verification
+  commands.
+
+Why each file changed: `ddp_dsi.c` owns the DSI host and MIPITX registers at
+the exact boundary where #93 proved DSI debug line output is not enough.
+`mtk_wcn_stub_alps.c`, `hif_sdio.c`, and `sd.c` are the narrow WMT/MSDC/HIF
+handoff path that current captures keep hitting before Wi-Fi/BT can reach real
+firmware or HAL debugging. `kd_sensorlist.c` is the narrow camera kernel list
+and rail owner before camera-provider errors become actionable. The state file
+keeps display isolation separate from read-only peripheral diagnostics in one
+checkpoint.
+
+Expected next marker: after flashing #94, the fresh bootdiag/current dmesg for
+kernel `#93 SMP PREEMPT Tue Jun 9 13:45:14 CDT 2026` and boot hash
+`7145b580e06ce030918f0ad16059bec12da173e772d25acf1e85c524d822d8dc` should
+contain:
+- `M6 DSI vm_payload[vm-set-entry]`, `vm-set-after-enqueue`, and HS-edge
+  payload lines with `start`, `int`, `mode`, `txrx`, `ps`, `mem`, `frm`,
+  timing, `vm`, data words, state words, checksum, and debug selector.
+- `M6 MIPITX dbg_mux[ddp-edge-0ms]`, `edge-8ms`, and `edge-33ms` selections
+  plus restore lines with `now == orig`.
+- `M6 CMB ...`, `M6 WMT HIF ...`, and `M6 MSDC2 CMD5 ...` lines proving whether
+  MSDC2 SDIO enumerates and whether WMT has a valid parsed IRQ/callback path.
+- `[M6_PERIPH_DIAG][CAM]` sensor-list and rail markers when camera-provider or
+  manual camera open runs.
+
+If MIPITX debug outputs change while DSI line stays zero, compare those fields
+against stock LK/MIPITX reverse evidence and choose the first mismatching PHY
+or lane-side register. If MIPITX outputs are also flat while VM payload and DSI
+START/INTSTA are live, move to hidden PHY/pad/lane handoff or panel HS-video
+acceptance. For WMT/MSDC, a missing parsed IRQ or no probed SDIO funcs remains
+kernel/DT wiring; valid HIF funcs move the frontier to firmware/STP/userspace.
+For camera, rail/list markers determine whether to patch sensor ID/I2C tables
+or provider/userspace plumbing next.
+
+Rollback condition: revert this checkpoint if #94 regresses boot, ADB,
+`sys.boot_completed`, charging, HWC/scrcpy framebuffer, storage/mmc stability,
+WMT chip power-on, BT init state, camera-provider startup, or if any MIPITX
+restore line reports `now != orig`. Do not revert solely because the physical
+panel remains black or because Wi-Fi/camera still fail; this bundle is meant to
+produce lower-level evidence.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260609-1345-m6-mipitx-vmcmd-wmt-camera-diag-bootonly
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack.tmp/zImage
+cmp initrd.img verify-unpack.tmp/initrd.img
+abootimg -i boot-m6-mipitx-vmcmd-wmt-camera-diag-20260609.img
+grep -E 'M6 MIPITX dbg_mux|M6 DSI vm_payload|M6 DSI dbg_mux|M6 CMB|M6 WMT HIF|M6 MSDC2 CMD5|M6_PERIPH_DIAG' marker-strings.txt
+
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+BOOT=/srv/forge/android/export/meizu_m6_artifacts/20260609-1345-m6-mipitx-vmcmd-wmt-camera-diag-bootonly/boot-m6-mipitx-vmcmd-wmt-camera-diag-20260609.img
+BOOT_PART=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot
+$A root
+$A push "$BOOT" /cache/boot-m6-mipitx-vmcmd-wmt-camera-diag-20260609.img
+$A shell 'sha256sum /cache/boot-m6-mipitx-vmcmd-wmt-camera-diag-20260609.img'
+$A shell "dd if=/cache/boot-m6-mipitx-vmcmd-wmt-camera-diag-20260609.img of=$BOOT_PART bs=1048576; sync"
+$A shell "sha256sum $BOOT_PART"
+$A reboot
+
+CAP=/srv/forge/android/meizu_m6/captures/$(date +%Y%m%d-%H%M%S)-m6-mipitx-vmcmd-wmt-camera-postboot-711HEBSR277K5
+mkdir -p "$CAP"
+$A wait-for-device
+$A shell 'cat /proc/version; getprop sys.boot_completed; sha256sum /dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot; cat /sys/class/power_supply/battery/status 2>/dev/null' > "$CAP/identity.txt" 2>&1
+$A pull /cache/bootdiag "$CAP/cache-bootdiag" > "$CAP/cache-bootdiag-pull.txt" 2>&1
+$A shell dmesg > "$CAP/dmesg-current.txt" 2>&1
+$A shell 'logcat -b all -d -v threadtime' > "$CAP/logcat-current.txt" 2>&1
+grep -RInE 'Linux version|M6 MIPITX dbg_mux|M6 DSI vm_payload|M6 DSI dbg_mux|restore|M6 CMB|M6 WMT HIF|M6 MSDC2 CMD5|M6_PERIPH_DIAG|sys.boot_completed' "$CAP"
+```
+
 ## 2026-06-09 #93 DSI DEBUG_SEL edge mux sweep
 
 PATCH HISTORY, **ISOLATION**, 2026-06-09: add a bounded DSI debug mux sweep
