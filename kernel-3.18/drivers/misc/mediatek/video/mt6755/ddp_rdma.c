@@ -35,6 +35,8 @@
 /* #include "mmdvfs_mgr.h" */
 #include "disp_lowpower.h"
 
+extern void aee_sram_printk(const char *fmt, ...);
+
 #define MMSYS_CLK_LOW (0)
 #define MMSYS_CLK_HIGH (1)
 #define MMSYS_CLK_MEDIUM (2)
@@ -75,6 +77,21 @@ static void rdma_m6_dump_state(const char *tag, DISP_MODULE_ENUM module, void *h
 
 	count++;
 	base = idx * DISP_RDMA_INDEX_OFFSET;
+	aee_sram_printk("M6R%02u %s G=%x S=%x/%x F=%x I=%u/%u O=%u/%u V=%x/%x M=%x/%x/%x\n",
+		count, tag ? tag : "null",
+		DISP_REG_GET(base + DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(base + DISP_REG_RDMA_SIZE_CON_0),
+		DISP_REG_GET(base + DISP_REG_RDMA_SIZE_CON_1),
+		DISP_REG_GET(base + DISP_REG_RDMA_FIFO_CON),
+		DISP_REG_GET(base + DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(base + DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(base + DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(base + DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF));
 	DISPERR("M6 RDMA diag[%s]#%u handle=%p INTEN=0x%x INTSTA=0x%x GLOBAL=0x%x SIZE=0x%x/%x MEM=0x%x ADDR=0x%x PITCH=0x%x FIFO=0x%x/%x IN=%u/%u OUT=%u/%u route=0x%x/%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x mutex=0x%x/%x/%x mmsys=0x%x/%x\n",
 		tag ? tag : "null", count, handle,
 		DISP_REG_GET(base + DISP_REG_RDMA_INT_ENABLE),
@@ -1094,12 +1111,15 @@ static int setup_rdma_sec(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig
 
 static int rdma_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, void *handle)
 {
+	rdma_m6_dump_state("config-l-enter", module, handle);
 	if (pConfig->dst_dirty || pConfig->rdma_dirty) {
 
 		setup_rdma_sec(module, pConfig, handle);
 
 		do_rdma_config_l(module, pConfig, handle);
+		rdma_m6_dump_state("config-l-after-do", module, handle);
 	}
+	rdma_m6_dump_state("config-l-exit", module, handle);
 	return 0;
 }
 

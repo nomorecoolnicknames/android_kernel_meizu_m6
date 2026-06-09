@@ -34,6 +34,8 @@
 #include "disp_log.h"
 /* #pragma GCC optimize("O0") */
 
+extern void aee_sram_printk(const char *fmt, ...);
+
 static int ddp_manager_init;
 #define DDP_MAX_MANAGER_HANDLE (DISP_MUTEX_DDP_COUNT+DISP_MUTEX_DDP_FIRST)
 
@@ -71,6 +73,9 @@ typedef struct {
 	ddp_path_handle module_path_table[DISP_MODULE_NUM];
 	ddp_path_handle handle_pool[DDP_MAX_MANAGER_HANDLE];
 } DDP_MANAGER_CONTEXT;
+
+static void dpmgr_m6_sram_state(const char *tag, ddp_path_handle handle,
+				void *cmdq_handle, int encmdq);
 
 #define DEFAULT_IRQ_EVENT_SCENARIO (4)
 static DDP_IRQ_EVENT_MAPPING ddp_irq_event_list[DEFAULT_IRQ_EVENT_SCENARIO][DISP_PATH_EVENT_NUM] = {
@@ -949,6 +954,7 @@ int dpmgr_path_start(disp_path_handle dp_handle, int encmdq)
 	module_num = ddp_get_module_num(handle->scenario);
 	cmdqHandle = encmdq ? handle->cmdqhandle : NULL;
 
+	dpmgr_m6_sram_state("start-begin", handle, cmdqHandle, encmdq);
 	DISPMSG("path start on scenario %s\n", ddp_get_scenario_name(handle->scenario));
 	for (i = 0; i < module_num; i++) {
 		module_name = modules[i];
@@ -961,6 +967,7 @@ int dpmgr_path_start(disp_path_handle dp_handle, int encmdq)
 			}
 		}
 	}
+	dpmgr_m6_sram_state("start-done", handle, cmdqHandle, encmdq);
 	return 0;
 }
 
@@ -1127,6 +1134,50 @@ static bool dpmgr_m6_diag_sample(unsigned int *count)
 	return n < 8;
 }
 
+static void dpmgr_m6_sram_state(const char *tag, ddp_path_handle handle,
+				void *cmdq_handle, int encmdq)
+{
+	static unsigned int count;
+	unsigned int mutex_id;
+
+	if (handle == NULL || handle->scenario != DDP_SCENARIO_PRIMARY_DISP ||
+	    count >= 96)
+		return;
+
+	count++;
+	mutex_id = handle->hwmutexid;
+	aee_sram_printk("M6G%02u %s sc=%d m=%u e=%d q=%p V=%x/%x M=%x/%x/%x R=%x %u/%u %u/%u D=%x/%x\n",
+		count, tag ? tag : "null", handle->scenario, mutex_id,
+		encmdq, cmdq_handle,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(mutex_id)),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x16c));
+	DISPERR("M6 DPMGR sram[%s]#%u scenario=%s mutex=%u encmdq=%d cmdq=%p valid=0x%x ready=0x%x m=0x%x/0x%x/0x%x rdma=0x%x in=%u/%u out=%u/%u dsi=0x%x/0x%x\n",
+		tag ? tag : "null", count, ddp_get_scenario_name(handle->scenario),
+		mutex_id, encmdq, cmdq_handle,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(mutex_id)),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x16c));
+}
+
 int dpmgr_path_config(disp_path_handle dp_handle, disp_ddp_path_config *config, void *cmdq_handle)
 {
 	int i = 0;
@@ -1148,6 +1199,8 @@ int dpmgr_path_config(disp_path_handle dp_handle, disp_ddp_path_config *config, 
 		m6_log_cfg = dpmgr_m6_diag_sample(&m6_path_cfg_count);
 		m6_cfg_idx = m6_path_cfg_count - 1;
 	}
+	dpmgr_m6_sram_state("cfg-begin", handle, cmdq_handle,
+			    cmdq_handle ? 1 : 0);
 
 	DISPDBG("path config ovl %d, rdma %d, wdma %d, dst %d on handle %p scenario %s\n",
 		   config->ovl_dirty,
@@ -1211,6 +1264,8 @@ int dpmgr_path_config(disp_path_handle dp_handle, disp_ddp_path_config *config, 
 			DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
 			DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
 			DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT));
+	dpmgr_m6_sram_state("cfg-done", handle, cmdq_handle,
+			    cmdq_handle ? 1 : 0);
 	return 0;
 }
 
@@ -1309,7 +1364,11 @@ int dpmgr_path_trigger(disp_path_handle dp_handle, void *trigger_loop_handle, in
 	modules = ddp_get_scenario_list(handle->scenario);
 	module_num = ddp_get_module_num(handle->scenario);
 
+	dpmgr_m6_sram_state("trigger-before-mutex", handle,
+			    trigger_loop_handle, encmdq);
 	ddp_mutex_enable(handle->hwmutexid, handle->scenario, trigger_loop_handle);
+	dpmgr_m6_sram_state("trigger-after-mutex", handle,
+			    trigger_loop_handle, encmdq);
 	for (i = 0; i < module_num; i++) {
 		module_name = modules[i];
 		if (ddp_modules_driver[module_name] != 0) {
@@ -1317,9 +1376,18 @@ int dpmgr_path_trigger(disp_path_handle dp_handle, void *trigger_loop_handle, in
 				DISPDBG("%s trigger\n", ddp_get_module_name(module_name));
 				ddp_modules_driver[module_name]->trigger(module_name,
 									 trigger_loop_handle);
+				if (module_name == DISP_MODULE_RDMA0)
+					dpmgr_m6_sram_state("trigger-after-rdma0",
+							    handle, trigger_loop_handle,
+							    encmdq);
+				if (module_name == DISP_MODULE_DSI0)
+					dpmgr_m6_sram_state("trigger-after-dsi0",
+							    handle, trigger_loop_handle,
+							    encmdq);
 			}
 		}
 	}
+	dpmgr_m6_sram_state("trigger-done", handle, trigger_loop_handle, encmdq);
 	return 0;
 }
 
@@ -1327,12 +1395,16 @@ int dpmgr_path_flush(disp_path_handle dp_handle, int encmdq)
 {
 	ddp_path_handle handle;
 	cmdqRecHandle cmdqHandle;
+	int ret;
 
 	ASSERT(dp_handle != NULL);
 	handle = (ddp_path_handle) dp_handle;
 	cmdqHandle = encmdq ? handle->cmdqhandle : NULL;
 	DISPDBG("path flush on scenario %s\n", ddp_get_scenario_name(handle->scenario));
-	return ddp_mutex_enable(handle->hwmutexid, handle->scenario, cmdqHandle);
+	dpmgr_m6_sram_state("flush-before-mutex", handle, cmdqHandle, encmdq);
+	ret = ddp_mutex_enable(handle->hwmutexid, handle->scenario, cmdqHandle);
+	dpmgr_m6_sram_state("flush-after-mutex", handle, cmdqHandle, encmdq);
+	return ret;
 }
 
 int dpmgr_path_power_off(disp_path_handle dp_handle, CMDQ_SWITCH encmdq)

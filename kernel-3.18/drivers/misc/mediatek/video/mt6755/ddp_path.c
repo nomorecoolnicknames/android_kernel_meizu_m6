@@ -33,6 +33,8 @@
 
 #include "m4u.h"
 
+extern void aee_sram_printk(const char *fmt, ...);
+
 #pragma GCC optimize("O0")
 
 typedef struct module_map_s {
@@ -434,6 +436,65 @@ static int ddp_get_module_num_l(int *module_list)
 	return num;
 }
 
+static void ddp_m6_sram_path(const char *tag, int *module_list, int mutex_id, void *handle)
+{
+	static unsigned int count;
+	unsigned int module_num;
+
+	if (module_list == NULL || count >= 96)
+		return;
+
+	module_num = ddp_get_module_num_l(module_list);
+	if (module_num == 0)
+		return;
+	if (module_list[0] != DISP_MODULE_OVL0 ||
+	    module_list[module_num - 1] != DISP_MODULE_DSI0)
+		return;
+
+	count++;
+	aee_sram_printk("M6X%02u %s f=%d l=%d m=%d V=%x/%x S=%x/%x/%x/%x/%x M=%x/%x/%x R=%x %u/%u %u/%u D=%x/%x\n",
+		count, tag ? tag : "null", module_list[0],
+		module_list[module_num - 1], mutex_id,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_COLOR0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DITHER_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(mutex_id)),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x16c));
+	DISPERR("M6 DDP sram path[%s]#%u handle=%p first=%s last=%s mutex=%d valid=0x%x ready=0x%x ovl0=0x%x color=0x%x dither=0x%x rdma_sout=0x%x dsi_sel=0x%x m=0x%x/0x%x/0x%x rdma=0x%x in=%u/%u out=%u/%u dsi=0x%x/0x%x\n",
+		tag ? tag : "null", count, handle,
+		ddp_get_module_name(module_list[0]),
+		ddp_get_module_name(module_list[module_num - 1]), mutex_id,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_COLOR0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DITHER_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(mutex_id)),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x16c));
+}
+
 /* config mout/msel to creat a compelte path */
 static void ddp_connect_path_l(int *module_list, void *handle)
 {
@@ -446,6 +507,7 @@ static void ddp_connect_path_l(int *module_list, void *handle)
 
 	DISPDBG("connect_path: %s to %s\n", ddp_get_module_name(module_list[0]),
 	       ddp_get_module_name(module_list[module_num - 1]));
+	ddp_m6_sram_path("connect-before", module_list, 0, handle);
 	/* connect mout */
 	for (i = 0; i < module_num - 1; i++) {
 		for (j = 0; j < DDP_MOUT_NUM; j++) {
@@ -540,6 +602,7 @@ static void ddp_connect_path_l(int *module_list, void *handle)
 			}
 		}
 	}
+	ddp_m6_sram_path("connect-after", module_list, 0, handle);
 }
 
 static void ddp_check_path_l(int *module_list)
@@ -771,6 +834,7 @@ static int ddp_mutex_set_l(int mutex_id, int *module_list, DDP_MODE ddp_mode, vo
 	sof_val = REG_FLD_VAL(SOF_FLD_MUTEX0_SOF, sof_src);
 	sof_val |= REG_FLD_VAL(SOF_FLD_MUTEX0_EOF, eof_src);
 	DISP_REG_SET(handle, DISP_REG_CONFIG_MUTEX_SOF(mutex_id), sof_val);
+	ddp_m6_sram_path("mutex-set", module_list, mutex_id, handle);
 
 	DISPDBG("mutex %d value=0x%x, sof=%s, eof=%s\n", mutex_id,
 	       value, ddp_get_mutex_sof_name(sof_src), ddp_get_mutex_sof_name(eof_src));
@@ -1188,7 +1252,16 @@ int ddp_mutex_clear(int mutex_id, void *handle)
 
 int ddp_mutex_enable(int mutex_id, DDP_SCENARIO_ENUM scenario, void *handle)
 {
-	return ddp_mutex_enable_l(mutex_id, handle);
+	int ret;
+
+	if (scenario == DDP_SCENARIO_PRIMARY_DISP)
+		ddp_m6_sram_path("mutex-enable-before",
+				 module_list_scenario[scenario], mutex_id, handle);
+	ret = ddp_mutex_enable_l(mutex_id, handle);
+	if (scenario == DDP_SCENARIO_PRIMARY_DISP)
+		ddp_m6_sram_path("mutex-enable-after",
+				 module_list_scenario[scenario], mutex_id, handle);
+	return ret;
 }
 
 int ddp_mutex_disenable(int mutex_id, DDP_SCENARIO_ENUM scenario, void *handle)

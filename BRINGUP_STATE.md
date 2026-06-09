@@ -1,5 +1,101 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #75 retained DDP/RDMA/mutex startup markers
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add bounded retained SRAM markers
+for the M6 primary direct-link DDP route, mutex enable path, DPMGR
+config/start/trigger/flush sequence, and RDMA0 config/start state. This patch
+does not change DSI timing, panel reset/init tables, PQ bypass behavior, OVL
+layer config, RDMA mode, DDP route selection, CMDQ waits/fences, backlight,
+charging, ramdisk, or boot cmdline.
+
+Hypothesis: FACT: #74 boot image
+`c5e890821a5862d71b087e2b3120613628c4e2525d38c8b08fc1866a9f31e029` is
+verified flashed/running and reaches `sys.boot_completed=1`. FACT: #74 second
+reboot retained early markers prove `M6D02 config-force-first` ran, `HSA`
+becomes `0x38` by `M6D14/M6D15`, and `M6F` framebuffer fill/trigger markers
+execute at the 3-4s physical-black frontier. FACT: the first retained timeout
+still has `rdma_eof=0`, `mutex_eof=1`, route `VALID=0x0 READY=0x4000937a`,
+RDMA0 `GLOBAL=0x101 SIZE=720x1280 IN=0/0 OUT=0/0`, and DSI `line=0`, but #74
+RDMA-specific strings were present in the image and absent from retained logs
+because they only used `DISPERR()`. INFERENCE: #74 falsifies first DSI
+HSA/timing skip as the sole root cause, but it does not prove whether RDMA0,
+mutex, or trigger order is already correct before the bootlogo disappears.
+HYPOTHESIS: a retained `M6R/M6X/M6G` window around the early 2.3-3.9s handoff
+will classify the next frontier as DDP route/mutex, RDMA config/start, upstream
+OVL input, or downstream DSI/panel HS-video acceptance.
+
+Evidence:
+- #75 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0507-m6-ddp-rdma-sram-trace-bootonly`.
+- #75 boot image sha256:
+  `f3cf4406fbe2a9d454d22b14e754327100a4a1618cf9ec620ec703766844a8ea`.
+- #75 `Image.gz-dtb` sha256:
+  `0b875b79a33219fd227d633196e4728be439d42693b718c143e690c969e90e5b`.
+- #75 `System.map` sha256:
+  `faf2d80aa5c2239309b990f1096bb99c74bb1265876e7f88373035bbe91830ed`.
+- #75 `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- #75 kernel string:
+  `3.18.140 #75 SMP PREEMPT Tue Jun 9 05:05:52 CDT 2026`.
+- Artifact verification: `sha256sum -c SHA256SUMS` passed, `abootimg -x`
+  unpacked successfully, `cmp Image.gz-dtb verify-unpack/zImage` passed,
+  `cmp initrd.img verify-unpack/initrd.img` passed, and gzip-expanded marker
+  strings include `M6R`, `M6X`, `M6G`, `M6 RDMA diag`,
+  `M6 DDP sram path`, and `M6 DPMGR sram`.
+- #74 capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0437-m6-dsi-force-first-rdma-trace-after-second-reboot`.
+- #74 retained lines: `proc-last_kmsg.txt` shows `M6D02 config-force-first`,
+  `M6D14/M6D15` with `H=38/124`, `M6F fill/trig/const`, and the timeout
+  snapshot with RDMA0 `IN=0/0 OUT=0/0`, route `VALID=0`, DSI HSA `0x38`, and
+  DSI `line=0`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_rdma.c`: mirrors RDMA0
+  config/start/config_l state into retained `M6R` SRAM markers and keeps the
+  longer `DISPERR()` dump.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c`: adds `M6X`
+  retained markers around primary route connect, mutex set, and mutex enable.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c`: adds `M6G`
+  retained markers around primary config/start/trigger/flush and RDMA0/DSI0
+  trigger boundaries.
+- `BRINGUP_STATE.md`: records this diagnostic patch, evidence, expected
+  markers, rollback condition, and verification commands.
+
+Why each file changed: `ddp_rdma.c` owns the RDMA0 state that timed out with
+zero counters in #74, but its prior markers were not retained. `ddp_path.c`
+owns route selector and mutex programming, the exact layer where #74 sampled
+`VALID=0`. `ddp_manager.c` owns the high-level config/start/trigger/flush order
+that bridges OVL/RDMA/DSI and is closest to the human-observed 3-4s transition.
+The patch is read-only instrumentation in all three files.
+
+Expected next marker: the next verified #75 second-reboot capture should show
+`M6R`, `M6X`, and `M6G` before or near `M6F` and before the first display
+timeout. If route and mutex are correct but RDMA `IN/OUT` stays `0`, inspect
+OVL layer/input generation next. If RDMA counters move while DSI `STATE9` line
+stays `0`, inspect DSI/MIPITX/panel HS-video acceptance next. If `M6G` shows
+trigger/mutex ordering missing before `M6F`, patch that earliest ordering gap.
+
+Rollback condition: revert if #75 regresses ADB, `sys.boot_completed=1`,
+charging status, pstore/last_kmsg retention, or if the additional markers
+overflow SRAM and hide existing `M6D/M6F` breadcrumbs. Revert or reduce the
+markers if #75 proves config/start/mutex/trigger order is already correct and
+the remaining frontier is below DSI host or upstream OVL input.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A shell 'uname -a; getprop sys.boot_completed; getprop init.svc.bootanim; dumpsys battery | grep -E "status|level"; sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot'
+$A shell 'cat /proc/last_kmsg | grep -E "M6R|M6X|M6G|M6D|M6F|M6 RDMA diag|M6 DDP sram path|M6 DPMGR sram|M6 DDP timeout|HSA/HBP|word=|line=" | head -320'
+$A shell 'dmesg | grep -E "M6R|M6X|M6G|M6D|M6F|M6 RDMA diag|M6 DDP sram path|M6 DPMGR sram|M6 DDP timeout|HSA/HBP|word=|line=" | head -320'
+$A reboot
+$A wait-for-device
+$A root
+$A shell 'cat /proc/last_kmsg | grep -E "M6R|M6X|M6G|M6D|M6F|M6 RDMA diag|M6 DDP sram path|M6 DPMGR sram|M6 DDP timeout|HSA/HBP|word=|line=" | head -360'
+```
+
 ## 2026-06-09 #74 force first DSI config / RDMA start trace
 
 PATCH HISTORY, **DIAGNOSTIC/ISOLATION**, 2026-06-09: replay the first Linux
