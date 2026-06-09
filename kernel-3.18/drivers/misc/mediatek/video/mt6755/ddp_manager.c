@@ -28,6 +28,7 @@
 #include "ddp_manager.h"
 #include "ddp_rdma.h"
 #include "ddp_ovl.h"
+#include "ddp_dsi.h"
 #include "cmdq_core.h"
 
 #include "disp_log.h"
@@ -1751,6 +1752,7 @@ void dpmgr_debug_path_status(int mutex_id)
 
 
 static bool dpmgr_m6_first_video_wait_dumped;
+static bool dpmgr_m6_first_video_timeout_dsi_dumped;
 static bool dpmgr_m6_primary_clock_hold_applied;
 static unsigned int dpmgr_m6_primary_wait_diag_count;
 static unsigned int dpmgr_m6_primary_wait_timeout_diag_count;
@@ -2077,6 +2079,7 @@ int dpmgr_wait_event_timeout(disp_path_handle dp_handle, DISP_PATH_EVENT event, 
 		     event == DISP_PATH_EVENT_IF_VSYNC)) {
 			dpmgr_m6_hold_primary_video_clocks(handle, path_event_name(event));
 			dpmgr_m6_dump_primary_video_state(path_event_name(event));
+			dsi_m6_dump_live("dpmgr-first-video-wait");
 			dpmgr_m6_first_video_wait_dumped = true;
 		}
 		cur_time = ktime_to_ns(ktime_get());/*sched_clock();*/
@@ -2091,6 +2094,13 @@ int dpmgr_wait_event_timeout(disp_path_handle dp_handle, DISP_PATH_EVENT event, 
 				handle, event, handle->irq_event_map[event].irq_bit, 0,
 				wq_handle, &dpmgr_m6_primary_wait_timeout_diag_count);
 			dpmgr_m6_dump_primary_video_state(path_event_name(event));
+			if (!dpmgr_m6_first_video_timeout_dsi_dumped &&
+			    handle->scenario == DDP_SCENARIO_PRIMARY_DISP &&
+			    (event == DISP_PATH_EVENT_FRAME_DONE ||
+			     event == DISP_PATH_EVENT_IF_VSYNC)) {
+				dsi_m6_dump_live("dpmgr-first-video-timeout");
+				dpmgr_m6_first_video_timeout_dsi_dumped = true;
+			}
 			/* dpmgr_check_status(dp_handle); */
 		} else if (ret < 0) {
 			DISPERR("wait %s interrupt by other timeleft %d on scenario %s\n",

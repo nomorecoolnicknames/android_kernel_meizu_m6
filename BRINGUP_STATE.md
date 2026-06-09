@@ -1,5 +1,93 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 RDMA EOF first-wait DSI/MIPITX diagnostics
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add bounded read-only full
+DSI/MIPITX snapshots at the first primary video trigger-loop RDMA EOF wait,
+the first primary video dpmgr wait, and the first primary video wait timeout.
+This patch does not change CMDQ waits, event tokens, DDP route registers,
+RDMA/OVL/DSI configuration, MIPITX registers, panel commands, PQ, HWC, or
+userspace policy.
+
+Hypothesis: FACT: #66 proves Android userspace, OVL constant-white content,
+MUTEX/RDMA enable, DSI video mode, MIPITX lane/PLL state, and DSI BIST latch
+are all observable in one boot. FACT: the remaining normal-pipeline failure is
+`CMDQ_EVENT_DISP_RDMA0_EOF`/`CMDQ_EVENT_MUTEX0_STREAM_EOF` staying unset while
+route VALID remains programmed and READY drops. HYPOTHESIS: the next capture
+must show the full DSI/MIPITX state at the exact first RDMA EOF wait and first
+timeout so we can decide whether RDMA EOF is blocked by upstream DDP readiness,
+DSI video-state acceptance, or a later event-propagation/IRQ gap.
+
+Evidence:
+- Prior runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-2305-m6-dsi-disable-lk-handoff-skip-postboot-711HEBSR277K5`.
+- Prior verified boot sha256:
+  `6f221b28db7e34715585c0342a60fa9ba8a2ce3a6c994599f490bd8ff9239aaf`.
+- Prior runtime markers show `sys.boot_completed=1`, `bootanim=stopped`,
+  `BIST_CON=0x200446`, `STATE7=Video data period`, `rdma_eof=0`,
+  `mutex_eof=0`, and route READY dropping while VALID stays `0x4000937a`.
+- New build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-rdma-eof-dsi-window-diag-20260608.log`.
+- New artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-2343-m6-rdma-eof-dsi-window-diag-bootonly`.
+- Built boot image sha256:
+  `7c51e2ded765f003191390e3aec5d811ba0c1ebeabf46b7bbed6b3e465fb7a77`.
+- Built `Image.gz-dtb` sha256:
+  `3d00dfc0e213f63a8b274080336544fc6e3bbf32b61636e5851b7635ba9c6e37`.
+- Built `System.map` sha256:
+  `2614d292e8f3bcf7caf073f4478f4af02ff0b676a23f5ef08a7b554639e295d4`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Built `initrd.img` sha256:
+  `7de975b4485324f4a76eb44fa4cc61472e829421e8d27e31f50d80b984cb4a4f`.
+- Build log sha256:
+  `90940fa0026a06cfdaf9f95967099da315e43b120ced9e430707a1be249827d4`.
+- Artifact verification: `sha256sum -c SHA256SUMS`, boot unpack, kernel
+  `cmp`, ramdisk `cmp`, and marker-string checks passed.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: logs
+  full `dsi_m6_dump_live("trigger-before-rdma-eof-wait")` once before the
+  trigger loop appends the RDMA0 EOF and MUTEX0 stream EOF waits.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c`: logs full
+  `dsi_m6_dump_live("dpmgr-first-video-wait")` and
+  `dsi_m6_dump_live("dpmgr-first-video-timeout")` once for primary video
+  frame/vsync waits.
+- `BRINGUP_STATE.md`: records the diagnostic purpose, evidence, expected
+  markers, rollback condition, and verification commands.
+
+Why each file changed: `primary_display.c` owns the CMDQ trigger-loop wait
+construction that currently waits for real RDMA0 EOF/MUTEX0 EOF. `ddp_manager.c`
+owns the wait/timeout path that proves whether those events actually arrive.
+Both locations already dump route/RDMA/OVL state; adding the existing full DSI
+snapshot there closes the host-side evidence gap without mutating hardware.
+
+Expected next marker: the next fresh boot dmesg should contain
+`M6 DSI snapshot[trigger-before-rdma-eof-wait]`,
+`M6 DSI snapshot[dpmgr-first-video-wait]`, and, if the current failure
+persists, `M6 DSI snapshot[dpmgr-first-video-timeout]`, with MIPITX lane/PLL
+lines adjacent to the existing RDMA EOF/READY dumps. If DSI stays in video data
+period across all three markers while RDMA EOF remains zero, inspect upstream
+DDP READY/MUTEX/IRQ propagation next. If DSI leaves video mode or MIPITX lane
+state changes between first wait and timeout, pivot below RDMA to DSI host/PHY
+state parity.
+
+Rollback condition: revert this diagnostic patch if it prevents boot,
+regresses `sys.boot_completed=1`, floods logs enough to hide the first wait,
+breaks stock-pages/BIST debugfs, or changes the RDMA/DSI state compared to the
+#66 baseline.
+
+Verification commands:
+
+```bash
+rg -n 'trigger-before-rdma-eof-wait|dpmgr-first-video-wait|dpmgr-first-video-timeout|RDMA0_EOF|rdma_eof=0|READY=' \
+  /srv/forge/android/meizu_m6/captures/<fresh-capture>/dmesg*.txt \
+  /srv/forge/android/meizu_m6/captures/<fresh-capture>/live-debugfs-dmesg.txt
+rg -n 'MIPITX lanes|STATE7=|BIST_CON|M6 DPMGR event flow|M6 DDP timeout' \
+  /srv/forge/android/meizu_m6/captures/<fresh-capture>/dmesg*.txt \
+  /srv/forge/android/meizu_m6/captures/<fresh-capture>/live-debugfs-dmesg.txt
+```
+
 ## 2026-06-08 DSI LK-handoff skip removal and #66 verdict
 
 PATCH HISTORY, **PROPER-FIX + DIAGNOSTIC**, 2026-06-08: disable the old

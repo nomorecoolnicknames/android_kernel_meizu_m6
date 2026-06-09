@@ -1318,6 +1318,7 @@ static void _cmdq_build_trigger_loop(void)
 			primary_m6_dump_trigger_loop_state("before-clock-hold");
 			primary_m6_hold_trigger_loop_clocks("before-wait");
 			primary_m6_dump_trigger_loop_state("before-wait");
+			dsi_m6_dump_live("trigger-before-rdma-eof-wait");
 			primary_video_trigger_loop_diag_logged = true;
 		}
 
