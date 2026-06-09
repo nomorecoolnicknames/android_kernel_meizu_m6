@@ -2133,6 +2133,20 @@ static void dsi_m6_schedule_hs_video_delayed(void)
 			      msecs_to_jiffies(500));
 }
 
+static void dsi_m6_schedule_ddp_hs_video_edge(DISP_MODULE_ENUM module,
+					      void *cmdq)
+{
+	static unsigned int schedule_count;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL ||
+	    schedule_count >= 2)
+		return;
+
+	schedule_count++;
+	dsi_m6_dump_hs_video_edge_marker("ddp-edge-0ms", module, cmdq);
+	schedule_delayed_work(&dsi_m6_hs_video_edge_window_work_item, 0);
+}
+
 void dsi_m6_dump_live(const char *tag)
 {
 	const char *safe_tag = tag ? tag : "manual";
@@ -4804,6 +4818,7 @@ int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq)
 		DSI_clk_HS_mode(module, cmdq, true);
 		dsi_m6_sram_snapshot("start-after-hs", module);
 		dsi_m6_dump_snapshot_limited("start-after-hs", module, cmdq, &dump_count, 4);
+		dsi_m6_schedule_ddp_hs_video_edge(module, cmdq);
 #ifndef CONFIG_FPGA_EARLY_PORTING
 		dsi_m6_dump_mipitx_block("start-after-hs");
 #endif

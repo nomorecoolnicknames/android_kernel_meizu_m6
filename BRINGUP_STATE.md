@@ -1,5 +1,111 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #92 DDP-start HS edge sampler relocation
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: move the short retained HS-video
+edge sampler to the proven `ddp_dsi_start()` path. The patch is read-only:
+it does not change DSI/PHY/panel/DDP timing, route construction, waits, fences,
+or panel commands. It adds an immediate `ddp-edge-0ms` marker after
+`DSI_clk_HS_mode()` and `start-after-hs`, then schedules the existing
+1/2/4/8/16/33 ms retained window.
+
+Hypothesis: FACT: #90 boots to Android and the exact flashed boot image hash is
+`0b63b87d5f939234fc22e034910df4d870ca14d4a4fff2473893a97e7cc710d1`.
+FACT: fresh #90 bootdiag from
+`/srv/forge/android/meizu_m6/captures/20260609-1222-m6-dsi-hs-edge-sram-window-postboot/cache-bootdiag/run-20260610-032110-319/cmd/dmesg.txt`
+contains current kernel `#90`, `M6D10 start-after-hs`, RDMA IN/OUT counters,
+DSI `STATE7`, `STATE9=0x0`, and MIPITX lane/PLL snapshots, but contains no
+`M6 DSI HS edge[...]`, `edge-0ms`, or `M6X` lines from the #90
+`DSI_Start()`-based sampler. HYPOTHESIS: the early Linux scanout path for the
+visible bootlogo takeover reaches `ddp_dsi_start()` without hitting the
+instrumented `DSI_Start()` schedule branch, so the next capture must sample the
+edge from `ddp_dsi_start()` itself before any lower DSI/PHY behavior patch.
+
+Evidence:
+- #90 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1215-m6-dsi-hs-edge-sram-window-bootonly`.
+- #90 postboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1222-m6-dsi-hs-edge-sram-window-postboot`.
+- Fresh #90 bootdiag run:
+  `/srv/forge/android/meizu_m6/captures/20260609-1222-m6-dsi-hs-edge-sram-window-postboot/cache-bootdiag/run-20260610-032110-319`.
+- Current #90 proof line:
+  `Linux version 3.18.140 ... #90 SMP PREEMPT Tue Jun 9 12:12:51 CDT 2026`.
+- Current #90 `start-after-hs` proof:
+  `M6D10 start-after-hs S=1 M=3 I=80000790 H=0/124 V=2020 B=200000 L=603/601`.
+- Current #90 state proof:
+  `M6 DSI state_decode[start-after-hs] ... vm=0x40 ... word=54 line=0`.
+- Negative #90 evidence: the same fresh bootdiag has no `edge-0ms`,
+  `edge-33ms`, `M6 DSI HS edge`, or `M6X` marker lines.
+- #92 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1242-m6-ddp-start-edge-sram-window-bootonly`.
+- #92 boot sha256:
+  `b6c9c128ce83f5f48b773c074925dd4da9bc28a79ee85a4e38e2b39af73d2b2c`.
+- #92 `Image.gz-dtb` sha256:
+  `43fbb1b6b4c2cceff431f76c71f6c2e14419373ea4ac0e3853858a15996b0250`.
+- #92 `System.map` sha256:
+  `2c2a8c8ed6c04f96f95eeea221f29386ea1ba313d672804d12ff5d56f6a107df`.
+- #92 verification: `sha256sum -c SHA256SUMS`, abootimg info, unpacked
+  `zImage`/`initrd.img` compare, `git diff --check`, and payload marker string
+  search passed. Marker strings include `ddp-edge-0ms`, `edge-0ms`,
+  `edge-33ms`, `M6X`, `M6 DSI HS edge`, and `start-after-hs`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds bounded
+  `dsi_m6_schedule_ddp_hs_video_edge()` and calls it from `ddp_dsi_start()`
+  immediately after `DSI_clk_HS_mode()` / `start-after-hs`.
+- `BRINGUP_STATE.md`: records the #90 result, #92 artifact identity, expected
+  markers, and rollback condition.
+
+Why each file changed: #90 proved the existing sampler location was not on the
+earliest visible DSI start path, while `ddp_dsi_start()` already emits current
+`start-after-hs` state in fresh bootdiag. Moving only the marker trigger closes
+that evidence gap without changing display behavior. The state file keeps the
+negative #90 result and exact #92 artifact identity attached to this diagnostic
+so stale pstore or unrelated boot images are not misread.
+
+Expected next marker: after flashing #92, the fresh `/cache/bootdiag` run with
+kernel `#92` should contain `M6 DSI HS edge[ddp-edge-0ms]`, retained `M6X`
+lines tagged `ddp-edge-0ms`, and the delayed `edge-1ms` through `edge-33ms`
+window. If RDMA counters move and DSI `STATE9`/decoded `line` remains zero
+through that window, move below route/HWC/PQ to DSI video timing, MIPITX PHY,
+panel HS-video acceptance, or stock LK hidden side effects. If counters stop
+at `ddp-edge-0ms`, reopen MUTEX/RDMA/DSI handoff at the exact first failing
+counter transition.
+
+Rollback condition: revert this diagnostic if #92 regresses boot, ADB,
+SurfaceFlinger/scrcpy image, backlight state, or DSI start compared with #90
+before producing the expected `ddp-edge-*` markers. Do not revert it merely
+because the physical panel remains black; the patch is diagnostic and should
+be judged by whether it captures the first HS-video edge.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260609-1242-m6-ddp-start-edge-sram-window-bootonly
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack.tmp/zImage
+cmp initrd.img verify-unpack.tmp/initrd.img
+abootimg -i boot-m6-ddp-start-edge-sram-window-20260609.img
+grep -E 'M6X|M6 DSI HS edge|ddp-edge-0ms|edge-0ms|edge-33ms|start-after-hs' marker-strings.txt
+
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+BOOT=/srv/forge/android/export/meizu_m6_artifacts/20260609-1242-m6-ddp-start-edge-sram-window-bootonly/boot-m6-ddp-start-edge-sram-window-20260609.img
+BOOT_PART=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot
+$A root
+$A push "$BOOT" /cache/boot-m6-ddp-start-edge-sram-window-20260609.img
+$A shell 'sha256sum /cache/boot-m6-ddp-start-edge-sram-window-20260609.img'
+$A shell "dd if=/cache/boot-m6-ddp-start-edge-sram-window-20260609.img of=$BOOT_PART bs=1048576; sync"
+$A shell "sha256sum $BOOT_PART"
+$A reboot
+
+CAP=/srv/forge/android/meizu_m6/captures/$(date +%Y%m%d-%H%M%S)-m6-ddp-edge-postboot-711HEBSR277K5
+mkdir -p "$CAP"
+$A wait-for-device
+$A shell 'cat /proc/version; getprop sys.boot_completed; sha256sum /dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot' > "$CAP/identity.txt" 2>&1
+$A pull /cache/bootdiag "$CAP/cache-bootdiag" > "$CAP/cache-bootdiag-pull.txt" 2>&1
+grep -RInE 'Linux version|#92|ddp-edge|edge-0ms|edge-33ms|M6 DSI HS edge|M6X|start-after-hs|STATE9|state_decode' "$CAP/cache-bootdiag"
+```
+
 ## 2026-06-09 #91 rescue helper boot-partition autodetect
 
 PATCH HISTORY, **PROPER-FIX / STATE-TOOLING**, 2026-06-09: fix the M6 rescue
