@@ -1,5 +1,97 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #83 DSI switch-mode first-edge breadcrumbs
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add bounded persistent `M6Kxx`
+breadcrumbs inside `ddp_dsi_switch_mode()` before copying `params`, after
+copying `LCM_DSI_MODE_SWITCH_CMD`, and around each C2V register operation
+(`DSI_SetMode`, `DSI_SetSwitchMode`, mutex-video write, VM packet writes,
+`DSI_Start`, mutex-release). This patch does not intentionally change panel
+commands, DSI mode-switch policy, CMDQ/CPU-direct selection, OVL/RDMA route,
+PQ/HWC, clocks, or boot-time display sequencing. The only behavior guard is a
+null-`params` return for an invalid call that is not used by the current M6
+debugfs path.
+
+Hypothesis: FACT: #83 boot image
+`11bb9e337f163cac2f5e21e5f0978f0ad5ad892042a382f58f94b81cb5358092` was
+verified on `/dev/block/platform/mtk-msdc.0/by-name/boot` after flashing from
+artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260609-0851-m6-dpmgr-dsi-ioctl-breadcrumbs-bootonly`.
+FACT: post-flash capture
+`/srv/forge/android/meizu_m6/captures/20260609-0857-m6-dpmgr-dsi-ioctl-breadcrumbs-root-c2v`
+reproduced the reset only when the debugfs command was run as root. FACT:
+post-reboot evidence shows WDT status `2`, fiq step `32`, exception type `2`,
+and boot partition hash still matching #83. FACT: `proc-last_kmsg.txt` and
+`pstore.txt` show `M6 DPMGR ioctl[enter]`, `M6 DPMGR ioctl[before]` for DSI0,
+`M6 DSI ioctl enter`, `M6 DSI ioctl before switch_lcm`, `after switch_lcm
+ret=0`, RDMA0 `before/after ret=0`, DPMGR exit for `DDP_SWITCH_LCM_MODE`,
+then `DDP_SWITCH_DSI_MODE` reaches `M6J02 enter` and
+`M6J02 before-switch-dsi` with `cmdq_handle == NULL`; no
+`M6 DSI switch_mode enter` appears before reset. INFERENCE: DPMGR dispatch,
+DSI0 ioctl dispatch, switch-LCM, and RDMA0 handling are not the reset boundary.
+HYPOTHESIS: the reset occurs at the first edge of `ddp_dsi_switch_mode()`,
+either while copying the mode-switch struct, before the first printk reaches
+pstore, or in the first C2V register operation. `M6Kxx` markers will identify
+the exact instruction group.
+
+Evidence:
+- #83 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0851-m6-dpmgr-dsi-ioctl-breadcrumbs-bootonly`.
+- #83 boot sha256:
+  `11bb9e337f163cac2f5e21e5f0978f0ad5ad892042a382f58f94b81cb5358092`.
+- #83 `Image.gz-dtb` sha256:
+  `e77b227013140b0f6ec1e3fe4caf5ae6c3e5e38751a11642c8f2540db66b1387`.
+- #83 `System.map` sha256:
+  `4ca6b2155e658b3ee27aba56045c4123d0c0924c82361949280c9011136ac5ab`.
+- Runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0857-m6-dpmgr-dsi-ioctl-breadcrumbs-root-c2v`.
+- Post-reboot evidence:
+  `/srv/forge/android/meizu_m6/captures/20260609-0857-m6-dpmgr-dsi-ioctl-breadcrumbs-root-c2v/post-reboot-evidence`.
+- #84 diagnostic build artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0911-m6-dsi-switch-first-edge-breadcrumbs-bootonly`.
+- #84 boot sha256:
+  `760938e2774871ba181288b253bfb9e8bede83e705a28ba9576e0d96c492da62`.
+- #84 `Image.gz-dtb` sha256:
+  `d0a1d74dc4d8d8cb6db3e24fe84f7adce7e920820429d5e9326718df58d2a12d`.
+- #84 `System.map` sha256:
+  `51d0b5022f6a55547d7dd4b0e8a5abeb43d0ccb7b2824c346e774c57b9243a74`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds `M6Kxx`
+  entry, params-copy, and C2V register-operation breadcrumbs in
+  `ddp_dsi_switch_mode()`.
+- `BRINGUP_STATE.md`: records the #83 result and this next first-edge
+  diagnostic.
+
+Why each file changed: `ddp_dsi.c` owns the now-proven earliest reset boundary
+between `ddp_dsi_ioctl()` and DSI C2V mode programming. The state file prevents
+future agents from retesting DPMGR/DSI ioctl dispatch as if it were still
+unknown.
+
+Expected next marker: rerun `m6_dsi_c2v_switch:0x03:1500` as root. If no
+`M6K enter` appears, the reset is at function entry/call ABI or before SRAM
+logging can execute. If `M6K enter` appears but no `M6K copied`, investigate
+the `params` dereference/stack lifetime. If `M6K copied/logged` appears, the
+last C2V marker before reset names the first DSI register operation that needs
+isolation against stock Flyme/LK behavior.
+
+Rollback condition: revert if `M6K` breadcrumbs prevent normal boot, alter
+normal scanout before the debugfs command, or flood pstore/logs enough to hide
+the reset boundary.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'dmesg -C'
+$A shell 'echo m6_dsi_c2v_switch:0x03:1500 > /d/mtkfb'
+$A wait-for-device
+$A root
+$A shell 'cat /proc/last_kmsg' | grep -E 'M6I|M6J|M6K|M6 DSI switch_mode|WDT|BUG|Oops'
+```
+
 ## 2026-06-09 #82 DPMGR/DSI ioctl dispatch breadcrumbs
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add bounded persistent

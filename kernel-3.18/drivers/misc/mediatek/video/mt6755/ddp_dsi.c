@@ -4741,13 +4741,49 @@ int ddp_dsi_switch_lcm_mode(DISP_MODULE_ENUM module, void *params)
 int ddp_dsi_switch_mode(DISP_MODULE_ENUM module, void *cmdq_handle, void *params)
 {
 	int i = 0;
-	LCM_DSI_MODE_SWITCH_CMD lcm_cmd = *((LCM_DSI_MODE_SWITCH_CMD *) (params));
-	int mode = (int)(lcm_cmd.mode);
+	LCM_DSI_MODE_SWITCH_CMD lcm_cmd;
+	int mode;
+	static unsigned int m6_switch_mode_count;
+	unsigned int m6_seq = ++m6_switch_mode_count;
+
+	if (m6_seq <= 64) {
+		aee_sram_printk("M6K%02u enter mod=%d q=%p p=%p S=%x M=%x I=%x\n",
+			m6_seq, module, cmdq_handle, params,
+			INREG32(&DSI_REG[0]->DSI_START),
+			INREG32(&DSI_REG[0]->DSI_MODE_CTRL),
+			INREG32(&DSI_REG[0]->DSI_INTSTA));
+		DISPERR("M6 DSI switch_mode raw enter #%u module=%d handle=%p params=%p start=0x%x mode_ctrl=0x%x intsta=0x%x\n",
+			m6_seq, module, cmdq_handle, params,
+			INREG32(&DSI_REG[0]->DSI_START),
+			INREG32(&DSI_REG[0]->DSI_MODE_CTRL),
+			INREG32(&DSI_REG[0]->DSI_INTSTA));
+	}
+	if (!params) {
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u null-params\n", m6_seq);
+		DISPERR("M6 DSI switch_mode null params #%u module=%d handle=%p\n",
+			m6_seq, module, cmdq_handle);
+		return -EINVAL;
+	}
+
+	lcm_cmd = *((LCM_DSI_MODE_SWITCH_CMD *) (params));
+	mode = (int)(lcm_cmd.mode);
+	if (m6_seq <= 64)
+		aee_sram_printk("M6K%02u copied mode=%d if=%u addr=%x val=%x/%x/%x/%x\n",
+			m6_seq, mode, lcm_cmd.cmd_if, lcm_cmd.addr,
+			lcm_cmd.val[0], lcm_cmd.val[1], lcm_cmd.val[2],
+			lcm_cmd.val[3]);
 
 	DISPERR("M6 DSI switch_mode enter: module=%d handle=%p cur=%d mode=%d cmd_if=%u addr=0x%x val=%02x/%02x/%02x/%02x\n",
 		module, cmdq_handle, dsi_currect_mode, mode, lcm_cmd.cmd_if,
 		lcm_cmd.addr, lcm_cmd.val[0], lcm_cmd.val[1], lcm_cmd.val[2],
 		lcm_cmd.val[3]);
+	if (m6_seq <= 64)
+		aee_sram_printk("M6K%02u logged cur=%d mode=%d S=%x M=%x I=%x\n",
+			m6_seq, dsi_currect_mode, mode,
+			INREG32(&DSI_REG[0]->DSI_START),
+			INREG32(&DSI_REG[0]->DSI_MODE_CTRL),
+			INREG32(&DSI_REG[0]->DSI_INTSTA));
 	dsi_m6_dump_live("switch-dsi-enter");
 	if (dsi_currect_mode == mode) {
 		DISPMSG
@@ -4766,29 +4802,99 @@ int ddp_dsi_switch_mode(DISP_MODULE_ENUM module, void *cmdq_handle, void *params
 
 	if (mode == 0) {	/* V2C */
 
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-before-set-switch i=%d S=%x M=%x I=%x\n",
+				m6_seq, i, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_SetSwitchMode(module, cmdq_handle, 0);	/*  */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-after-set-switch S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x130,
 			0x00001539 | (lcm_cmd.addr << 16) | (lcm_cmd.val[1] << 24));	/* DM = 0 */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-after-pkt S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_OUTREGBIT(cmdq_handle, DSI_START_REG, DSI_REG[i]->DSI_START, VM_CMD_START, 0);
 		DSI_OUTREGBIT(cmdq_handle, DSI_START_REG, DSI_REG[i]->DSI_START, VM_CMD_START, 1);
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-after-vmstart S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_MASKREG32(cmdq_handle, 0xF4020028, 0x1, 0x1);	/* reset mutex for V2C */
 		DSI_MASKREG32(cmdq_handle, 0xF4020028, 0x1, 0x0);	/*  */
 		DSI_MASKREG32(cmdq_handle, 0xF4020030, 0x1, 0x0);	/* mutext to cmd  mode */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-after-mutex S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		cmdqRecFlush(cmdq_handle);
 		cmdqRecReset(cmdq_handle);
 		cmdqRecWaitNoClear(cmdq_handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
 		DSI_SetMode(module, NULL, 0);
 	} else {		/* C2V */
 
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-before-set-mode i=%d S=%x M=%x I=%x\n",
+				m6_seq, i, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_SetMode(module, cmdq_handle, mode);
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-set-mode S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_SetSwitchMode(module, cmdq_handle, 1);	/* EXT TE could not use C2V */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-set-switch S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_MASKREG32(cmdq_handle, 0xF4020030, 0x1, 0x1);	/* mutext to video mode */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-mutex-video S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x200 + 0,
 			     0x00001500 | (lcm_cmd.addr << 16) | (lcm_cmd.val[0] << 24));
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-pkt0 S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x200 + 4, 0x00000020);
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-pkt1 S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x60, 2);
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-vmstart-reg S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_Start(module, cmdq_handle);	/* ???????????????????????????????? */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-dsi-start S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_MASKREG32(NULL, 0xF4020020, 0x1, 0x1);	/* release mutex for video mode */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-mutex-release S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		dsi_m6_dump_live("switch-dsi-after-c2v-start");
 		if (cmdq_handle) {
 			cmdqRecFlush(cmdq_handle);
