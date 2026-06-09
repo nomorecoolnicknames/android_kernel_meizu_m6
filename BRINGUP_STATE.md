@@ -1,5 +1,93 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 DSI IRQ/HS-video window diagnostic
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add read-only decode markers for
+DSI `START`, `STA`, `INTEN`, and `INTSTA`, bounded internal DSI IRQ markers,
+`dsi_enable_irq()` frame-done enable markers, and a manual `/d/mtkfb`
+`m6_dsi_hs_window:<tag>[:hold_ms]` sampler. This patch does not change DSI
+timing, MIPITX registers, panel commands, BIST behavior, DDP route, PQ, OVL,
+RDMA, HWC, fences, or wait-token behavior.
+
+Hypothesis: FACT: #67 proved boot-completed Android userspace, nonblack
+screencap, real OVL buffers, active RDMA0-to-DSI0 route, LP DCS stock-page
+reads, and latched DSI full-BIST while the physical display remains lit-black.
+FACT: `/proc/interrupts` still showed `dsi0 = 0` while `mutex`, `ovl0`, and
+`rdma0` counters advanced, but LP DCS reads still emitted internal DSI
+read/IRQ markers. HYPOTHESIS: the remaining observable frontier is whether the
+DSI host ever produces normal VM/frame/IRQ progress during HS video windows,
+or whether only LP command reads trigger internal IRQs while the HS-video/PHY
+path stays electrically or panel-side invisible.
+
+Evidence:
+- Prior runtime verdict capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-2358-m6-rdma-eof-dsi-window-diag-mtkfb-debugfs-711HEBSR277K5`.
+- Prior verified boot sha256:
+  `7c51e2ded765f003191390e3aec5d811ba0c1ebeabf46b7bbed6b3e465fb7a77`.
+- New build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-dsi-irq-hs-window-diag-20260609.log`.
+- New artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0000-m6-dsi-irq-hs-window-diag-bootonly`.
+- Built boot image sha256:
+  `82c75e72903b20dbee3447487050d8d034b9e60df07196bf32a661b5fedb558a`.
+- Built `Image.gz-dtb` sha256:
+  `b801985a1bdb578b2a13b5d465c79c031bc1ab02b980102199272ca32cb23e97`.
+- Built `System.map` sha256:
+  `f3393d3f1926a46bb3250d3a63634f75c4005f12cea728f77609fae95d63b5e5`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Built `initrd.img` sha256:
+  `7de975b4485324f4a76eb44fa4cc61472e829421e8d27e31f50d80b984cb4a4f`.
+- Build log sha256:
+  `1631e9aaae2fec32f370590dfdfd3d5f05c03329a42c990fd784165a62a58e06`.
+- Artifact verification: `sha256sum -c SHA256SUMS`, boot unpack, kernel
+  `cmp`, ramdisk `cmp`, and marker-string checks passed.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: decodes DSI
+  interrupt/start bits in every M6 snapshot, logs bounded internal IRQ state,
+  logs `dsi_enable_irq()` frame-done toggles, and implements
+  `dsi_m6_dump_hs_window()`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: exposes the
+  manual `/d/mtkfb` `m6_dsi_hs_window:<tag>[:hold_ms]` sampler.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the
+  sampler prototype for the debug command.
+- `BRINGUP_STATE.md`: records category, evidence, artifact identity, expected
+  markers, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the exact DSI host state and IRQ
+callback boundary that is still ambiguous after #67. `disp_debug.c` is the
+existing `/d/mtkfb` command processor used by the last successful capture, so
+it is the narrowest way to trigger a bounded HS-video observation window from
+ADB. `ddp_dsi.h` is required for the cross-file debugfs call.
+
+Expected next marker: the next fresh boot should contain `M6 DSI irq_decode`
+lines next to all `M6 DSI snapshot[...]` markers. Manual debugfs should print
+`M6 DSI hs_window[ui]` and `M6 DSI snapshot[hs-window-ui-...]` samples at
+0/17/34/51/68/85/102/119/136/250/500/1000/2000/5000 ms when requested. During
+`m6_dsi_bist_full:0xff0000`, the `bist_red` HS window should show whether
+`INTSTA` VM/frame/period bits and `STATE7/8/9` evolve while BIST is latched.
+Internal DSI IRQ markers should distinguish LP DCS-read IRQ activity from
+normal HS-video activity.
+
+Rollback condition: revert this diagnostic patch if it prevents boot, regresses
+`sys.boot_completed=1`, floods logs enough to hide early display state, changes
+normal DSI/BIST register values compared with #67, breaks `stock_pages` DCS
+reads, or makes the device lose ADB/reboot during the bounded sampler.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A shell 'uname -a; getprop sys.boot_completed; getprop init.svc.bootanim'
+$A shell 'printf "m6_dsi_hs_window:ui:5000\n" > /d/mtkfb'
+$A shell 'printf "m6_dsi_bist_full:0xff0000\n" > /d/mtkfb'
+$A shell 'printf "m6_dsi_hs_window:bist_red:5000\n" > /d/mtkfb'
+$A shell 'printf "m6_dsi_bist_full:0\n" > /d/mtkfb'
+$A shell 'dmesg | grep -E "M6 DSI (hs_window|irq_decode|irq\\[internal\\]|irq_enable|snapshot\\[hs-window|snapshot\\[bist-full)"'
+$A shell 'cat /proc/interrupts | grep -E "dsi|rdma|ovl|mutex"'
+```
+
 ## 2026-06-08 #67 runtime verdict: DSI BIST latches below Android content
 
 STATE UPDATE, 2026-06-08: `7ed8d3a9379` was flashed and verified on

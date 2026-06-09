@@ -129,6 +129,8 @@ char MTKFB_STR_HELP[] =
 	"\n"
 	"        m6_dsi_dcs_status[:stock_pages]\n"
 	"             Meizu M6 diagnostic DSI/ILI9881P DCS status dump\n"
+	"        m6_dsi_hs_window:<tag>[:hold_ms]\n"
+	"             Meizu M6 bounded DSI HS-video IRQ/VM/window sampler\n"
 	"        m6_dsi_bist_profile:<profile>:<rgb>[:hold_ms]\n"
 	"             Meizu M6 manual DSI BIST profile sweep; auto-disables\n"
 	"\n"
@@ -595,6 +597,20 @@ void mtkfb_process_dbg_opt(const char *opt)
 		primary_display_manual_unlock();
 		DISPMSG("m6 dsi bist profile: profile=%u pattern=0x%08x hold=%u\n",
 			profile, pattern, hold_ms);
+	} else if (0 == strncmp(opt, "m6_dsi_hs_window:", 17)) {
+		char tag[32] = {0};
+		unsigned int hold_ms = 1000;
+
+		ret = sscanf(opt, "m6_dsi_hs_window:%31[^:]:%u\n",
+			     tag, &hold_ms);
+		if (ret < 1) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		primary_display_manual_lock();
+		dsi_m6_dump_hs_window(tag, hold_ms);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi hs window: tag=%s hold=%u\n", tag, hold_ms);
 	} else if (0 == strncmp(opt, "bypass_blank:", 13)) {
 		char *p = (char *)opt + 13;
 		unsigned int blank;

@@ -236,6 +236,31 @@ unsigned int data_lane2 = 0;/*MIPITX_DSI_DATA_LANE2*/
 unsigned int data_lane1 = 0;/*MIPITX_DSI_DATA_LANE1*/
 unsigned int data_lane0 = 0;/*MIPITX_DSI_DATA_LANE0*/
 
+static void dsi_m6_dump_irq_decode(const char *tag, uint32_t start, uint32_t status,
+				   uint32_t inten, uint32_t intsta)
+{
+	DISPERR("M6 DSI irq_decode[%s]: START dsi/sleep/skew/vmcmd=%u/%u/%u/%u STA underrun/esc_entry/esc_sync/ctrl/content=%u/%u/%u/%u/%u INTEN rd/cmd/te/vm/frame/vmcmd/sleep/te_to/vbp/vact/vfp/skew=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u INTSTA rd/cmd/te/vm/frame/vmcmd/sleep/te_to/vbp/vact/vfp/skew/busy=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u raw=0x%x/0x%x/0x%x/0x%x\n",
+		tag,
+		(start & BIT(0)) ? 1 : 0, (start & BIT(2)) ? 1 : 0,
+		(start & BIT(4)) ? 1 : 0, (start & BIT(16)) ? 1 : 0,
+		(status & BIT(1)) ? 1 : 0, (status & BIT(4)) ? 1 : 0,
+		(status & BIT(5)) ? 1 : 0, (status & BIT(6)) ? 1 : 0,
+		(status & BIT(7)) ? 1 : 0,
+		(inten & BIT(0)) ? 1 : 0, (inten & BIT(1)) ? 1 : 0,
+		(inten & BIT(2)) ? 1 : 0, (inten & BIT(3)) ? 1 : 0,
+		(inten & BIT(4)) ? 1 : 0, (inten & BIT(5)) ? 1 : 0,
+		(inten & BIT(6)) ? 1 : 0, (inten & BIT(7)) ? 1 : 0,
+		(inten & BIT(8)) ? 1 : 0, (inten & BIT(9)) ? 1 : 0,
+		(inten & BIT(10)) ? 1 : 0, (inten & BIT(11)) ? 1 : 0,
+		(intsta & BIT(0)) ? 1 : 0, (intsta & BIT(1)) ? 1 : 0,
+		(intsta & BIT(2)) ? 1 : 0, (intsta & BIT(3)) ? 1 : 0,
+		(intsta & BIT(4)) ? 1 : 0, (intsta & BIT(5)) ? 1 : 0,
+		(intsta & BIT(6)) ? 1 : 0, (intsta & BIT(7)) ? 1 : 0,
+		(intsta & BIT(8)) ? 1 : 0, (intsta & BIT(9)) ? 1 : 0,
+		(intsta & BIT(10)) ? 1 : 0, (intsta & BIT(11)) ? 1 : 0,
+		(intsta & BIT(31)) ? 1 : 0, start, status, inten, intsta);
+}
+
 static void dsi_m6_clkstate_marker(const char *tag, DISP_MODULE_ENUM module)
 {
 	static unsigned int count;
@@ -438,8 +463,30 @@ static void _DSI_INTERNAL_IRQ_Handler(DISP_MODULE_ENUM module, unsigned int para
 	int i = 0;
 	DSI_INT_STATUS_REG status = {0};
 	DSI_TXRX_CTRL_REG txrx_ctrl = {0};
+	static unsigned int m6_irq_dump_count;
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
+		if (module == DISP_MODULE_DSI0 && DSI_REG[i] && m6_irq_dump_count < 96) {
+			uint32_t start = INREG32(&DSI_REG[i]->DSI_START);
+			uint32_t sta = INREG32(&DSI_REG[i]->DSI_STA);
+			uint32_t inten = INREG32(&DSI_REG[i]->DSI_INTEN);
+			uint32_t live_intsta = INREG32(&DSI_REG[i]->DSI_INTSTA);
+			uint32_t mode = INREG32(&DSI_REG[i]->DSI_MODE_CTRL);
+			uint32_t state7 = INREG32(DDP_REG_BASE_DSI0 + 0x164);
+			uint32_t state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+			uint32_t state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+
+			m6_irq_dump_count++;
+			DISPERR("M6 DSI irq[internal] #%u module=%d param=0x%x live_intsta=0x%x inten=0x%x start=0x%x mode=0x%x state7=0x%x/%s state8=0x%x state9=0x%x waits rd/vmcmd/sleep=%u/%u/%u\n",
+				m6_irq_dump_count, module, param, live_intsta, inten,
+				start, mode, state7,
+				_dsi_vdo_mode_parse_state(state7 & 0xff),
+				state8, state9, waitRDDone, wait_vm_cmd_done,
+				wait_sleep_out_done);
+			dsi_m6_dump_irq_decode("internal-param", start, sta, inten, param);
+			dsi_m6_dump_irq_decode("internal-live", start, sta, inten,
+					       live_intsta);
+		}
 		status = *(PDSI_INT_STATUS_REG) & param;
 		if (status.RD_RDY) {
 			/* /write clear RD_RDY interrupt */
@@ -1532,6 +1579,10 @@ static void dsi_m6_dump_state_decode(const char *tag)
 
 static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void *cmdq)
 {
+	uint32_t start;
+	uint32_t status;
+	uint32_t inten;
+	uint32_t intsta;
 	uint32_t state6;
 	uint32_t state7;
 	uint32_t state8;
@@ -1540,19 +1591,21 @@ static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void 
 	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL)
 		return;
 
+	start = INREG32(DDP_REG_BASE_DSI0 + 0x000);
+	status = INREG32(DDP_REG_BASE_DSI0 + 0x004);
+	inten = INREG32(DDP_REG_BASE_DSI0 + 0x008);
+	intsta = INREG32(DDP_REG_BASE_DSI0 + 0x00c);
 	state6 = INREG32(DDP_REG_BASE_DSI0 + 0x160);
 	state7 = INREG32(DDP_REG_BASE_DSI0 + 0x164);
 	state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
 	state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
 
 	DISPERR("M6 DSI snapshot[%s]: cmdq=%p START=0x%x STA=0x%x INTEN=0x%x INTSTA=0x%x MODE=0x%x TXRX=0x%x PS=0x%x\n",
-		tag, cmdq, INREG32(DDP_REG_BASE_DSI0 + 0x000),
-		INREG32(DDP_REG_BASE_DSI0 + 0x004),
-		INREG32(DDP_REG_BASE_DSI0 + 0x008),
-		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		tag, cmdq, start, status, inten, intsta,
 		INREG32(DDP_REG_BASE_DSI0 + 0x014),
 		INREG32(DDP_REG_BASE_DSI0 + 0x018),
 		INREG32(DDP_REG_BASE_DSI0 + 0x01c));
+	dsi_m6_dump_irq_decode(tag, start, status, inten, intsta);
 	DISPERR("M6 DSI snapshot[%s]: VSA/VBP/VFP/VACT=0x%x/0x%x/0x%x/0x%x HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
 		tag, INREG32(DDP_REG_BASE_DSI0 + 0x020),
 		INREG32(DDP_REG_BASE_DSI0 + 0x024),
@@ -1806,6 +1859,45 @@ void dsi_m6_dump_live(const char *tag)
 	DISPERR("M6 DISPLAY truth[%s][dsi-host]: begin\n", safe_tag);
 	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
 	DISPERR("M6 DISPLAY truth[%s][dsi-host]: end\n", safe_tag);
+}
+
+void dsi_m6_dump_hs_window(const char *tag, unsigned int hold_ms)
+{
+	static const unsigned int marks[] = {
+		0, 17, 34, 51, 68, 85, 102, 119, 136,
+		250, 500, 1000, 2000, 5000, 10000
+	};
+	char marker[64];
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int bounded = hold_ms;
+	unsigned int elapsed = 0;
+	unsigned int idx;
+
+	if (bounded == 0)
+		bounded = 1000;
+	if (bounded > 10000)
+		bounded = 10000;
+
+	DISPERR("M6 DSI hs_window[%s]: begin hold_ms=%u jiffies=%lu\n",
+		safe_tag, bounded, jiffies);
+	for (idx = 0; idx < ARRAY_SIZE(marks); idx++) {
+		if (marks[idx] > bounded)
+			break;
+		if (marks[idx] > elapsed)
+			msleep(marks[idx] - elapsed);
+		elapsed = marks[idx];
+		snprintf(marker, sizeof(marker), "hs-window-%s-%ums",
+			 safe_tag, marks[idx]);
+		dsi_m6_dump_snapshot(marker, DISP_MODULE_DSI0, NULL);
+	}
+	if (elapsed < bounded) {
+		msleep(bounded - elapsed);
+		snprintf(marker, sizeof(marker), "hs-window-%s-%ums",
+			 safe_tag, bounded);
+		dsi_m6_dump_snapshot(marker, DISP_MODULE_DSI0, NULL);
+	}
+	DISPERR("M6 DSI hs_window[%s]: end hold_ms=%u jiffies=%lu\n",
+		safe_tag, bounded, jiffies);
 }
 
 static uint32_t dsi_m6_dcs_read_noreset(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)
@@ -4300,8 +4392,18 @@ int ddp_dsi_stop(DISP_MODULE_ENUM module, void *cmdq_handle)
 /*TUI will use the api*/
 int dsi_enable_irq(DISP_MODULE_ENUM module, void *handle, unsigned int enable)
 {
-	if (module == DISP_MODULE_DSI0)
+	if (module == DISP_MODULE_DSI0) {
+		uint32_t before = INREG32(&DSI_REG[0]->DSI_INTEN);
+
 		DSI_OUTREGBIT(handle, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, FRAME_DONE_INT_EN, enable);
+		DISPERR("M6 DSI irq_enable: frame_done=%u handle=%p before=0x%x after=0x%x intsta=0x%x\n",
+			enable, handle, before, INREG32(&DSI_REG[0]->DSI_INTEN),
+			INREG32(&DSI_REG[0]->DSI_INTSTA));
+		dsi_m6_dump_irq_decode("enable_irq", INREG32(&DSI_REG[0]->DSI_START),
+				       INREG32(&DSI_REG[0]->DSI_STA),
+				       INREG32(&DSI_REG[0]->DSI_INTEN),
+				       INREG32(&DSI_REG[0]->DSI_INTSTA));
+	}
 
 	return 0;
 }
