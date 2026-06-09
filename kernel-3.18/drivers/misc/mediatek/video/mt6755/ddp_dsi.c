@@ -4789,9 +4789,14 @@ int ddp_dsi_switch_mode(DISP_MODULE_ENUM module, void *cmdq_handle, void *params
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x60, 2);
 		DSI_Start(module, cmdq_handle);	/* ???????????????????????????????? */
 		DSI_MASKREG32(NULL, 0xF4020020, 0x1, 0x1);	/* release mutex for video mode */
-		cmdqRecFlush(cmdq_handle);
-		cmdqRecReset(cmdq_handle);
-		cmdqRecWaitNoClear(cmdq_handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
+		dsi_m6_dump_live("switch-dsi-after-c2v-start");
+		if (cmdq_handle) {
+			cmdqRecFlush(cmdq_handle);
+			cmdqRecReset(cmdq_handle);
+			cmdqRecWaitNoClear(cmdq_handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
+		} else {
+			DISPERR("M6 DSI switch_mode C2V: cpu-direct path skip cmdq flush/reset/wait\n");
+		}
 	}
 	dsi_currect_mode = mode;
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++)

@@ -6235,8 +6235,8 @@ int primary_display_m6_dsi_c2v_switch(unsigned int value, unsigned int hold_ms)
 	dsi_m6_dump_live("c2v-switch-after-lcm");
 
 	dpmgr_path_set_video_mode(pgc->dpmgr_handle, 1);
-	DISPERR("M6 DSI c2v_switch: switch_dsi_mode begin\n");
-	ioctl_ret = dpmgr_path_ioctl(pgc->dpmgr_handle, pgc->cmdq_handle_config,
+	DISPERR("M6 DSI c2v_switch: switch_dsi_mode begin cpu-direct\n");
+	ioctl_ret = dpmgr_path_ioctl(pgc->dpmgr_handle, NULL,
 				     DDP_SWITCH_DSI_MODE, &lcm_cmd);
 	DISPERR("M6 DSI c2v_switch: switch_dsi_mode ret=%d\n", ioctl_ret);
 	dsi_m6_dump_live("c2v-switch-after-dsi");

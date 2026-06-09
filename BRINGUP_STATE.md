@@ -1,5 +1,99 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #81 DSI C2V CMDQ-address isolation
+
+PATCH HISTORY, **ISOLATION**, 2026-06-09: route the M6-only
+`m6_dsi_c2v_switch` debugfs DSI switch step through CPU-direct MMIO instead of
+the CMDQ handle, and skip CMDQ flush/reset/wait when that diagnostic path is
+explicitly running with `cmdq_handle == NULL`. This does not change boot-time
+display sequencing, normal CMDQ-triggered scanout, LCM init, PQ/HWC/OVL/RDMA
+routing, clocks, PLL values, lane count, or panel command tables. It only lets
+the low-level C2V probe pass the exact address-conversion oops seen in #81 so
+the next capture can test the real DSI/MIPITX/panel boundary.
+
+Hypothesis: FACT: #81 parser-fix boot image
+`d3a8a2ef4e5b4980e212d6a2ec6c9a0a43576a97f97da37e47655d93dbe44117` was
+verified on `/dev/block/platform/mtk-msdc.0/by-name/boot` in capture
+`/srv/forge/android/meizu_m6/captures/20260609-1020-m6-dsi-c2v-parser-fix-root-postflash`.
+FACT: `last_kmsg` from the post-C2V reboot shows
+`M6 DSI c2v_switch: begin value=0x3 hold=1500 cmd_if=1 mode=3`,
+`switch-lcm-enter`, `switch-lcm-exit`, and `switch-dsi-enter`, then a kernel
+BUG before `switch-dsi-exit`. FACT: address decode against the matching #81
+`vmlinux` maps the PC to `disp_addr_convert()` at `ddp_reg.h:1138` called from
+`ddp_dsi_switch_mode()` at `ddp_dsi.c:4742`, and source inspection shows the
+first C2V CMDQ mutex write uses hardcoded `0xF4020030`. INFERENCE: the #81
+result is not a negative C2V hardware result; the diagnostic path crashed while
+trying to convert the mutex MMIO address for CMDQ. HYPOTHESIS: running this
+debugfs-only C2V switch through CPU-direct MMIO will avoid that proven oops and
+produce the missing `switch-dsi-after-c2v-start` / `switch-dsi-exit` markers,
+after which `line`, `word`, VM packet state, MIPITX state, and physical LCD
+state can be interpreted.
+
+Evidence:
+- Runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1020-m6-dsi-c2v-parser-fix-root-postflash`.
+- Post-reboot evidence:
+  `/srv/forge/android/meizu_m6/captures/20260609-1020-m6-dsi-c2v-parser-fix-root-postflash/post-c2v-reboot-evidence`.
+- #81 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1010-m6-dsi-c2v-parser-fix-bootonly`.
+- #81 boot image sha256:
+  `d3a8a2ef4e5b4980e212d6a2ec6c9a0a43576a97f97da37e47655d93dbe44117`.
+- #81 `System.map` sha256:
+  `400d1378884a456ec429f3e3412f03116a9afed6756875d1be3e3001a871c68b`.
+- #81 `identity-after-reboot.txt`: root ADB, `#81 SMP PREEMPT Tue Jun 9
+  07:53:27 CDT 2026`, boot partition hash matches the #81 artifact, battery
+  6% charging.
+- `last-kmsg-c2v-tail.txt`: C2V parser dispatch worked, `switch_dsi_mode`
+  began, then the kernel rebooted before post-C2V dmesg/screencap could be
+  collected.
+- `addr2line -e /srv/forge/work/m6-source-kernel-manual-20260520/out/vmlinux -f -C ffffffc0005606d4 ffffffc000560558`:
+  `disp_addr_convert` / `ddp_reg.h:1138` and `ddp_dsi_switch_mode` /
+  `ddp_dsi.c:4742`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: makes
+  the M6 debugfs C2V `DDP_SWITCH_DSI_MODE` call CPU-direct by passing a NULL
+  CMDQ handle.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds the
+  `switch-dsi-after-c2v-start` marker and skips CMDQ flush/reset/wait only when
+  the C2V switch runs with `cmdq_handle == NULL`.
+- `BRINGUP_STATE.md`: records why #81 rebooted and why the next patch bypasses
+  CMDQ only inside the diagnostic switch path.
+
+Why each file changed: `primary_display.c` owns the M6 debugfs experiment and
+can select the safer handle for this one diagnostic run. `ddp_dsi.c` owns the
+low-level C2V writes and must not call CMDQ APIs after the caller intentionally
+requests CPU-direct MMIO. The state file prevents future agents from treating
+the #81 reboot as a panel/DSI electrical verdict.
+
+Expected next marker: after flashing this patch, rerun
+`m6_dsi_c2v_switch:0x03:1500`. Dmesg or last_kmsg should show
+`switch_dsi_mode begin cpu-direct`, `switch-dsi-enter`,
+`switch-dsi-after-c2v-start`, `M6 DSI switch_mode C2V: cpu-direct path skip
+cmdq flush/reset/wait`, `switch-dsi-exit`, `c2v-switch-after-dsi`, and
+`c2v-switch-hold-end`. If the device still reboots before
+`switch-dsi-after-c2v-start`, the first CPU-direct mutex or DSI write is the
+next lower fault boundary. If all markers appear but DSI `line=0` and the
+physical LCD stays lit black, close the C2V/CMDQ-oops branch and move lower
+into MIPITX/panel electrical state or stock LK hidden PHY side effects.
+
+Rollback condition: revert this checkpoint if the CPU-direct debugfs C2V path
+destabilizes normal boot/scanout, crashes before producing a new lower marker,
+or changes non-debugfs display behavior. Do not revert if it simply proves that
+the panel remains black after the switch path finally completes.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'dmesg -C'
+$A shell 'svc power stayon true; settings put system screen_off_timeout 2147483647; input keyevent 224; settings put system screen_brightness 255; echo 255 > /sys/class/leds/lcd-backlight/brightness'
+$A shell 'echo m6_dsi_c2v_switch:0x03:1500 > /d/mtkfb; sleep 1; echo m6_display_truth_window:after-c2v-switch > /d/mtkfb'
+$A shell 'dmesg | grep -E "M6 DSI c2v_switch|switch_lcm|switch_dsi|switch-lcm|switch-dsi|c2v-switch|M6 DSI state_decode|word=|line=|MIPITX|backlight|BUG|Unable to handle" | tail -500'
+```
+
 ## 2026-06-09 #80 DSI C2V debugfs parser fix
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: fix the `m6_dsi_c2v_switch`
