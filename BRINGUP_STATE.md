@@ -1,5 +1,122 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 DSI takeover / MIPITX block diagnostic
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add read-only takeover markers
+around the LK-inited panel -> Linux `dpmgr_path_config()` / `dpmgr_path_start()`
+/ config-CMDQ-submit / `disp_lcm_init()` boundary, plus a bounded raw MIPITX
+block dump (`0x000..0x0dc`) at DSI takeover points. This patch does not change
+DSI timing, MIPITX/DSI register writes, LCM reset, panel init command tables,
+backlight, DDP route, PQ, OVL, RDMA, HWC, fences, wait tokens, or boot image
+ramdisk/cmdline.
+
+Hypothesis: FACT: boot image
+`019281e6fd9688c3868ff75397185a91871157f5da2580f26ee7ab3148d5c782` is currently
+flashed and read back from `/dev/block/platform/mtk-msdc.0/by-name/boot`. FACT:
+the #69 root captures prove Android userspace is boot-completed, screencap is
+nonblack `720x1280`, DSI/MIPITX are powered, LP DCS stock-page reads work, and
+manual full-BIST latches `BIST_CON=0x200446 self_pat=1 bist_en=1 lane=4`, while
+the human still reports a lit physical black panel and bootlogo disappearance
+around `mtkfb_probe` / Linux display handoff. FACT: a forced runtime
+`m6_lcm_reinit:1` ran the full `lcm_init()` sequence and restarted the path but
+did not recover physical output. INFERENCE: normal HWC/FB/PQ/OVL content is not
+the earliest frontier, and a simple missing LCM reinit is rejected. HYPOTHESIS:
+the remaining frontier is the first Linux takeover of an LK-inited ILI9881P
+panel: DSI host/video/CMDQ/MIPITX state may look active while a hidden host-side
+or PHY-side detail makes the panel stop accepting HS video.
+
+Evidence:
+- Current root capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0107-m6-hs-window-parser-diag-root`.
+- Runtime forced-reinit capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0115-m6-lcm-reinit-force-root`.
+- Capture identity: `identity-status.txt` reports
+  `Linux localhost 3.18.140 #69 SMP PREEMPT Tue Jun 9 01:01:54 CDT 2026
+  aarch64`, `sys.boot_completed=1`, root ADB, battery `6`, `Charging`.
+- Artifact/readback identity: `device-boot-partition-sha256.txt` reports
+  `019281e6fd9688c3868ff75397185a91871157f5da2580f26ee7ab3148d5c782`.
+- `screencap-before.png` and `screencap-after.png` in the reinit capture are
+  valid `720x1280` PNGs while the physical panel stayed lit black by human
+  report.
+- Reinit dmesg contains `M6 LCM debug reinit: start force=1`, full
+  `M6 LCM init start/end`, `lcm init ret=0`, `start path end busy=0`, and
+  BIST latch markers after reinit.
+- `/proc/interrupts` in the reinit capture shows `mutex`, `ovl0`, and `rdma0`
+  counters advancing while `dsi0` remains `0`; prior sidecar review classifies
+  DSI IRQ zero as observation-only for this video path.
+- Stock reverse inputs:
+  `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/`.
+- New build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-dsi-takeover-mipitx-block-diag-20260609.log`.
+- New artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0141-m6-dsi-takeover-mipitx-block-diag-bootonly`.
+- Built boot image sha256:
+  `4fb4ad2a4648e5220630ddd56f8ca2741483b5b2f2d1c9aee10bea2ca97ce41f`.
+- Built `Image.gz-dtb` sha256:
+  `264c1ee492f63dfcc4d4ab5159db483d9b667d1f252563a2b7069d14cf24fef7`.
+- Built `System.map` sha256:
+  `4b4f609e166c43813c7de4d1bf838e7ecf632cd2d303dd652276c63bbf0ef310`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Artifact verification: `sha256sum -c SHA256SUMS`, `abootimg -x`, kernel
+  `cmp`, ramdisk `cmp`, and gzip marker-string checks passed.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  `dsi_m6_dump_takeover()`, raw MIPITX `0x000..0x0dc` block dumping, and
+  takeover markers around VM-CMD enqueue/config-done/start-after-HS points.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the
+  takeover dump helper for primary-display markers.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: logs the
+  primary-display takeover boundary around path config/start, config-CMDQ
+  submit, and `disp_lcm_init()`, preserving the existing DCS status reads.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_lcm.c`: logs whether
+  `disp_lcm_init(force=0)` skips or calls `init_power()` / `init()` when LK
+  reports the panel already initialized.
+- `BRINGUP_STATE.md`: records the reinit verdict, patch category, artifact
+  identity, expected markers, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the DSI host/MIPITX state that remains
+ambiguous after #69. `primary_display.c` owns the earliest Linux takeover
+boundary matching the physical bootlogo drop. `disp_lcm.c` is the narrow place
+to prove from logs whether normal boot skipped or called panel reset/init. The
+header is required for the cross-file read-only dump call. The state file keeps
+the negative reinit result and prevents retesting HWC/PQ/normal framebuffer
+layers as the first frontier without contradictory fresh evidence.
+
+Expected next marker: after flashing
+`boot-m6-dsi-takeover-mipitx-block-diag-20260609.img`, bootdiag/dmesg should
+show `M6 primary takeover[primary-before-path-config]`,
+`primary-after-path-config`, `primary-before-path-start`,
+`primary-after-path-start`, `primary-before-cmdq-flush`,
+`primary-after-cmdq-flush-submit`, `primary-before-disp-lcm-init`,
+`primary-after-disp-lcm-init`, plus `M6 DSI mipitx_block[...]` raw dumps and
+`M6 LCM disp_lcm_init: skip init ...` or `call init ...`. If the physical
+bootlogo disappears between two adjacent takeover markers, the next patch
+should isolate that exact DSI/DDP sub-boundary. If all takeover markers precede
+or follow the visual drop, use the raw MIPITX block and stock-LK reverse to pick
+the next host/PHY parity target.
+
+Rollback condition: revert this diagnostic patch if it prevents boot, regresses
+`sys.boot_completed=1`, causes no-ADB/offline beyond the already observed cable
+instability, floods bootdiag enough to hide takeover timing, changes DCS/BIST
+availability compared with #69, or if a fresh capture proves the raw MIPITX
+block reads fault/hang on this SoC.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-0141-m6-dsi-takeover-mipitx-block-diag-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+cmp "$ART/Image.gz-dtb" "$ART/verify-unpack/zImage"
+cmp "$ART/initrd.img" "$ART/verify-unpack/initrd.img"
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A shell 'sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot; uname -a; getprop sys.boot_completed'
+$A shell 'dmesg | grep -E "M6 primary takeover|M6 DSI takeover|M6 DSI mipitx_block|M6 LCM disp_lcm_init|config-before-vmcmd|config-after-vmcmd|start-after-hs" | tail -260'
+$A shell 'BOOTDIAG=$(ls -d /cache/bootdiag/run-* 2>/dev/null | tail -1); grep -E "M6 primary takeover|M6 DSI takeover|M6 DSI mipitx_block|M6 LCM disp_lcm_init|mtkfb_probe|mtkfb_init" "$BOOTDIAG/cmd/dmesg.txt"'
+```
+
 ## 2026-06-09 HS-window parser diagnostic follow-up
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: replace the `/d/mtkfb`

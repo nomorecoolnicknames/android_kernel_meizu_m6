@@ -1524,6 +1524,59 @@ static void dsi_m6_dump_mipitx_decode(const char *tag)
 		INREG32(MIPITX_BASE + 0x098));
 }
 
+static void dsi_m6_dump_mipitx_block(const char *tag)
+{
+	static unsigned int count;
+	const char *safe_tag = tag ? tag : "unknown";
+
+	if (count >= 80)
+		return;
+
+	count++;
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 000=0x%x 004=0x%x 008=0x%x 00c=0x%x 010=0x%x 014=0x%x 018=0x%x 01c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x000),
+		INREG32(MIPITX_BASE + 0x004), INREG32(MIPITX_BASE + 0x008),
+		INREG32(MIPITX_BASE + 0x00c), INREG32(MIPITX_BASE + 0x010),
+		INREG32(MIPITX_BASE + 0x014), INREG32(MIPITX_BASE + 0x018),
+		INREG32(MIPITX_BASE + 0x01c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 020=0x%x 024=0x%x 028=0x%x 02c=0x%x 030=0x%x 034=0x%x 038=0x%x 03c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x020),
+		INREG32(MIPITX_BASE + 0x024), INREG32(MIPITX_BASE + 0x028),
+		INREG32(MIPITX_BASE + 0x02c), INREG32(MIPITX_BASE + 0x030),
+		INREG32(MIPITX_BASE + 0x034), INREG32(MIPITX_BASE + 0x038),
+		INREG32(MIPITX_BASE + 0x03c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 040=0x%x 044=0x%x 048=0x%x 04c=0x%x 050=0x%x 054=0x%x 058=0x%x 05c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x040),
+		INREG32(MIPITX_BASE + 0x044), INREG32(MIPITX_BASE + 0x048),
+		INREG32(MIPITX_BASE + 0x04c), INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x054), INREG32(MIPITX_BASE + 0x058),
+		INREG32(MIPITX_BASE + 0x05c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 060=0x%x 064=0x%x 068=0x%x 06c=0x%x 070=0x%x 074=0x%x 078=0x%x 07c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x060),
+		INREG32(MIPITX_BASE + 0x064), INREG32(MIPITX_BASE + 0x068),
+		INREG32(MIPITX_BASE + 0x06c), INREG32(MIPITX_BASE + 0x070),
+		INREG32(MIPITX_BASE + 0x074), INREG32(MIPITX_BASE + 0x078),
+		INREG32(MIPITX_BASE + 0x07c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 080=0x%x 084=0x%x 088=0x%x 08c=0x%x 090=0x%x 094=0x%x 098=0x%x 09c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x080),
+		INREG32(MIPITX_BASE + 0x084), INREG32(MIPITX_BASE + 0x088),
+		INREG32(MIPITX_BASE + 0x08c), INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098),
+		INREG32(MIPITX_BASE + 0x09c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 0a0=0x%x 0a4=0x%x 0a8=0x%x 0ac=0x%x 0b0=0x%x 0b4=0x%x 0b8=0x%x 0bc=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x0a0),
+		INREG32(MIPITX_BASE + 0x0a4), INREG32(MIPITX_BASE + 0x0a8),
+		INREG32(MIPITX_BASE + 0x0ac), INREG32(MIPITX_BASE + 0x0b0),
+		INREG32(MIPITX_BASE + 0x0b4), INREG32(MIPITX_BASE + 0x0b8),
+		INREG32(MIPITX_BASE + 0x0bc));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 0c0=0x%x 0c4=0x%x 0c8=0x%x 0cc=0x%x 0d0=0x%x 0d4=0x%x 0d8=0x%x 0dc=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x0c0),
+		INREG32(MIPITX_BASE + 0x0c4), INREG32(MIPITX_BASE + 0x0c8),
+		INREG32(MIPITX_BASE + 0x0cc), INREG32(MIPITX_BASE + 0x0d0),
+		INREG32(MIPITX_BASE + 0x0d4), INREG32(MIPITX_BASE + 0x0d8),
+		INREG32(MIPITX_BASE + 0x0dc));
+}
+
 static void dsi_m6_phy_lk_delay(const char *tag, unsigned int delay_ms)
 {
 	DISPERR("M6 DSI physeq[%s]: lk-delay begin ms=%u top=0x%x bg=0x%x pll0=0x%x pll_chg=0x%x pwr=0x%x lanes=0x%x/0x%x/0x%x/0x%x/0x%x\n",
@@ -1859,6 +1912,18 @@ void dsi_m6_dump_live(const char *tag)
 	DISPERR("M6 DISPLAY truth[%s][dsi-host]: begin\n", safe_tag);
 	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
 	DISPERR("M6 DISPLAY truth[%s][dsi-host]: end\n", safe_tag);
+}
+
+void dsi_m6_dump_takeover(const char *tag)
+{
+	const char *safe_tag = tag ? tag : "takeover";
+
+	DISPERR("M6 DSI takeover[%s]: begin\n", safe_tag);
+	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	dsi_m6_dump_mipitx_block(safe_tag);
+#endif
+	DISPERR("M6 DSI takeover[%s]: end\n", safe_tag);
 }
 
 void dsi_m6_dump_hs_window(const char *tag, unsigned int hold_ms)
@@ -4304,8 +4369,10 @@ force_config:
 	if (dsi_config->mode != CMD_MODE
 	    || ((dsi_config->switch_mode_enable == 1) && (dsi_config->switch_mode != CMD_MODE))) {
 		DSI_Config_VDO_Timing(module, cmdq, dsi_config);
+		dsi_m6_dump_takeover("config-before-vmcmd-enqueue");
 		DSI_Set_VM_CMD(module, cmdq);
-		}
+		dsi_m6_dump_takeover("config-after-vmcmd-enqueue");
+	}
 		/* Enable clk low power per Line ; */
 		DISPERR("M6 DSI lp_per_line[config]: enable=%u mode=%u HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
 			dsi_config->clk_lp_per_line_enable, dsi_config->mode,
@@ -4321,6 +4388,9 @@ force_config:
 done:
 	dsi_m6_dump_hs_video_limited("config-done", module, cmdq,
 				     &dump_count, 4);
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	dsi_m6_dump_mipitx_block("config-done");
+#endif
 
 	return 0;
 }
@@ -4347,6 +4417,9 @@ int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq)
 		DSI_SetMode(module, cmdq, _dsi_context[i].dsi_params.mode);
 		DSI_clk_HS_mode(module, cmdq, true);
 		dsi_m6_dump_snapshot_limited("start-after-hs", module, cmdq, &dump_count, 4);
+#ifndef CONFIG_FPGA_EARLY_PORTING
+		dsi_m6_dump_mipitx_block("start-after-hs");
+#endif
 	}
 
 	return 0;

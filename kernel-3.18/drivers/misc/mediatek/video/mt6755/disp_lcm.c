@@ -392,23 +392,35 @@ FAIL:
 int disp_lcm_init(disp_lcm_handle *plcm, int force)
 {
 	LCM_DRIVER *lcm_drv = NULL;
+	int inited = 0;
 
 
 	if (_is_lcm_inited(plcm)) {
 		lcm_drv = plcm->drv;
+		inited = disp_lcm_is_inited(plcm);
+		DISPERR("M6 LCM disp_lcm_init: enter force=%d inited=%d plcm=%p drv=%s\n",
+			force, inited, plcm, lcm_drv->name ? lcm_drv->name : "unknown");
 
 		if (lcm_drv->init_power) {
-			if (!disp_lcm_is_inited(plcm) || force) {
+			if (!inited || force) {
+				DISPERR("M6 LCM disp_lcm_init: call init_power force=%d inited=%d\n",
+					force, inited);
 				pr_debug("lcm init power()\n");
 				lcm_drv->init_power();
-			}
+			} else
+				DISPERR("M6 LCM disp_lcm_init: skip init_power force=%d inited=%d\n",
+					force, inited);
 		}
 
 		if (lcm_drv->init) {
-			if (!disp_lcm_is_inited(plcm) || force) {
+			if (!inited || force) {
+				DISPERR("M6 LCM disp_lcm_init: call init force=%d inited=%d\n",
+					force, inited);
 				pr_debug("lcm init()\n");
 				lcm_drv->init();
-			}
+			} else
+				DISPERR("M6 LCM disp_lcm_init: skip init force=%d inited=%d\n",
+					force, inited);
 		} else {
 			DISPERR("FATAL ERROR, lcm_drv->init is null\n");
 			return -1;

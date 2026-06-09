@@ -282,6 +282,28 @@ static void primary_m6_power_marker(const char *tag)
 		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1));
 }
 
+static void primary_m6_takeover_marker(const char *tag, int is_lcm_inited,
+				       int use_cmdq)
+{
+	static unsigned int count;
+	int plcm_inited = -1;
+
+	if (count >= 48)
+		return;
+
+	count++;
+	if (pgc->plcm)
+		plcm_inited = disp_lcm_is_inited(pgc->plcm);
+
+	DISPERR("M6 primary takeover[%s]#%u lcm_arg=%d plcm_inited=%d use_cmdq=%d video=%d state=%s(0x%x) session=%d mode=%d handle=%p cmdq=%p\n",
+		tag, count, is_lcm_inited, plcm_inited, use_cmdq,
+		primary_display_is_video_mode(), primary_m6_state_name(pgc->state),
+		pgc->state, pgc->session_mode, pgc->mode, pgc->dpmgr_handle,
+		pgc->cmdq_handle_config);
+	primary_m6_power_marker(tag);
+	dsi_m6_dump_takeover(tag);
+}
+
 static void _primary_path_lock(const char *caller)
 {
 	dprec_logger_start(DPREC_LOGGER_PRIMARY_MUTEX, 0, 0);
@@ -3811,8 +3833,11 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	data_config->fps = lcm_fps;
 	data_config->dst_dirty = 1;
 
-	if (lcm_param->type == LCM_TYPE_DSI)
+	if (lcm_param->type == LCM_TYPE_DSI) {
+		primary_m6_takeover_marker("primary-before-path-config",
+			is_lcm_inited, use_cmdq);
 		dsi_m6_dump_dcs_status("primary-before-path-config");
+	}
 
 	ret = dpmgr_path_config(pgc->dpmgr_handle, data_config, pgc->cmdq_handle_config);
 
@@ -3821,17 +3846,35 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	gset_arg.is_decouple_mode = 0;
 	dpmgr_path_ioctl(pgc->dpmgr_handle, pgc->cmdq_handle_config, DDP_OVL_GOLDEN_SETTING, &gset_arg);
 
-	if (lcm_param->type == LCM_TYPE_DSI)
+	if (lcm_param->type == LCM_TYPE_DSI) {
+		primary_m6_takeover_marker("primary-after-path-config",
+			is_lcm_inited, use_cmdq);
 		dsi_m6_dump_dcs_status("primary-after-path-config");
+	}
 
+	if (lcm_param->type == LCM_TYPE_DSI)
+		primary_m6_takeover_marker("primary-before-path-start",
+			is_lcm_inited, use_cmdq);
 	dpmgr_path_start(pgc->dpmgr_handle, use_cmdq);
+	if (lcm_param->type == LCM_TYPE_DSI)
+		primary_m6_takeover_marker("primary-after-path-start",
+			is_lcm_inited, use_cmdq);
 
 	if (use_cmdq) {
+		if (lcm_param->type == LCM_TYPE_DSI)
+			primary_m6_takeover_marker("primary-before-cmdq-flush",
+				is_lcm_inited, use_cmdq);
 		_cmdq_flush_config_handle(0, NULL, 0);
+		if (lcm_param->type == LCM_TYPE_DSI)
+			primary_m6_takeover_marker("primary-after-cmdq-flush-submit",
+				is_lcm_inited, use_cmdq);
 		_cmdq_reset_config_handle();
 		_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
 	}
 
+	if (lcm_param->type == LCM_TYPE_DSI)
+		primary_m6_takeover_marker("primary-before-disp-lcm-init",
+			is_lcm_inited, use_cmdq);
 	if (is_lcm_inited) {
 		ret = disp_lcm_init(pgc->plcm, 0);	/* no need lcm power on,because lk power on lcm */
 	} else {
@@ -3840,6 +3883,9 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 		if (primary_display_is_video_mode())
 			dpmgr_path_trigger(pgc->dpmgr_handle, NULL, 0);
 	}
+	if (lcm_param->type == LCM_TYPE_DSI)
+		primary_m6_takeover_marker("primary-after-disp-lcm-init",
+			is_lcm_inited, use_cmdq);
 
 	if (disp_helper_get_option(DISP_OPT_MET_LOG))
 		set_enterulps(0);
