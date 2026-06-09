@@ -111,6 +111,91 @@ $A shell 'cat /proc/m6_mtkfb_early_diag 2>/dev/null || true'
 $A shell 'echo m6_display_truth_window:post-boot-87 > /d/mtkfb; echo m6_display_route_probe:dump > /d/mtkfb; sleep 1; dmesg'
 ```
 
+Runtime result, 2026-06-09: `/cache` on the device was full before flashing
+#87 (`/dev/block/mmcblk0p29` 405M used, 13M free), so the first push failed
+with `No space left on device`. The user explicitly approved clearing cache;
+after clearing `/cache`, it had 418M free. #87 was pushed to
+`/cache/boot-m6-scanout-event-marker-net-20260609.img`, its device-side sha256
+matched `e33258ca0a09af4695fad223b3ed2c81fe68d08be1b1b45648da0f46e63968e4`,
+then it was written to `/dev/block/platform/mtk-msdc.0/by-name/boot` with
+plain `dd` plus `sync` because this userspace `dd` rejects `conv=fsync`.
+Readback from the boot partition matched #87. After reboot, serial
+`711HEBSR277K5` did not appear in `adb devices -l` for a bounded 5 minute poll
+(`10:39:35` through `10:44:58` local). Other devices remained visible on the
+same ADB tunnel. FACT: there is no post-reboot #87 kernel log yet. INFERENCE:
+if power/USB were stable, the #87 diagnostic triggered its rollback condition
+as an early boot/USB/adbd regression; however the battery was only 6% before
+flash, so power loss remains an unresolved alternate explanation until pstore,
+last_kmsg, or recovery identity can be captured.
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: prepare a boot-safer #88 follow-up
+to the #87 marker net. Keep the broad CMDQ/event/RDMA/DSI markers, but make
+the common `m6_display_truth_window` scanout sample non-sleeping (`hold=0`).
+The explicit `m6_display_route_probe` path keeps the 32 ms timed sample because
+it is a manual debugfs action after boot. This is not a functional display fix;
+it is rollback-hardening for the diagnostic net after #87 failed to return to
+ADB after a readback-verified flash.
+
+Hypothesis: FACT: #87 was written and readback-verified on the boot partition,
+then serial `711HEBSR277K5` was absent from ADB for 5 minutes after reboot.
+FACT: no #87 runtime log exists yet, so the earliest failing boundary is still
+unknown. HYPOTHESIS: if #87 did cause a boot regression rather than exposing a
+power/battery issue, the lowest-risk part to harden first is the timed
+`scanout-delta` sample under the common truth-window display lock. A
+non-sleeping truth-window sample still reports whether registers and CMDQ
+tokens are static at a point in time, while route-probe remains available for a
+deliberate timed delta once Android is alive.
+
+Evidence:
+- #87 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1025-m6-scanout-event-marker-net-bootonly`.
+- #87 boot sha256:
+  `e33258ca0a09af4695fad223b3ed2c81fe68d08be1b1b45648da0f46e63968e4`.
+- #87 post-flash poll:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1025-m6-scanout-event-marker-net-bootonly/post-flash-adb-poll.txt`.
+- #88 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1055-m6-scanout-marker-net-hold0-bootonly`.
+- #88 boot sha256:
+  `03a3e7470ecb2a132d1b91d41402f6d63f500b79c2889a9901a704b1db333e4f`.
+- #88 `Image.gz-dtb` sha256:
+  `a12b1f0b28e10cff86d82a221529c9429eb41f75eaa1994171e77c1549134df4`.
+- #88 `System.map` sha256:
+  `e1a333564c4de19067fc1f080bad49c4e012b58cc109ba0ee294ee5b203b3a61`.
+- #88 packaging verification: `abootimg --create`, `abootimg -i`,
+  `sha256sum -c`, unpacked `zImage` compare, unpacked `initrd.img` compare,
+  and marker-string check passed.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: skip
+  `msleep()` when `hold_ms == 0`, and call the truth-window scanout sample
+  with `hold=0`; keep `route_probe` at `hold=32`.
+- `BRINGUP_STATE.md`: records the #87 no-ADB result and #88 rollback-hardening.
+
+Why each file changed: `primary_display.c` owns both truth-window and
+route-probe markers. This keeps the marker net broad but removes one avoidable
+sleep from the common diagnostic path before the next flash.
+
+Expected next marker: #88 should boot far enough for identity/hash capture. A
+manual `m6_display_truth_window:post-boot-88` should log
+`M6 DISPLAY truth[post-boot-88][scanout-delta]: hold=0ms ...`; a manual
+`m6_display_route_probe:dump` should still log `hold=32ms ...`.
+
+Rollback condition: if #88 also fails to return to ADB with stable
+power/recovery evidence, revert the #87/#88 marker-net code to the #86
+isolated C2V state and rebuild a pure rollback boot image.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A wait-for-device
+$A root
+$A wait-for-device
+$A shell 'id; uname -a; getprop sys.boot_completed; sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot'
+$A shell 'dmesg -C'
+$A shell 'echo m6_display_truth_window:post-boot-88 > /d/mtkfb; echo m6_display_route_probe:dump > /d/mtkfb; sleep 1; dmesg'
+```
+
 ## 2026-06-09 #85 result / #86 C2V MUTEX0_EN release isolation
 
 PATCH HISTORY, **ISOLATION**, 2026-06-09: for the M6-only debugfs

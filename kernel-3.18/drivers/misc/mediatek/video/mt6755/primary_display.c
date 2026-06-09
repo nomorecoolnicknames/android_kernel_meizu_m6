@@ -6387,7 +6387,8 @@ static void primary_display_m6_dump_scanout_progress(const char *tag,
 	cmdq_mutex_eof0 = cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF);
 	busy0 = dpmgr_path_is_busy(pgc->dpmgr_handle);
 
-	msleep(hold_ms);
+	if (hold_ms)
+		msleep(hold_ms);
 
 	DISPERR("M6 DISPLAY truth[%s][scanout-delta]: hold=%ums busy=%u->%u route=0x%x/0x%x mutex=0x%x/0x%x/0x%x rdma_global=0x%x int=0x%x/0x%x in=%u/%u->%u/%u out=%u/%u->%u/%u fifo=0x%x->0x%x dsi_int=0x%x->0x%x mode=0x%x->0x%x state6=0x%x->0x%x state7=0x%x->0x%x cmdq_eof=%u->%u mutex_eof=%u->%u dsi_eof=%u dsi_sof=%u te=%u\n",
 		safe_tag, hold_ms, busy0, dpmgr_path_is_busy(pgc->dpmgr_handle),
@@ -6436,7 +6437,7 @@ int primary_display_m6_truth_window(const char *tag)
 	dpmgr_m6_dump_primary_video_truth(safe_tag);
 	dsi_m6_dump_live(safe_tag);
 	primary_display_m6_dump_cmdq_truth(safe_tag);
-	primary_display_m6_dump_scanout_progress(safe_tag, 32);
+	primary_display_m6_dump_scanout_progress(safe_tag, 0);
 	m6_led_dump_backlight_truth(safe_tag);
 	DISPERR("M6 DISPLAY truth[%s][window]: end state=%u busy=%d\n",
 		safe_tag, pgc->state, dpmgr_path_is_busy(pgc->dpmgr_handle));
