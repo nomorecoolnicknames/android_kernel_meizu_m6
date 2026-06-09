@@ -1314,6 +1314,51 @@ static void primary_m6_dump_trigger_loop_state(const char *tag)
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x108));
 }
 
+static void primary_m6_cmdq_video_token_marker(const char *tag)
+{
+	static unsigned int count;
+	unsigned int seq;
+	unsigned int rdma_sof;
+	unsigned int rdma_eof;
+	unsigned int mutex_eof;
+	unsigned int dsi_eof;
+	unsigned int config_dirty;
+	unsigned int stream_eof;
+
+	if (count >= 96)
+		return;
+
+	seq = ++count;
+	rdma_sof = cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_SOF);
+	rdma_eof = cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_EOF);
+	mutex_eof = cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF);
+	dsi_eof = cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_EOF);
+	config_dirty = cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_CONFIG_DIRTY);
+	stream_eof = cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_STREAM_EOF);
+
+	DISPPR_ERROR("M6 CMDQ video eof isolation[%s]#%u: rdma_sof=%u rdma_eof=%u mutex0_eof=%u dsi0_eof=%u config_dirty=%u stream_eof=%u state=%s(0x%x) mode=%d\n",
+		tag, seq, rdma_sof, rdma_eof, mutex_eof, dsi_eof,
+		config_dirty, stream_eof, primary_m6_state_name(pgc->state),
+		pgc->state, pgc->mode);
+	aee_sram_printk("M6W%02u %s rs=%u re=%u m=%u d=%u\n",
+		seq, tag, rdma_sof, rdma_eof, mutex_eof, dsi_eof);
+}
+
+static void primary_m6_cmdq_wait_video_frame_done(cmdqRecHandle handle,
+						  const char *tag)
+{
+	primary_m6_cmdq_video_token_marker(tag);
+	cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
+}
+
+static void primary_m6_cmdq_clear_video_frame_done(cmdqRecHandle handle,
+						   const char *tag)
+{
+	primary_m6_cmdq_video_token_marker(tag);
+	cmdqRecClearEventToken(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
+	cmdqRecClearEventToken(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
+}
+
 static void primary_m6_hold_trigger_loop_clocks(const char *tag)
 {
 	const unsigned int scanout_cg_mask =
@@ -1353,18 +1398,18 @@ static void _cmdq_build_trigger_loop(void)
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), pgc->cmdq_handle_trigger, 0);
 
 		if (!primary_video_trigger_loop_diag_logged) {
-			DISPPR_ERROR("M6 video CMDQ: trigger loop waits real RDMA0_EOF/MUTEX0_STREAM_EOF\n");
+			DISPPR_ERROR("M6 video CMDQ: trigger loop isolates dead RDMA0_EOF by waiting MUTEX0_STREAM_EOF\n");
 			primary_m6_dump_trigger_loop_state("before-clock-hold");
 			primary_m6_hold_trigger_loop_clocks("before-wait");
 			primary_m6_dump_trigger_loop_state("before-wait");
-			dsi_m6_dump_live("trigger-before-rdma-eof-wait");
+			dsi_m6_dump_live("trigger-before-mutex-eof-wait");
 			primary_video_trigger_loop_diag_logged = true;
 		}
 
-		cmdqRecWaitNoClear(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_EOF);
-		cmdqRecWaitNoClear(pgc->cmdq_handle_trigger, CMDQ_EVENT_MUTEX0_STREAM_EOF);
-		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_EOF);
-		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_MUTEX0_STREAM_EOF);
+		primary_m6_cmdq_wait_video_frame_done(pgc->cmdq_handle_trigger,
+			"trigger-loop-wait");
+		primary_m6_cmdq_clear_video_frame_done(pgc->cmdq_handle_trigger,
+			"trigger-loop-clear");
 
 		/* wait and clear rdma0_sof for vfp change */
 		cmdqRecClearEventToken(pgc->cmdq_handle_trigger, CMDQ_EVENT_DISP_RDMA0_SOF);
@@ -1621,8 +1666,8 @@ void _cmdq_insert_wait_primary_path_frame_done(void *handle)
 void _cmdq_insert_wait_frame_done_token_mira(void *handle)
 {
 	if (primary_display_is_video_mode()) {
-		cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
-		cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
+		primary_m6_cmdq_wait_video_frame_done(handle,
+			"frame-done-token");
 		ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(pgc->dpmgr_handle), handle, 0);
 	} else {
 		cmdqRecWaitNoClear(handle, CMDQ_SYNC_TOKEN_STREAM_EOF);

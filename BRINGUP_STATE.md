@@ -1,5 +1,117 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #96 RDMA0_EOF CMDQ isolation for display suspend/resume
+
+PATCH HISTORY, **ISOLATION + DIAGNOSTIC**, 2026-06-09: stop the M6 video
+display path from depending on `CMDQ_EVENT_DISP_RDMA0_EOF` in the central CMDQ
+frame-done wait path. The patch does not fake-ready any token and does not
+change DSI, MIPITX, LCM table, timing, backlight, route, or panel registers.
+It waits the already-live `CMDQ_EVENT_MUTEX0_STREAM_EOF`, keeps clearing the
+old RDMA0 EOF token, and adds bounded markers to prove whether the next
+off/on cycle reaches the LCM suspend/resume callbacks.
+
+Hypothesis: FACT: static LK-vs-Linux DSI0/MIPITX/MMSYS parity is closed by
+#95, but a pure Linux `keyevent 26` off/on cycle reproducibly wedges before
+panel suspend. FACT: the fresh post-resume wedge capture shows CMDQ threads
+waiting forever on `CMDQ_EVENT_DISP_RDMA0_EOF`, `RDMA in/out=0/0`,
+`READY=0x0` while `VALID=0x4000937a`, and no `M6 LCM suspend/resume` markers.
+FACT from the repeated run recorded in the external audit addendum: RDMA0 IRQs
+continue at roughly frame rate while the GCE/CMDQ `RDMA0_EOF` token remains
+0, and neighboring tokens (`MUTEX0_STREAM_EOF`, `DSI0_EOF`, `RDMA0_SOF`) are
+observable. HYPOTHESIS: on this MT6750/M6 direct-link video path, the RDMA0
+frame-done hardware IRQ is not mapped into the GCE token used by this 3.18
+tree, so any CMDQ command stream that waits RDMA0_EOF can wedge before reaching
+panel suspend/resume. This patch is an isolation to unblock the cycle and
+test whether `MUTEX0_STREAM_EOF` is a sufficient end-of-frame wait; the proper
+fix frontier remains the SoC-specific GCE event map or stock wait policy.
+
+Evidence:
+- External audit/report:
+  `/srv/forge/android/meizu_m6/docs/run_reports/2026-06-09_m6_display_closed_layers_external_audit_result.md`
+  (`Addendum, session 2` and the repeated-run addendum).
+- Wedge capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1448-m6-post-resume-rdma-wedge-711HEBSR277K5/`.
+- FACT: user observation during the off/on cycle: physical glass/backlight did
+  not visibly change, consistent with suspend not reaching the panel.
+- Build log:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1523-m6-rdma-eof-mutex-isolation-bootonly/build-m6-rdma-eof-mutex-isolation-20260609.log`.
+- Boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1523-m6-rdma-eof-mutex-isolation-bootonly/boot-m6-rdma-eof-mutex-isolation-20260609.img`.
+- Boot image sha256:
+  `f2f3439a4bae87d517beba115804f508bd770a6b52da1cc51d790f85367154cd`.
+- `Image.gz-dtb` sha256:
+  `4f021f03c3ac724767e5487558148fd08233c7fb2d184c30593d9178738a5cf6`.
+- `System.map` sha256:
+  `b8fcb7b8e89de64aadd745837b7056a7d9554885fedd3d49df743bc71e0e9c3c`.
+- Build/packaging verification: `git diff --check` passed, `make
+  Image.gz-dtb` completed, `abootimg -i` reports the unchanged 16 MiB boot
+  image layout/cmdline, unpacked `zImage` and `initrd.img` compare with the
+  packaged inputs, `sha256sum -c SHA256SUMS` passed, and gzip-expanded marker
+  string search found the new CMDQ/LCM/ESD isolation strings.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`:
+  centralizes M6 video CMDQ end-of-frame isolation, changes the video trigger
+  loop and `_cmdq_insert_wait_frame_done_token_mira()` to wait
+  `MUTEX0_STREAM_EOF` instead of `RDMA0_EOF`, and logs bounded token snapshots
+  as `M6 CMDQ video eof isolation[...]`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_recovery.c`: changes
+  the video ESD read path's pre-stop wait from `RDMA0_EOF` to
+  `MUTEX0_STREAM_EOF` and logs the three relevant token values before the
+  wait.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_lcm.c`: adds bounded
+  `M6 LCM pm[...]` wrapper markers around suspend/resume entry, panel callback,
+  and power callback boundaries.
+- `BRINGUP_STATE.md`: records this isolation category, evidence, expected next
+  markers, rollback condition, artifact identity, and verification commands.
+
+Why each file changed: `primary_display.c` owns the live video CMDQ trigger
+loop and the shared helper used by `_blocking_flush()`, backlight/LCM command
+paths, clock changes, and resume triggers; changing only leaf call sites would
+leave most RDMA0_EOF waiters intact. `disp_recovery.c` has an independent
+video-mode RDMA0_EOF wait before DSI video-stop/read/start ESD work, so it
+would remain a known wedge branch after the central helper is fixed.
+`disp_lcm.c` is the panel abstraction boundary; wrapper markers answer the
+fresh yes/no question: did suspend/resume actually reach panel callbacks after
+the CMDQ isolation?
+
+Expected next marker: after flashing the artifact above and booting Android,
+the first fresh `keyevent 26` off/on cycle should no longer show CMDQ threads
+stuck on `Wait No Clear Event: CMDQ_EVENT_DISP_RDMA0_EOF`. A useful capture
+should contain `M6 CMDQ video eof isolation[trigger-loop-wait]`,
+`M6 CMDQ video eof isolation[frame-done-token]`, then either `M6 LCM
+pm[suspend-entry]`/`M6 LCM pm[resume-entry]` and the LCM driver suspend/resume
+markers, or a new earlier wait token if `MUTEX0_STREAM_EOF` is also
+insufficient. If LCM markers appear, the required human observation is whether
+the glass/backlight finally changes during physical suspend/resume with
+brightness pinned high.
+
+Rollback condition: revert this patch if boot no longer reaches ADB, CMDQ
+threads wedge on `MUTEX0_STREAM_EOF` at boot, the display stack stops producing
+RDMA/DSI activity, ESD/video command work regresses into a new hard lock, or
+the off/on cycle reaches LCM but causes a worse persistent panel/power state.
+Rollback is also required if stock MT6750 evidence proves the correct fix is a
+different GCE event ID for `RDMA0_EOF`; in that case replace the isolation with
+the proper event-map fix.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+export PATH=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin:$PATH
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-1523-m6-rdma-eof-mutex-isolation-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+cmp "$ART/Image.gz-dtb" "$ART/verify-unpack.tmp/zImage"
+cmp "$ART/initrd.img" "$ART/verify-unpack.tmp/initrd.img"
+abootimg -i "$ART/boot-m6-rdma-eof-mutex-isolation-20260609.img"
+grep -E 'M6 CMDQ video eof isolation|M6 LCM pm|M6 ESD video eof isolation' "$ART/marker-strings.txt"
+```
+
 ## 2026-06-09 #95 postflash result: LK-golden static register parity closed
 
 Patch category: **STATE-ONLY / DIAGNOSTIC RESULT**, 2026-06-09. This entry

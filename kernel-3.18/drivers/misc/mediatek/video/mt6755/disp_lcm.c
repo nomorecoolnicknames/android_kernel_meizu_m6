@@ -404,6 +404,31 @@ static void disp_lcm_m6_sram(const char *tag, int force, int inited)
 		count, tag, force, inited);
 }
 
+static void disp_lcm_m6_pm_marker(const char *tag, disp_lcm_handle *plcm,
+				  int ret)
+{
+	static unsigned int count;
+	LCM_DRIVER *lcm_drv = plcm ? plcm->drv : NULL;
+	int inited = -1;
+
+	if (count >= 64)
+		return;
+
+	if (plcm && plcm->params && plcm->drv)
+		inited = plcm->is_inited;
+
+	count++;
+	aee_sram_printk("M6C%02u %s i=%d r=%d\n",
+		count, tag, inited, ret);
+	DISPERR("M6 LCM pm[%s]#%u plcm=%p inited=%d drv=%s ret=%d has_suspend=%d has_resume=%d has_suspend_power=%d has_resume_power=%d\n",
+		tag, count, plcm, inited,
+		lcm_drv && lcm_drv->name ? lcm_drv->name : "unknown",
+		ret, lcm_drv && lcm_drv->suspend,
+		lcm_drv && lcm_drv->resume,
+		lcm_drv && lcm_drv->suspend_power,
+		lcm_drv && lcm_drv->resume_power);
+}
+
 int disp_lcm_init(disp_lcm_handle *plcm, int force)
 {
 	LCM_DRIVER *lcm_drv = NULL;
@@ -553,20 +578,29 @@ int disp_lcm_suspend(disp_lcm_handle *plcm)
    LOG_JANK_D(JLID_KERNEL_LCD_POWER_OFF, "%s", "JL_KERNEL_LCD_POWER_OFF");
 #endif
 	DISPFUNC();
+	disp_lcm_m6_pm_marker("suspend-entry", plcm, ret);
 	if (_is_lcm_inited(plcm)) {
 		lcm_drv = plcm->drv;
 		if (lcm_drv->suspend) {
+			disp_lcm_m6_pm_marker("suspend-before-callback", plcm, ret);
 			lcm_drv->suspend();
+			disp_lcm_m6_pm_marker("suspend-after-callback", plcm, ret);
 		} else {
 			DISPERR("FATAL ERROR, lcm_drv->suspend is null\n");
 			ret = -1;
+			disp_lcm_m6_pm_marker("suspend-missing-callback", plcm, ret);
 		}
-		if (lcm_drv->suspend_power)
+		if (lcm_drv->suspend_power) {
+			disp_lcm_m6_pm_marker("suspend-before-power", plcm, ret);
 			lcm_drv->suspend_power();
+			disp_lcm_m6_pm_marker("suspend-after-power", plcm, ret);
+		}
 	} else {
 		DISPERR("lcm_drv is null\n");
 		ret = -1;
+		disp_lcm_m6_pm_marker("suspend-not-inited", plcm, ret);
 	}
+	disp_lcm_m6_pm_marker("suspend-exit", plcm, ret);
 	return ret;
 }
 
@@ -576,20 +610,29 @@ int disp_lcm_resume(disp_lcm_handle *plcm)
 	int ret = 0;
 
 	DISPFUNC();
+	disp_lcm_m6_pm_marker("resume-entry", plcm, ret);
 	if (_is_lcm_inited(plcm)) {
 		lcm_drv = plcm->drv;
-		if (lcm_drv->resume_power)
+		if (lcm_drv->resume_power) {
+			disp_lcm_m6_pm_marker("resume-before-power", plcm, ret);
 			lcm_drv->resume_power();
+			disp_lcm_m6_pm_marker("resume-after-power", plcm, ret);
+		}
 		if (lcm_drv->resume) {
+			disp_lcm_m6_pm_marker("resume-before-callback", plcm, ret);
 			lcm_drv->resume();
+			disp_lcm_m6_pm_marker("resume-after-callback", plcm, ret);
 		} else {
 			DISPERR("FATAL ERROR, lcm_drv->resume is null\n");
 			ret = -1;
+			disp_lcm_m6_pm_marker("resume-missing-callback", plcm, ret);
 		}
 	} else {
 		DISPERR("lcm_drv is null\n");
 		ret = -1;
+		disp_lcm_m6_pm_marker("resume-not-inited", plcm, ret);
 	}
+	disp_lcm_m6_pm_marker("resume-exit", plcm, ret);
 	return ret;
 }
 
