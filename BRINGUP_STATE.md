@@ -112,6 +112,38 @@ abootimg -i "$ART/boot-m6-lcm-resume-dcs-read-suppress-20260609.img"
 grep -E 'page5_2a_trace|M6 LCM pm|M6 CMDQ video eof isolation|raw mt_get_gpio reads suppressed' "$ART/marker-strings.txt"
 ```
 
+Runtime result, **FACT**, 2026-06-09:
+- #98 was flashed from Android root because recovery reboot was not entering
+  recovery. Preflash boot partition hash was #97
+  `bc952829782432faecbb004d572860356c2dba7c774be8f1772b90f31634ba45`;
+  post-write readback hash matched #98
+  `dffab7ca96060ee78baea3d902c9b6439467a6ba5537be10658a37c5af86413b`.
+- #98 booted Android: capture
+  `/srv/forge/android/meizu_m6/captures/20260609-162942-m6-lcm-resume-dcs-read-suppress-wake-711HEBSR277K5/`,
+  `identity-postboot.txt` shows `sys.boot_completed=1`, boot animation stopped,
+  and boot partition sha256
+  `dffab7ca96060ee78baea3d902c9b6439467a6ba5537be10658a37c5af86413b`.
+- First wake from `mWakefulness=Dozing` / `Display Power: state=OFF` completed
+  without reboot. Logs show `M6 LCM page5_2a_trace[init] suppressed during
+  resume depth=1`, full init table completion, `M6 LCM resume end`,
+  `M6 LCM pm[resume-exit]`, and `M6 primary state: SLEPT -> ALIVE`.
+  The system later returned to sleep by screen timeout, not WDT.
+- Second wake with `svc power stayon true`, `screen_off_timeout=2147483647`,
+  and brightness pinned to 255 also completed without reboot. `dumpsys power`
+  after wake shows `mWakefulness=Awake`, `mDisplayReady=true`, and
+  `Display Power: state=ON`.
+- Fresh #98 dmesg after wake2 contains two suppression markers, zero matching
+  `DSI wrapper read begin.*cmd=0x2a`, zero `CMDQ_EVENT_DISP_RDMA0_EOF` /
+  `Wait No Clear` / `WDT_CPU` / `GPIOxx HARDCODE warning` /
+  `mt_gpio_pin_decrypt` signatures.
+
+INFERENCE: #98 closes the resume-time diagnostic DCS-read WDT and confirms #96
+as a useful RDMA0_EOF isolation for Linux suspend/resume. The current remaining
+display frontier is no longer the Linux restart path wedging before panel or
+inside the diagnostic DCS read. If the glass is still physically black while
+`Display Power: state=ON` and `dcs51=0xff`, return to the dynamic HS-video /
+MIPI TX / panel acceptance frontier from the LK-vs-Linux takeover analysis.
+
 ## 2026-06-09 #97 LCM pinctrl GPIO dump_stack flood quiesce
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: suppress the raw `mt_get_gpio_*`
