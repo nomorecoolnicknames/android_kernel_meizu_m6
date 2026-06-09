@@ -1,5 +1,92 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #70 BIST sweep / panel-private drift isolation
+
+PATCH HISTORY, **DIAGNOSTIC/ISOLATION**, 2026-06-09: add DSI timing/VM_CMD
+markers plus debugfs-only manual isolation controls for DSI `HSA_WC` and
+ILI9881P page5 command `0x2A`. The default boot path is not changed; the new
+controls only run when invoked through `/d/mtkfb`.
+
+Hypothesis: FACT: boot image
+`4fb4ad2a4648e5220630ddd56f8ca2741483b5b2f2d1c9aee10bea2ca97ce41f` is flashed
+and running as kernel `#70`. FACT: DSI BIST profiles 0-5 latch expected
+`BIST_CON` values and DSI/MIPITX stay powered in video mode. FACT: stock LK and
+current source write ILI9881P page5 `0x2A=0x14`, while the live panel reads back
+`0x18` after Linux/reinit/stock-pages reads. INFERENCE: if all BIST windows were
+physically black, HWC/PQ/OVL/RDMA source content are rejected as the earliest
+physical-black frontier. HYPOTHESIS: the remaining frontier is DSI host output,
+MIPITX analog/lane state, or ILI9881P HS-video acceptance after Linux takeover,
+with page5 `0x2A` drift and DSI timing/VM_CMD state as narrow candidates.
+
+Evidence:
+- BIST profile sweep capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0206-m6-bist-profile-sweep-post-black-report`.
+- Post-BIST stock-pages/truth capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0208-m6-post-bist-stockpages-truth`.
+- Capture verdicts:
+  `/srv/forge/android/meizu_m6/captures/20260609-0206-m6-bist-profile-sweep-post-black-report/CAPTURE_VERDICT.md`
+  and
+  `/srv/forge/android/meizu_m6/captures/20260609-0208-m6-post-bist-stockpages-truth/CAPTURE_VERDICT.md`.
+- Stock LK init decode:
+  `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/lk-ili9881p-init-table-decode.txt`,
+  entry 12 writes page5 command `0x2A` data `0x14`.
+- Current LCM source:
+  `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`,
+  `init_setting[]` writes page5 command `0x2A` data `0x14`.
+- Live stock-pages read:
+  `dmesg-post-bist-stockpages-truth.txt` reports
+  `M6 LCM stock_pages[1] page=5 name=page5_2a cmd=0x2a len=1 read=18 ...`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: logs computed
+  DSI video timing bytes before/after enqueue, logs bounded VM_CMD set/enable
+  transitions, and adds `dsi_m6_force_hsa_wc()` for manual `HSA_WC` isolation.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the
+  manual `HSA_WC` helper for debugfs.
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`:
+  adds a page5 `0x2A` write/read/hold/read probe.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: wraps the
+  page5 probe with the same stop-video, LP-command, restart-video flow used by
+  stock-page reads.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.h`: exports
+  the page5 probe wrapper.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds
+  `m6_dsi_hsa_wc:<value>[:hold_ms]` and
+  `m6_lcm_page5_2a:<value>[:hold_ms]` commands.
+- `BRINGUP_STATE.md`: records the evidence, patch category, expected markers,
+  rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the DSI timing, VM command, and host
+register frontier identified by #70. The LCM driver owns the narrow
+panel-private page5 register that drifted from the stock/source table. Primary
+display owns the safe transition from video mode to LP command reads/writes and
+back. `disp_debug.c` is the existing manual diagnostic command surface. The
+state file prevents this isolation from being mistaken for a proper fix before
+fresh physical evidence is collected.
+
+Expected next marker: `/d/mtkfb` should accept `m6_dsi_hsa_wc:<value>[:hold_ms]`
+and `m6_lcm_page5_2a:<value>[:hold_ms]`, logging before/write/after/hold-end
+DSI snapshots and page5 readback. Physical observation should answer whether
+forcing HSA `0x38`, restoring page5 `0x14`, or writing observed `0x18` causes
+any flash/flicker/image.
+
+Rollback condition: revert the next diagnostic/isolation patch if it changes the
+default boot path, regresses `sys.boot_completed=1`, breaks BIST/profile
+commands, prevents stock private page reads, loses ADB, or causes persistent
+panel state corruption after a reboot.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A shell 'printf "m6_dsi_hsa_wc:0x38:5000\n" > /d/mtkfb'
+$A shell 'printf "m6_lcm_page5_2a:0x14:5000\n" > /d/mtkfb'
+$A shell 'printf "m6_lcm_page5_2a:0x18:5000\n" > /d/mtkfb'
+$A shell 'printf "m6_dsi_bist_profile:0:0x00ffffff:5000\n" > /d/mtkfb'
+$A shell 'dmesg | grep -E "M6 DSI hsa_wc|M6 LCM page5_2a|M6 DSI snapshot|M6 DSI bist_profile" | tail -360'
+```
+
 ## 2026-06-09 DSI takeover / MIPITX block diagnostic
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add read-only takeover markers

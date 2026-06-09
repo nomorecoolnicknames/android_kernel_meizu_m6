@@ -1206,6 +1206,24 @@ void DSI_Config_VDO_Timing(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_
 		    (dsi_params->horizontal_frontporch * dsiTmpBufBpp - 12);
 		horizontal_bllp_byte = (dsi_params->horizontal_bllp * dsiTmpBufBpp);
 
+		DISPERR("M6 DSI timing_calc[before-enqueue]: cmdq=%p mode=%u switch=%u bpp=%u h=%u/%u/%u/%u raw=0x%x/0x%x/0x%x/0x%x aligned=0x%x/0x%x/0x%x/0x%x live=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+			cmdq, dsi_params->mode, dsi_params->switch_mode,
+			dsiTmpBufBpp, dsi_params->horizontal_sync_active,
+			dsi_params->horizontal_backporch,
+			dsi_params->horizontal_frontporch,
+			dsi_params->horizontal_active_pixel,
+			horizontal_sync_active_byte, horizontal_backporch_byte,
+			horizontal_frontporch_byte, horizontal_bllp_byte,
+			ALIGN_TO(horizontal_sync_active_byte, 4),
+			ALIGN_TO(horizontal_backporch_byte, 4),
+			ALIGN_TO(horizontal_frontporch_byte, 4),
+			ALIGN_TO(horizontal_bllp_byte, 4),
+			INREG32(DDP_REG_BASE_DSI0 + 0x050),
+			INREG32(DDP_REG_BASE_DSI0 + 0x054),
+			INREG32(DDP_REG_BASE_DSI0 + 0x058),
+			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x064));
+
 		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_HSA_WC,
 			     ALIGN_TO((horizontal_sync_active_byte), 4));
 		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_HBP_WC,
@@ -1213,6 +1231,13 @@ void DSI_Config_VDO_Timing(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_
 		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_HFP_WC,
 			     ALIGN_TO((horizontal_frontporch_byte), 4));
 		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BLLP_WC, ALIGN_TO((horizontal_bllp_byte), 4));
+
+		DISPERR("M6 DSI timing_calc[after-enqueue]: cmdq=%p live=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+			cmdq, INREG32(DDP_REG_BASE_DSI0 + 0x050),
+			INREG32(DDP_REG_BASE_DSI0 + 0x054),
+			INREG32(DDP_REG_BASE_DSI0 + 0x058),
+			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x064));
 	}
 }
 
@@ -1963,6 +1988,40 @@ void dsi_m6_dump_hs_window(const char *tag, unsigned int hold_ms)
 	}
 	DISPERR("M6 DSI hs_window[%s]: end hold_ms=%u jiffies=%lu\n",
 		safe_tag, bounded, jiffies);
+}
+
+void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms)
+{
+	unsigned int bounded = hold_ms;
+
+	if (!DSI_REG[0])
+		return;
+	if (bounded > 10000)
+		bounded = 10000;
+
+	DISPERR("M6 DSI hsa_wc: begin value=0x%x hold_ms=%u live_before=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		value, bounded, INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x064));
+	dsi_m6_dump_snapshot("hsa-wc-before", DISP_MODULE_DSI0, NULL);
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_HSA_WC, value);
+	DISPERR("M6 DSI hsa_wc: after-write value=0x%x live=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		value, INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x064));
+	dsi_m6_dump_snapshot("hsa-wc-after-write", DISP_MODULE_DSI0, NULL);
+	if (bounded)
+		dsi_m6_dump_hs_window("hsa-wc-hold", bounded);
+	DISPERR("M6 DSI hsa_wc: end value=0x%x live=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		value, INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x064));
 }
 
 static uint32_t dsi_m6_dcs_read_noreset(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)
@@ -2833,6 +2892,19 @@ void DSI_Set_VM_CMD(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 {
 
 	int i = 0;
+	static unsigned int m6_vm_set_count;
+	bool m6_dump = false;
+
+	if (module == DISP_MODULE_DSI0 && DSI_REG[0] &&
+	    m6_vm_set_count < 16) {
+		m6_vm_set_count++;
+		m6_dump = true;
+		DISPERR("M6 DSI vm_cmd[set-entry]: count=%u cmdq=%p raw=0x%x start=0x%x intsta=0x%x\n",
+			m6_vm_set_count, cmdq,
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c));
+	}
 
 	if (module != DISP_MODULE_DSIDUAL) {
 		for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
@@ -2846,11 +2918,30 @@ void DSI_Set_VM_CMD(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 		DSI_OUTREGBIT(cmdq, DSI_VM_CMD_CON_REG, DSI_REG[i]->DSI_VM_CMD_CON, TS_VFP_EN, 1);
 		DSI_OUTREGBIT(cmdq, DSI_VM_CMD_CON_REG, DSI_REG[i]->DSI_VM_CMD_CON, VM_CMD_EN, 1);
 	}
+	if (m6_dump)
+		DISPERR("M6 DSI vm_cmd[set-after-enqueue]: count=%u cmdq=%p raw=0x%x start=0x%x intsta=0x%x\n",
+			m6_vm_set_count, cmdq,
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c));
 }
 
 DSI_STATUS DSI_EnableVM_CMD(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 {
 	int i = 0;
+	static unsigned int m6_vm_enable_count;
+	bool m6_dump = false;
+
+	if (module == DISP_MODULE_DSI0 && DSI_REG[0] &&
+	    m6_vm_enable_count < 32) {
+		m6_vm_enable_count++;
+		m6_dump = true;
+		DISPERR("M6 DSI vm_cmd[enable-entry]: count=%u cmdq=%p raw=0x%x start=0x%x intsta=0x%x\n",
+			m6_vm_enable_count, cmdq,
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c));
+	}
 
 	if (cmdq)
 		DSI_MASKREG32(cmdq, &DSI_REG[0]->DSI_INTSTA, 0x00000020, 0x00000000);
@@ -2871,6 +2962,13 @@ DSI_STATUS DSI_EnableVM_CMD(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 		DSI_MASKREG32(cmdq, &DSI_REG[0]->DSI_INTSTA, 0x00000020, 0x00000000);
 	} else
 		wait_event_interruptible(_dsi_wait_vm_cmd_done_queue[0], wait_vm_cmd_done);
+
+	if (m6_dump)
+		DISPERR("M6 DSI vm_cmd[enable-after-wait]: count=%u cmdq=%p raw=0x%x start=0x%x intsta=0x%x\n",
+			m6_vm_enable_count, cmdq,
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c));
 
 	return DSI_STATUS_OK;
 }

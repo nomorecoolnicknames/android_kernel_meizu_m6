@@ -248,6 +248,7 @@ extern "C" {
 	void dsi_m6_dump_live(const char *tag);
 	void dsi_m6_dump_takeover(const char *tag);
 	void dsi_m6_dump_hs_window(const char *tag, unsigned int hold_ms);
+	void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms);
 	bool dsi_m6_capture_live_snapshot(struct m6_dsi_live_snapshot *snap);
 	void dsi_m6_dump_dcs_status(const char *tag);
 	void DSI_LFR_UPDATE(DISP_MODULE_ENUM module, cmdqRecHandle cmdq);

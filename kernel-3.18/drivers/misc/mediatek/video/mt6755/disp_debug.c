@@ -131,8 +131,12 @@ char MTKFB_STR_HELP[] =
 	"             Meizu M6 diagnostic DSI/ILI9881P DCS status dump\n"
 	"        m6_dsi_hs_window:<tag>[:hold_ms]\n"
 	"             Meizu M6 bounded DSI HS-video IRQ/VM/window sampler\n"
+	"        m6_dsi_hsa_wc:<value>[:hold_ms]\n"
+	"             Meizu M6 isolation override for DSI_HSA_WC with snapshots\n"
 	"        m6_dsi_bist_profile:<profile>:<rgb>[:hold_ms]\n"
 	"             Meizu M6 manual DSI BIST profile sweep; auto-disables\n"
+	"        m6_lcm_page5_2a:<value>[:hold_ms]\n"
+	"             Meizu M6 isolation write/read probe for ILI9881P page5 cmd 0x2A\n"
 	"\n"
 	"\n"
 	"        m6_display_truth_window[:tag]\n"
@@ -626,6 +630,24 @@ void mtkfb_process_dbg_opt(const char *opt)
 		dsi_m6_dump_hs_window(tag, hold_ms);
 		primary_display_manual_unlock();
 		DISPMSG("m6 dsi hs window: tag=%s hold=%u\n", tag, hold_ms);
+	} else if (0 == strncmp(opt, "m6_dsi_hsa_wc:", 14)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+
+		ret = sscanf(opt, "m6_dsi_hsa_wc:%i:%u\n",
+			     &value_arg, &hold_ms);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+
+		primary_display_manual_lock();
+		dsi_m6_force_hsa_wc(value, hold_ms);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi hsa wc: value=0x%08x hold=%u\n",
+			value, hold_ms);
 	} else if (0 == strncmp(opt, "bypass_blank:", 13)) {
 		char *p = (char *)opt + 13;
 		unsigned int blank;
@@ -686,6 +708,22 @@ void mtkfb_process_dbg_opt(const char *opt)
 		}
 		DISPERR("M6 LCM debug reinit command: force=%u\n", force_power);
 		primary_display_m6_lcm_reinit(force_power);
+		return;
+	} else if (0 == strncmp(opt, "m6_lcm_page5_2a:", 16)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+
+		ret = sscanf(opt, "m6_lcm_page5_2a:%i:%u\n",
+			     &value_arg, &hold_ms);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		DISPERR("M6 LCM page5_2a command: value=0x%x hold=%u\n",
+			value, hold_ms);
+		primary_display_m6_lcm_page5_2a(value, hold_ms);
 		return;
 	} else if (0 == strncmp(opt, "m6_display_truth_window", 23)) {
 		const char *tag = "manual";
