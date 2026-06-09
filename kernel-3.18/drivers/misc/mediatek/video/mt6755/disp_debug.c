@@ -131,6 +131,8 @@ char MTKFB_STR_HELP[] =
 	"             Meizu M6 diagnostic DSI/ILI9881P DCS status dump\n"
 	"        m6_dsi_hs_window:<tag>[:hold_ms]\n"
 	"             Meizu M6 bounded DSI HS-video IRQ/VM/window sampler\n"
+	"        m6_dsi_phy_truth[:tag]\n"
+	"             Meizu M6 read-only DSI/MIPITX/LCM lane and PHY truth dump\n"
 	"        m6_dsi_hsa_wc:<value>[:hold_ms]\n"
 	"             Meizu M6 isolation override for DSI_HSA_WC with snapshots\n"
 	"        m6_dsi_bist_profile:<profile>:<rgb>[:hold_ms]\n"
@@ -634,6 +636,15 @@ void mtkfb_process_dbg_opt(const char *opt)
 		dsi_m6_dump_hs_window(tag, hold_ms);
 		primary_display_manual_unlock();
 		DISPMSG("m6 dsi hs window: tag=%s hold=%u\n", tag, hold_ms);
+	} else if (0 == strncmp(opt, "m6_dsi_phy_truth", 16)) {
+		const char *tag = "manual";
+
+		if (opt[16] == ':')
+			tag = opt + 17;
+		primary_display_manual_lock();
+		dsi_m6_dump_phy_truth(tag);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi phy truth: tag=%s\n", tag);
 	} else if (0 == strncmp(opt, "m6_dsi_hsa_wc:", 14)) {
 		int value_arg = 0;
 		unsigned int value = 0;

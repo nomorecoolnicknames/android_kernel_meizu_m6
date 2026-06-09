@@ -2028,6 +2028,62 @@ void dsi_m6_dump_live(const char *tag)
 	DISPERR("M6 DISPLAY truth[%s][dsi-host]: end\n", safe_tag);
 }
 
+void dsi_m6_dump_phy_truth(const char *tag)
+{
+	const char *safe_tag = tag ? tag : "manual";
+	LCM_DSI_PARAMS *p = &_dsi_context[0].dsi_params;
+
+	if (!DSI_REG[0]) {
+		DISPERR("M6 DSI phy_truth[%s]: DSI_REG0 missing\n", safe_tag);
+		return;
+	}
+
+	DISPERR("M6 DSI phy_truth[%s]: begin power=%d ulps=%u dsi_cur_mode=%d size=%ux%u\n",
+		safe_tag, s_isDsiPowerOn, is_mipi_enterulps(),
+		dsi_currect_mode, _dsi_context[0].lcm_width,
+		_dsi_context[0].lcm_height);
+	DISPERR("M6 DSI phy_truth[%s]: lcm mode=%u switch=%u lanes=%u datafmt color/trans/pad/fmt=%u/%u/%u/%u ps=%u packet=%u word=%u pll=%u/%u/%u dsi_clock=%u ssc=%u/%u cont=%u noncont=%u/%u\n",
+		safe_tag, p->mode, p->switch_mode, p->LANE_NUM,
+		p->data_format.color_order, p->data_format.trans_seq,
+		p->data_format.padding, p->data_format.format, p->PS,
+		p->packet_size, p->word_count, p->PLL_CLOCK,
+		p->PLL_CK_CMD, p->PLL_CK_VDO, p->dsi_clock,
+		p->ssc_disable, p->ssc_range, p->cont_clock,
+		p->noncont_clock, p->noncont_clock_period);
+	DISPERR("M6 DSI phy_truth[%s]: lcm timing v=%u/%u/%u/%u vfp_lp=%u h=%u/%u/%u/%u bllp=%u null_pkt=%u mix=%u/%u lfr=%u/%u/%u/%u\n",
+		safe_tag, p->vertical_sync_active, p->vertical_backporch,
+		p->vertical_frontporch, p->vertical_active_line,
+		p->vertical_frontporch_for_low_power,
+		p->horizontal_sync_active, p->horizontal_backporch,
+		p->horizontal_frontporch, p->horizontal_active_pixel,
+		p->horizontal_bllp, p->null_packet_en, p->mixmode_enable,
+		p->mixmode_mipi_clock, p->lfr_enable, p->lfr_mode,
+		p->lfr_type, p->lfr_skip_num);
+	DISPERR("M6 DSI phy_truth[%s]: lcm phy hs_trail/zero/prpr/lpx=%u/%u/%u/%u ta_sack/get/sure/go=%u/%u/%u/%u clk_trail/zero/lpx_wait/cont_det=%u/%u/%u/%u clk_hs_prpr/post/da_exit/clk_exit=%u/%u/%u/%u\n",
+		safe_tag, p->HS_TRAIL, p->HS_ZERO, p->HS_PRPR, p->LPX,
+		p->TA_SACK, p->TA_GET, p->TA_SURE, p->TA_GO,
+		p->CLK_TRAIL, p->CLK_ZERO, p->LPX_WAIT, p->CONT_DET,
+		p->CLK_HS_PRPR, p->CLK_HS_POST, p->DA_HS_EXIT,
+		p->CLK_HS_EXIT);
+	DISPERR("M6 DSI phy_truth[%s]: lcm lane_swap_en=%u port0=%u/%u/%u/%u/%u/%u port1=%u/%u/%u/%u/%u/%u te int=%u/%u ext=%u/%u edge=%u eint_disable=%u ufoe/dsc=%u/%u\n",
+		safe_tag, p->lane_swap_en,
+		p->lane_swap[0][0], p->lane_swap[0][1],
+		p->lane_swap[0][2], p->lane_swap[0][3],
+		p->lane_swap[0][4], p->lane_swap[0][5],
+		p->lane_swap[1][0], p->lane_swap[1][1],
+		p->lane_swap[1][2], p->lane_swap[1][3],
+		p->lane_swap[1][4], p->lane_swap[1][5],
+		p->lcm_int_te_monitor, p->lcm_int_te_period,
+		p->lcm_ext_te_monitor, p->lcm_ext_te_enable,
+		p->ext_te_edge, p->eint_disable, p->ufoe_enable,
+		p->dsc_enable);
+	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	dsi_m6_dump_mipitx_block(safe_tag);
+#endif
+	DISPERR("M6 DSI phy_truth[%s]: end\n", safe_tag);
+}
+
 void dsi_m6_dump_takeover(const char *tag)
 {
 	const char *safe_tag = tag ? tag : "takeover";

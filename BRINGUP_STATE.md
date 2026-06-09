@@ -1,5 +1,99 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #89 DSI/MIPITX PHY truth marker
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a manual read-only
+`m6_dsi_phy_truth[:tag]` debugfs command for the remaining lit-black physical
+panel frontier. The patch does not run at boot, does not change DSI timing,
+does not write MIPITX/DSI/panel registers, and does not change route, RDMA,
+PQ, HWC, backlight, LCM init, or BIST behavior. It only prints the current
+LCM DSI parameter table, lane-swap table, DSI host snapshot, MIPITX raw block,
+RT calibration, and MIPITX decode in one bounded manual dump.
+
+Hypothesis: FACT: #86 was the last known booting image and reached
+`sys.boot_completed=1`; FACT: previous root/lit-black captures already rejected
+SurfaceFlinger, PQ, HWC policy, direct-link route construction, RDMA transfer,
+DSI LP DCS transport, GPIO reset/bias, and generic backlight-off as the first
+physical-black frontier; FACT: #87 disappeared from ADB after a readback-
+verified flash and the rescue helper later did not see serial `711HEBSR277K5`
+for 600 seconds, so there is still no fresh #87 pstore. HYPOTHESIS: the next
+useful non-speculative display evidence is whether the running Linux DSI/PHY
+state matches stock/LK expectations at the lane-map, lane-drive, RT-cal,
+timing, PLL, and panel-HS-acceptance boundary.
+
+Evidence:
+- Known booting #86 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1030-m6-dsi-c2v-skip-mutex-release-isolation-bootonly`.
+- #86 boot sha256:
+  `1071cafdaf3e0c5c43266946f18ca0f8b4496f95e5f5ed3a6110034084187857`.
+- #87 no-ADB poll:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1025-m6-scanout-event-marker-net-bootonly/post-flash-adb-poll.txt`.
+- Rescue helper result, 2026-06-09 11:20 local: serial `711HEBSR277K5` did not
+  appear within 600 seconds, so no #87 pstore/last_kmsg is available yet.
+- New #89 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1132-m6-dsi-phy-truth-marker-bootonly`.
+- #89 boot sha256:
+  `15f3d6b75ad3854d9e66c7810193001a7a7e5fe1e9f8e6a79f507d027257ca92`.
+- #89 `Image.gz-dtb` sha256:
+  `ce06eb83313e5e124d59d1619ef284e4091fa0914bb66770f47e3a74b1a525e5`.
+- #89 `System.map` sha256:
+  `6258703208f419355e26231675fb319cba7e23956b12c5afea89c1110679e397`.
+- Build verification: `make ... Image.gz-dtb` completed; `abootimg --create`,
+  `abootimg -i`, `sha256sum -c`, unpacked `zImage` compare, unpacked
+  `initrd.img` compare, and marker-string check passed. Marker strings include
+  `m6_dsi_phy_truth`, `M6 DSI phy_truth`, `M6 DSI phydecode`,
+  `M6 DSI mipitx_block`, `M6 DSI rtcal`, and `M6 DSI snapshot`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  `dsi_m6_dump_phy_truth()`, a manual read-only aggregate dump for LCM params,
+  lane-swap table, DSI snapshot, MIPITX block, RT calibration, and PHY decode.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the new
+  diagnostic entry point to debugfs command handling.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  `m6_dsi_phy_truth[:tag]` manual debugfs command and help text.
+- `BRINGUP_STATE.md`: records the diagnostic purpose, artifact identity, and
+  next verification command.
+
+Why each file changed: `ddp_dsi.c` owns both the DSI host and MIPITX register
+access needed for the next layer. `ddp_dsi.h` is the local display diagnostic
+API boundary. `disp_debug.c` is the established `/d/mtkfb` command parser for
+manual M6 probes. The state file keeps the patch tied to the current evidence
+and prevents reopening PQ/HWC/RDMA/backlight as the first frontier without new
+facts.
+
+Expected next marker: after the device is recovered to a known booting image,
+flash #89 and run `echo m6_dsi_phy_truth:post-boot-89 > /d/mtkfb`, followed by
+the existing RGB BIST probe. Dmesg should contain `M6 DSI phy_truth[post-boot-89]`
+lines plus `M6 DSI phydecode`, `M6 DSI rtcal`, `M6 DSI mipitx_block`, and
+`M6 DSI snapshot` markers. These values should be compared with stock LK/Flyme
+reverse evidence for lane map, RT code, PLL, and PHY timing.
+
+Rollback condition: revert this diagnostic if #89 regresses boot/ADB compared
+with #86, floods logs enough to hide earlier markers, blocks `/d/mtkfb`, or
+changes live DSI/BIST state before producing the expected read-only markers. Do
+not revert solely because the physical panel remains black.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+export ARCH=arm64
+export CROSS_COMPILE=aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+export PATH=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin:$PATH
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+cd /srv/forge/android/export/meizu_m6_artifacts/20260609-1132-m6-dsi-phy-truth-marker-bootonly
+sha256sum -c SHA256SUMS
+grep -E 'm6_dsi_phy_truth|M6 DSI phy_truth|M6 DSI phydecode|M6 DSI rtcal|M6 DSI mipitx_block' marker-strings.txt
+
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A wait-for-device
+$A root
+$A wait-for-device
+$A shell 'echo m6_dsi_phy_truth:post-boot-89 > /d/mtkfb; echo m6_dsi_bist_profile:0:0x00ff0000:3000 > /d/mtkfb; dmesg | grep -E "M6 DSI phy_truth|M6 DSI phydecode|M6 DSI rtcal|M6 DSI mipitx_block|M6 DSI snapshot\\[bist-profile" | tail -260'
+```
+
 ## 2026-06-09 #87 bootloop suspicion / #86 rescue package
 
 PATCH HISTORY, **DIAGNOSTIC / STATE-TOOLING**, 2026-06-09: prepare a
