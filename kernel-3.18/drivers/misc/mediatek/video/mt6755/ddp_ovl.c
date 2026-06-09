@@ -58,6 +58,7 @@ static unsigned int m6_ovl_bounds_profile_id = 1;
 static unsigned int m6_ovl_bounds_profile_apply_count;
 static struct m6_ovl_config_snapshot m6_ovl0_last_config_snapshot;
 static unsigned int m6_ovl0_last_config_seq;
+static unsigned int m6_ovl_reset_diag_count;
 
 static inline int is_module_ovl(DISP_MODULE_ENUM module)
 {
@@ -198,6 +199,66 @@ static inline DISP_MODULE_ENUM ovl_index_to_module(int index)
 	return ovl_index_module[index];
 }
 
+static const char *m6_ovl_fsm_name(unsigned int fsm)
+{
+	switch (fsm) {
+	case 0x1:
+		return "idle";
+	case 0x2:
+		return "wait_SOF";
+	case 0x4:
+		return "prepare";
+	case 0x8:
+		return "reg_update";
+	case 0x10:
+		return "eng_clr";
+	case 0x20:
+		return "eng_act";
+	case 0x40:
+		return "h_wait_w_rst";
+	case 0x80:
+		return "s_wait_w_rst";
+	case 0x100:
+		return "h_w_rst";
+	case 0x200:
+		return "s_w_rst";
+	default:
+		return "unknown";
+	}
+}
+
+static void m6_ovl_reset_diag(const char *tag, DISP_MODULE_ENUM module,
+			      void *handle, unsigned int ret)
+{
+	unsigned long ovl_base = ovl_base_addr(module);
+	unsigned int flow;
+	unsigned int idx;
+
+	if (module != DISP_MODULE_OVL0 || m6_ovl_reset_diag_count >= 96)
+		return;
+
+	idx = ++m6_ovl_reset_diag_count;
+	flow = DISP_REG_GET(ovl_base + DISP_REG_OVL_FLOW_CTRL_DBG);
+	DISPERR("M6 OVL reset[%u][%s]: module=%s handle=%p ret=%u RST=0x%x EN=0x%x SRC=0x%x INT=0x%x/0x%x FLOW=0x%x fsm=0x%x/%s rst=%u trig=%u hwrst_done=%u swrst_done=%u running=%u clr=%u VALID=0x%x READY=0x%x RDMA=0x%x IN=%u/%u OUT=%u/%u\n",
+		idx, tag, ddp_get_module_name(module), handle, ret,
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_RST),
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_EN),
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_SRC_CON),
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_INTEN),
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_INTSTA), flow,
+		flow & 0x3ff, m6_ovl_fsm_name(flow & 0x3ff),
+		(flow >> 20) & 0x1, (flow >> 21) & 0x1,
+		(flow >> 23) & 0x1, (flow >> 24) & 0x1,
+		(flow >> 27) & 0x1, (flow >> 28) & 0x1,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT));
+}
+
 int ovl_start(DISP_MODULE_ENUM module, void *handle)
 {
 	unsigned long ovl_base = ovl_base_addr(module);
@@ -240,8 +301,11 @@ int ovl_reset(DISP_MODULE_ENUM module, void *handle)
 	unsigned int delay_cnt = 0;
 	unsigned long ovl_base = ovl_base_addr(module);
 
+	m6_ovl_reset_diag("enter", module, handle, 0);
 	DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_RST, 0x1);
+	m6_ovl_reset_diag("asserted", module, handle, 0);
 	DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_RST, 0x0);
+	m6_ovl_reset_diag("deasserted", module, handle, 0);
 	/*only wait if not cmdq */
 	if (handle == NULL) {
 		while (!(DISP_REG_GET(ovl_base + DISP_REG_OVL_FLOW_CTRL_DBG) & OVL_IDLE)) {
@@ -254,6 +318,7 @@ int ovl_reset(DISP_MODULE_ENUM module, void *handle)
 			}
 		}
 	}
+	m6_ovl_reset_diag("exit", module, handle, ret);
 	return ret;
 }
 

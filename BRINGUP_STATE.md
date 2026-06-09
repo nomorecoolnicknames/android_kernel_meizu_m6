@@ -1,5 +1,141 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #100 OVL reset lifecycle / SMI / DEVAPC diagnostics
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add bounded read-only
+instrumentation around the primary display path lifecycle, OVL0 reset,
+OVL abnormal-SOF IRQs, correct SMI LARB0 MMU/grant offsets, and DEVAPC
+violations. This patch does not change IF_VSYNC mapping, CMDQ waits, OVL/RDMA
+configuration, SMI/M4U programming, DSI timing, LCM commands, panel reset, or
+backlight policy.
+
+Hypothesis: FACT from #98: `DISP_PATH_EVENT_IF_VSYNC` was already mapped to
+`DDP_IRQ_RDMA0_DONE`; remapping it would fake vsync and would not complete
+real frames. FACT from #98: OVL0 was stuck in `s_w_rst` / reset wait while
+RDMA0 counters stayed at zero. FACT from older timeout dumps: the local
+`LARB0_MMU` marker used larb0+0xa0..0xac, which are not the real MT6755/MT6750
+MMU enable offsets. HYPOTHESIS: the next useful evidence is not another
+IF_VSYNC/CMDQ token patch, but a lifecycle trace proving whether OVL0 is
+already wedged before Linux resume reset, whether `OVL_RST` can recover it,
+and whether DEVAPC or SMI LARB0 grant/MMU state explains the stuck fetch/reset
+FSM.
+
+Evidence:
+- Source patch under test: this #100 section and the boot-only artifact below.
+- Pre-patch #98 report:
+  `/srv/forge/android/meizu_m6/docs/run_reports/2026-06-09_m6_display_closed_layers_external_audit_result.md`,
+  Addendum session 4.
+- #100 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1752-m6-ovl-reset-lifecycle-diag-bootonly/boot-m6-ovl-reset-lifecycle-diag-20260609.img`.
+- #100 boot image sha256:
+  `f0a3b28a43ef546595afb10d3ed200d27ef81b8214ba27745ad29d60c30c45db`.
+- #100 `Image.gz-dtb` sha256:
+  `b8eabc28770b7f57db0371efad84dadf66abe7a707aa4db5458c078a427e21fa`.
+- #100 `System.map` sha256:
+  `03091c3af6aad1271730604307973ecb594fcbe03825a429ddb2cadf2a7ba4f7`.
+- #100 `vmlinux` sha256:
+  `9104c267a289548bb57995ee694dbe34a09e09dc3f18d618f62c9a4a55a07a5b`.
+- Build/packaging verification: `git diff --check` passed, `make
+  Image.gz-dtb` completed, artifact `sha256sum -c SHA256SUMS` passed, and
+  unpacked `zImage` / `initrd.img` hashes match the packaged inputs.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c`: adds
+  primary-display lifecycle snapshots around path start/stop/reset/power
+  boundaries and replaces the stale larb0+0xa0 pseudo-MMU marker with real
+  `MMU_M4U=larb0+0xfc0` plus grant/OSTD/ongoing state.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c`: adds OVL0
+  reset-entry/assert/deassert/exit snapshots with FLOW/FSM and RDMA counters.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_irq.c`: decodes OVL0
+  abnormal-SOF FLOW/FSM state and rate-limits abnormal-SOF logging.
+- `kernel-3.18/drivers/misc/mediatek/devapc/mt6755/devapc.c`: logs the first
+  64 DEVAPC violations with master/domain/address/status/mask fields.
+- `BRINGUP_STATE.md`: records the diagnostic category, evidence, expected
+  marker, rollback condition, artifact identity, and verification commands.
+
+Why each file changed: `ddp_manager.c` owns the path lifecycle and timeout
+truth windows where the resume wedge appears; it also owns the stale SMI marker
+that needed correct offsets. `ddp_ovl.c` owns the local reset primitive that
+#98 showed could not recover the stuck FSM. `ddp_irq.c` owns the abnormal-SOF
+signature and can tie frame-rate SOF spam to the decoded OVL FSM without
+changing IRQ routing. `devapc.c` is the only precise source for real DEVAPC
+violations; polling generic logs after the fact cannot prove a blocked access.
+The state file is the durable M6 bring-up record required for this diagnostic
+patch.
+
+Expected next marker: after flashing #100 and running one brightness-pinned
+off/on cycle with cleared dmesg/logcat, the fresh log should show whether
+`M6 DPMGR life[power-on-begin]` starts from a healthy OVL FSM or from
+`h_w_rst`, whether `M6 OVL reset[asserted/deasserted/exit]` reaches idle, and
+whether any `[DEVAPC] M6 DEVAPC vio[...]` or SMI `OSTDL`/ongoing/grant field
+correlates with the first `wait VSYNC timeout`. If OVL is already wedged before
+path reset and no DEVAPC/SMI violation appears, the next frontier is the
+suspend/power-off/reset-domain sequence that leaves OVL in `h_w_rst`, not the
+RDMA0_EOF token.
+
+Rollback condition: revert this diagnostic patch if the bounded markers flood
+logs enough to hide the display timeline, measurably delay suspend/resume, or
+change boot/display behavior before the first `M6 DPMGR life[...]` marker. Do
+not revert only because the panel remains black or because VSYNC still times
+out; this patch is observation-only.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+export PATH=/srv/forge/toolchains/aarch64-linux-android-4.9/bin:$PATH
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-1752-m6-ovl-reset-lifecycle-diag-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-1757-m6-100-offon-cycle-ovl-reset-lifecycle-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+rg -n 'M6 DPMGR life|M6 OVL reset|M6 DDP timeout\\[VSYNC\\].*MMU_M4U|M6 DEVAPC|wait VSYNC timeout|abnormal SOF' "$CAP/dmesg.txt"
+```
+
+Runtime result, **FACT**, 2026-06-09:
+- #100 was flashed through the reverse ADB tunnel to device `711HEBSR277K5`.
+  Preflash boot partition hash was #99
+  `4343751b639329fe5f3353b638c015c7d2fc947f635f58c9d44566f71594735c`;
+  post-write readback and both #100 capture identities match
+  `f0a3b28a43ef546595afb10d3ed200d27ef81b8214ba27745ad29d60c30c45db`.
+- Postboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1755-m6-100-ovl-reset-lifecycle-diag-711HEBSR277K5/`.
+- Clean off/on cycle capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1757-m6-100-offon-cycle-ovl-reset-lifecycle-711HEBSR277K5/`;
+  pre/post identity shows `sys.boot_completed=1`, bootanim stopped, brightness
+  mode `0`, brightness `255`, and matching boot hash.
+- Clean #100 cycle, FACT: resume begins at `[120.940]`. At
+  `M6 DPMGR life[7][power-on-begin]`, before `dpmgr_path_reset()` and before
+  the LCM resume callback, OVL0 is already `FLOW=0x280fad00 fsm=0x100/h_w_rst`
+  with `EN=0`, `SRC=0`, `hwrst_done=0`, `swrst_done=0`, `RDMA=0x100`, and
+  `IN/OUT=0/0`.
+- Clean #100 cycle, FACT: `ovl_reset()` asserts OVL_RST and moves the FSM to
+  `FLOW=0x2810ae00 fsm=0x200/s_w_rst`, deasserts to
+  `FLOW=0x280bae00 fsm=0x200/s_w_rst`, then exits with ret `4294967295`
+  after `ovl0 reset timeout!`; `dpmgr_path_reset()` returns `ret=-1`.
+- Clean #100 cycle, FACT: after the failed reset the code still runs full
+  `M6 LCM resume start/end`, then `dpmgr_path_start()` enables OVL/RDMA, but
+  `FLOW` remains `0x280bae00`, RDMA counters stay `0/0`, and VSYNC timeouts
+  begin at `[125.758]`.
+- Clean #100 cycle, FACT: the corrected SMI marker reports
+  `MMU_M4U=0x7ff`, `OSTDL=0x7ff/0x0`, `EXT=0`, `INT=0`, `OSTD_UDF=0`,
+  `OSTD_CRS=0`, `ONGOING=0`, and `REQ=0`. No `[DEVAPC] M6 DEVAPC vio[...]`
+  lines appear in the cycle capture.
+
+INFERENCE: DEVAPC and the previously suspected SMI MMU/grant profile are not
+the observed root of this clean resume wedge. The earliest proven digital
+frontier is now earlier than HWC memory-layer fetch and earlier than
+`dpmgr_path_reset()`: suspend/power-off leaves OVL0 already stuck in
+`h_w_rst`, and the local OVL software reset cannot recover it. Next evidence
+should target the pre-poweroff stop/idle/reset-domain sequence, MMSYS/display
+MTCMOS reset behavior, and SMI/LARB clock/reset ordering. The optical HS-panel
+acceptance bug remains separate because DSI-generated BIST was also invisible.
+
 ## 2026-06-09 #98 suppress resume-time LCM DCS trace reads
 
 PATCH HISTORY, **DIAGNOSTIC / ISOLATION**, 2026-06-09: suppress the

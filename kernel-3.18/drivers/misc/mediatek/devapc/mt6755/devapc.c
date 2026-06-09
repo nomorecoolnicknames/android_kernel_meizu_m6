@@ -109,6 +109,7 @@ static struct clk *dapc_clk;
 static struct cdev *g_devapc_ctrl;
 static unsigned int devapc_irq;
 static void __iomem *devapc_pd_base;
+static unsigned int m6_devapc_vio_diag_count;
 
 static unsigned int enable_dynamic_one_core_violation_debug;
 
@@ -622,6 +623,27 @@ static irqreturn_t devapc_violation_irq(int irq, void *dev_id)
 	master_id = (dbg0 & VIO_DBG_MSTID) >> 0;
 	domain_id = (dbg0 & VIO_DBG_DMNID) >> 13;
 	r_w_violation = (dbg0 & VIO_DBG_W) >> 28;
+
+	if (m6_devapc_vio_diag_count < 64) {
+		unsigned int idx = m6_devapc_vio_diag_count++;
+
+		pr_err("[DEVAPC] M6 DEVAPC vio[%u]: t=%llu us rw=%c master=0x%x domain=0x%x addr=0x%x dbg0=0x%x sta=%x/%x/%x/%x/%x/%x mask=%x/%x/%x/%x/%x/%x\n",
+		       idx, sched_clock() / 1000,
+		       r_w_violation ? 'W' : 'R', master_id, domain_id,
+		       dbg1, dbg0,
+		       readl(DEVAPC0_D0_VIO_STA_0),
+		       readl(DEVAPC0_D0_VIO_STA_1),
+		       readl(DEVAPC0_D0_VIO_STA_2),
+		       readl(DEVAPC0_D0_VIO_STA_3),
+		       readl(DEVAPC0_D0_VIO_STA_4),
+		       readl(DEVAPC0_D0_VIO_STA_5),
+		       readl(DEVAPC0_D0_VIO_MASK_0),
+		       readl(DEVAPC0_D0_VIO_MASK_1),
+		       readl(DEVAPC0_D0_VIO_MASK_2),
+		       readl(DEVAPC0_D0_VIO_MASK_3),
+		       readl(DEVAPC0_D0_VIO_MASK_4),
+		       readl(DEVAPC0_D0_VIO_MASK_5));
+	}
 
 	/* violation information improvement */
 	if (1 == r_w_violation) {

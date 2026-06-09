@@ -42,6 +42,7 @@ static unsigned int disp_irq_log_module[DISP_MODULE_NUM];
 static unsigned int cnt_rdma_underflow[2];
 static unsigned int cnt_rdma_abnormal[2];
 static unsigned int cnt_ovl_underflow[OVL_NUM];
+static unsigned int cnt_ovl_abnormal_sof[OVL_NUM];
 static unsigned int cnt_wdma_underflow[2];
 static unsigned int m6_ovl0_irq_diag_count;
 static unsigned int m6_rdma0_irq_diag_count;
@@ -65,6 +66,34 @@ static bool disp_irq_m6_diag_sample(unsigned int *count)
 	unsigned int n = (*count)++;
 
 	return n < 24;
+}
+
+static const char *disp_irq_m6_ovl_fsm_name(unsigned int fsm)
+{
+	switch (fsm) {
+	case 0x1:
+		return "idle";
+	case 0x2:
+		return "wait_SOF";
+	case 0x4:
+		return "prepare";
+	case 0x8:
+		return "reg_update";
+	case 0x10:
+		return "eng_clr";
+	case 0x20:
+		return "eng_act";
+	case 0x40:
+		return "h_wait_w_rst";
+	case 0x80:
+		return "s_wait_w_rst";
+	case 0x100:
+		return "h_w_rst";
+	case 0x200:
+		return "s_w_rst";
+	default:
+		return "unknown";
+	}
 }
 
 static void disp_irq_m6_dump_ovl0_layer(unsigned int idx, unsigned long base,
@@ -114,6 +143,7 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 	unsigned int ovl_greq_num;
 	unsigned int ovl_greq_urg;
 	unsigned int larb0_greq;
+	unsigned int flow;
 	unsigned int idx;
 	unsigned int layer;
 	struct m6_ovl_config_snapshot snap = { 0 };
@@ -133,6 +163,7 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 	ovl_greq_num = DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_NUM);
 	ovl_greq_urg = DISP_REG_GET(base + DISP_REG_OVL_RDMA_GREQ_URG_NUM);
 	larb0_greq = DISP_REG_GET(DISP_REG_CONFIG_SMI_LARB0_GREQ);
+	flow = DISP_REG_GET(base + DISP_REG_OVL_FLOW_CTRL_DBG);
 
 	DISPERR("M6 OVL irq diag[%u]: intsta=0x%x sta=0x%x inten=0x%x en=0x%x src=0x%x roi=0x%x path=0x%x flow=0x%x addcon=0x%x smi=0x%x ovl_greq=0x%x ovl_urg=0x%x larb0_greq=0x%x valid=0x%x ready=0x%x mutex=0x%x/0x%x rdma=0x%x in=%u/%u out=%u/%u\n",
 		idx, intsta,
@@ -142,7 +173,7 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 		DISP_REG_GET(base + DISP_REG_OVL_SRC_CON),
 		DISP_REG_GET(base + DISP_REG_OVL_ROI_SIZE),
 		DISP_REG_GET(base + DISP_REG_OVL_DATAPATH_CON),
-		DISP_REG_GET(base + DISP_REG_OVL_FLOW_CTRL_DBG),
+		flow,
 		DISP_REG_GET(base + DISP_REG_OVL_ADDCON_DBG),
 		DISP_REG_GET(base + DISP_REG_OVL_SMI_DBG),
 		ovl_greq_num,
@@ -157,6 +188,19 @@ static void disp_irq_m6_dump_ovl0_state(DISP_MODULE_ENUM module,
 		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
 		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
 		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT));
+	DISPERR("M6 OVL irq diag[%u]: flow decode fsm=0x%x/%s addcon_idle=%u blend_idle=%u out_valid=%u out_ready=%u out_idle=%u rdma_idle=%u/%u/%u/%u rst=%u trig=%u hwrst_done=%u swrst_done=%u underrun=%u done=%u running=%u start=%u clr=%u reg_update=%u upd_reg=%u\n",
+		idx,
+		flow & 0x3ff, disp_irq_m6_ovl_fsm_name(flow & 0x3ff),
+		(flow >> 10) & 0x1, (flow >> 11) & 0x1,
+		(flow >> 12) & 0x1, (flow >> 13) & 0x1,
+		(flow >> 15) & 0x1, (flow >> 19) & 0x1,
+		(flow >> 18) & 0x1, (flow >> 17) & 0x1,
+		(flow >> 16) & 0x1, (flow >> 20) & 0x1,
+		(flow >> 21) & 0x1, (flow >> 23) & 0x1,
+		(flow >> 24) & 0x1, (flow >> 25) & 0x1,
+		(flow >> 26) & 0x1, (flow >> 27) & 0x1,
+		(flow >> 28) & 0x1, (flow >> 29) & 0x1,
+		(flow >> 30) & 0x1, (flow >> 31) & 0x1);
 	DISPERR("M6 OVL irq diag[%u]: ovl_greq decode layer=%u/%u/%u/%u ostd=0x%x dis=%u flush_pre=%u flush_ultra=%u urg_layer=%u/%u/%u/%u urg_th=0x%x urg_bias=%u\n",
 		idx,
 		ovl_greq_num & 0x7,
@@ -463,8 +507,13 @@ irqreturn_t disp_irq_handler(int irq, void *dev_id)
 		if (reg_val & (1 << 12))
 			DISPERR("IRQ: %s-L3 fifo underflow!\n", ddp_get_module_name(module));
 #endif
-		if (reg_val & (1 << 13))
-			DISPERR("IRQ: %s abnormal SOF!\n", ddp_get_module_name(module));
+		if (reg_val & (1 << 13)) {
+			unsigned int abnormal = cnt_ovl_abnormal_sof[index]++;
+
+			if (abnormal < 24 || ((abnormal & 0x3ff) == 0))
+				DISPERR("IRQ: %s abnormal SOF! cnt=%u\n",
+					ddp_get_module_name(module), abnormal);
+		}
 
 		disp_irq_m6_dump_ovl0_state(module, reg_val);
 

@@ -939,6 +939,55 @@ int dpmgr_path_deinit(disp_path_handle dp_handle, int encmdq)
 	return 0;
 }
 
+static void dpmgr_m6_path_lifecycle_state(const char *tag,
+	ddp_path_handle handle, void *cmdq_handle, int encmdq, int ret)
+{
+	static unsigned int count;
+	unsigned int flow;
+	unsigned int mutex_id;
+
+	if (handle == NULL || handle->scenario != DDP_SCENARIO_PRIMARY_DISP ||
+	    count >= 128)
+		return;
+
+	count++;
+	mutex_id = handle->hwmutexid;
+	flow = DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_FLOW_CTRL_DBG);
+	DISPERR("M6 DPMGR life[%u][%s]: scenario=%s mutex=%u encmdq=%d cmdq=%p ret=%d power=%d VALID=0x%x READY=0x%x M=0x%x/0x%x/0x%x OVL0 RST=0x%x EN=0x%x SRC=0x%x INT=0x%x/0x%x FLOW=0x%x fsm=0x%x rst=%u trig=%u hwrst_done=%u swrst_done=%u running=%u clr=%u L0=0x%x/%x L1=0x%x/%x OVL_RDMA=0x%x/%x/%x/%x RDMA=0x%x IN=%u/%u OUT=%u/%u DSI=0x%x/0x%x/0x%x\n",
+		count, tag ? tag : "null", ddp_get_scenario_name(handle->scenario),
+		mutex_id, encmdq, cmdq_handle, ret, handle->power_sate,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(mutex_id)),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_RST),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_EN),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_INTEN),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_INTSTA),
+		flow, flow & 0x3ff, (flow >> 20) & 0x1,
+		(flow >> 21) & 0x1, (flow >> 23) & 0x1,
+		(flow >> 24) & 0x1, (flow >> 27) & 0x1,
+		(flow >> 28) & 0x1,
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L0_CON),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L0_ADDR),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L1_CON),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_L1_ADDR),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_RDMA0_DBG),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_RDMA1_DBG),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_RDMA2_DBG),
+		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_RDMA3_DBG),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x000),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x004),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x16c));
+}
+
 int dpmgr_path_start(disp_path_handle dp_handle, int encmdq)
 {
 	int i = 0;
@@ -954,6 +1003,8 @@ int dpmgr_path_start(disp_path_handle dp_handle, int encmdq)
 	module_num = ddp_get_module_num(handle->scenario);
 	cmdqHandle = encmdq ? handle->cmdqhandle : NULL;
 
+	dpmgr_m6_path_lifecycle_state("start-begin", handle, cmdqHandle,
+				      encmdq, 0);
 	dpmgr_m6_sram_state("start-begin", handle, cmdqHandle, encmdq);
 	DISPMSG("path start on scenario %s\n", ddp_get_scenario_name(handle->scenario));
 	for (i = 0; i < module_num; i++) {
@@ -968,6 +1019,8 @@ int dpmgr_path_start(disp_path_handle dp_handle, int encmdq)
 		}
 	}
 	dpmgr_m6_sram_state("start-done", handle, cmdqHandle, encmdq);
+	dpmgr_m6_path_lifecycle_state("start-done", handle, cmdqHandle,
+				      encmdq, 0);
 	return 0;
 }
 
@@ -987,6 +1040,8 @@ int dpmgr_path_stop(disp_path_handle dp_handle, int encmdq)
 	module_num = ddp_get_module_num(handle->scenario);
 	cmdqHandle = encmdq ? handle->cmdqhandle : NULL;
 
+	dpmgr_m6_path_lifecycle_state("stop-begin", handle, cmdqHandle,
+				      encmdq, 0);
 	DISPMSG("path stop on scenario %s\n", ddp_get_scenario_name(handle->scenario));
 	for (i = module_num - 1; i >= 0; i--) {
 		module_name = modules[i];
@@ -999,6 +1054,8 @@ int dpmgr_path_stop(disp_path_handle dp_handle, int encmdq)
 			}
 		}
 	}
+	dpmgr_m6_path_lifecycle_state("stop-done", handle, cmdqHandle,
+				      encmdq, 0);
 	return 0;
 }
 
@@ -1137,9 +1194,13 @@ int dpmgr_path_reset(disp_path_handle dp_handle, int encmdq)
 	module_num = ddp_get_module_num(handle->scenario);
 	cmdqHandle = encmdq ? handle->cmdqhandle : NULL;
 
+	dpmgr_m6_path_lifecycle_state("reset-begin", handle, cmdqHandle,
+				      encmdq, 0);
 	DISPMSG("path reset on scenario %s\n", ddp_get_scenario_name(handle->scenario));
 	/* first reset mutex */
 	ddp_mutex_reset(handle->hwmutexid, cmdqHandle);
+	dpmgr_m6_path_lifecycle_state("reset-after-mutex", handle, cmdqHandle,
+				      encmdq, 0);
 
 	for (i = 0; i < module_num; i++) {
 		module_name = modules[i];
@@ -1148,15 +1209,31 @@ int dpmgr_path_reset(disp_path_handle dp_handle, int encmdq)
 				DISPDBG("scenario %s  reset module %s\n",
 					   ddp_get_scenario_name(handle->scenario),
 					   ddp_get_module_name(module_name));
+				if (module_name == DISP_MODULE_OVL0 ||
+				    module_name == DISP_MODULE_RDMA0 ||
+				    module_name == DISP_MODULE_DSI0)
+					dpmgr_m6_path_lifecycle_state("reset-before-module",
+						handle, cmdqHandle, encmdq,
+						module_name);
 				ret =
 				    ddp_modules_driver[module_name]->reset(module_name, cmdqHandle);
 				if (ret != 0)
 					error++;
+				if (module_name == DISP_MODULE_OVL0 ||
+				    module_name == DISP_MODULE_RDMA0 ||
+				    module_name == DISP_MODULE_DSI0)
+					dpmgr_m6_path_lifecycle_state("reset-after-module",
+						handle, cmdqHandle, encmdq,
+						((ret & 0xffff) << 16) |
+						module_name);
 
 			}
 		}
 	}
-	return error > 0 ? -1 : 0;
+	ret = error > 0 ? -1 : 0;
+	dpmgr_m6_path_lifecycle_state("reset-done", handle, cmdqHandle,
+				      encmdq, ret);
+	return ret;
 }
 
 static unsigned int dpmgr_is_PQ(DISP_MODULE_ENUM module)
@@ -1472,6 +1549,8 @@ int dpmgr_path_power_off(disp_path_handle dp_handle, CMDQ_SWITCH encmdq)
 	modules = ddp_get_scenario_list(handle->scenario);
 	module_num = ddp_get_module_num(handle->scenario);
 
+	dpmgr_m6_path_lifecycle_state("power-off-begin", handle,
+		encmdq ? handle->cmdqhandle : NULL, encmdq, 0);
 	DISPMSG("path power off on scenario %s\n", ddp_get_scenario_name(handle->scenario));
 	for (i = 0; i < module_num; i++) {
 		module_name = modules[i];
@@ -1484,6 +1563,8 @@ int dpmgr_path_power_off(disp_path_handle dp_handle, CMDQ_SWITCH encmdq)
 	}
 	handle->power_sate = 0;
 	path_top_clock_off();
+	dpmgr_m6_path_lifecycle_state("power-off-done", handle,
+		encmdq ? handle->cmdqhandle : NULL, encmdq, 0);
 	return 0;
 }
 
@@ -1500,6 +1581,8 @@ int dpmgr_path_power_on(disp_path_handle dp_handle, CMDQ_SWITCH encmdq)
 	modules = ddp_get_scenario_list(handle->scenario);
 	module_num = ddp_get_module_num(handle->scenario);
 
+	dpmgr_m6_path_lifecycle_state("power-on-begin", handle,
+		encmdq ? handle->cmdqhandle : NULL, encmdq, 0);
 	DISPMSG("path power on scenario %s\n", ddp_get_scenario_name(handle->scenario));
 	path_top_clock_on();
 	for (i = 0; i < module_num; i++) {
@@ -1513,6 +1596,8 @@ int dpmgr_path_power_on(disp_path_handle dp_handle, CMDQ_SWITCH encmdq)
 	}
 	/* modules on this path will resume power on; */
 	handle->power_sate = 1;
+	dpmgr_m6_path_lifecycle_state("power-on-done", handle,
+		encmdq ? handle->cmdqhandle : NULL, encmdq, 0);
 	return 0;
 }
 
@@ -1887,6 +1972,36 @@ static unsigned int dpmgr_m6_primary_rdmadone_irq_diag_count;
 	 (1U << 19) | (1U << 25))
 #define M6_OVL_LAYER_OFFSET 0x20
 #define M6_OVL_RDMA_DEBUG_OFFSET 0x4
+#define M6_SMI_LARB0_MMU_EN_M4U 0xfc0
+#define M6_SMI_LARB0_MMU_EN_SMI 0xf00
+
+static const char *dpmgr_m6_ovl_fsm_name(unsigned int fsm)
+{
+	switch (fsm) {
+	case 0x1:
+		return "idle";
+	case 0x2:
+		return "wait_SOF";
+	case 0x4:
+		return "prepare";
+	case 0x8:
+		return "reg_update";
+	case 0x10:
+		return "eng_clr";
+	case 0x20:
+		return "eng_act";
+	case 0x40:
+		return "h_wait_w_rst";
+	case 0x80:
+		return "s_wait_w_rst";
+	case 0x100:
+		return "h_w_rst";
+	case 0x200:
+		return "s_w_rst";
+	default:
+		return "unknown";
+	}
+}
 
 static void dpmgr_m6_hold_primary_video_clocks(ddp_path_handle handle,
 	const char *event_name)
@@ -1955,6 +2070,87 @@ static void dpmgr_m6_dump_ovl_layer_decode(const char *event_name,
 		DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_RDMA0_MEM_GMC_SETTING),
 		DISP_REG_GET(ovl_base + layer_off + DISP_REG_OVL_RDMA0_FIFO_CTRL),
 		DISP_REG_GET(ovl_base + rdma_off + DISP_REG_OVL_RDMA0_DBG));
+}
+
+static void dpmgr_m6_dump_ovl_flow_decode(const char *event_name,
+	const char *ovl_name, unsigned long ovl_base)
+{
+	unsigned int flow = DISP_REG_GET(ovl_base + DISP_REG_OVL_FLOW_CTRL_DBG);
+	unsigned int rdma0 = DISP_REG_GET(ovl_base + DISP_REG_OVL_RDMA0_DBG);
+	unsigned int rdma1 = DISP_REG_GET(ovl_base + DISP_REG_OVL_RDMA1_DBG);
+	unsigned int rdma2 = DISP_REG_GET(ovl_base + DISP_REG_OVL_RDMA2_DBG);
+	unsigned int rdma3 = DISP_REG_GET(ovl_base + DISP_REG_OVL_RDMA3_DBG);
+
+	DISPERR("M6 DDP timeout[%s]: %s flow decode fsm=0x%x/%s addcon_idle=%u blend_idle=%u out_valid=%u out_ready=%u out_idle=%u rdma_idle=%u/%u/%u/%u rst=%u trig=%u hwrst_done=%u swrst_done=%u underrun=%u done=%u running=%u start=%u clr=%u reg_update=%u upd_reg=%u\n",
+		event_name, ovl_name, flow & 0x3ff,
+		dpmgr_m6_ovl_fsm_name(flow & 0x3ff),
+		(flow >> 10) & 0x1, (flow >> 11) & 0x1,
+		(flow >> 12) & 0x1, (flow >> 13) & 0x1,
+		(flow >> 15) & 0x1, (flow >> 19) & 0x1,
+		(flow >> 18) & 0x1, (flow >> 17) & 0x1,
+		(flow >> 16) & 0x1, (flow >> 20) & 0x1,
+		(flow >> 21) & 0x1, (flow >> 23) & 0x1,
+		(flow >> 24) & 0x1, (flow >> 25) & 0x1,
+		(flow >> 26) & 0x1, (flow >> 27) & 0x1,
+		(flow >> 28) & 0x1, (flow >> 29) & 0x1,
+		(flow >> 30) & 0x1, (flow >> 31) & 0x1);
+	DISPERR("M6 DDP timeout[%s]: %s rdma_dbg decode L0=0x%x greq=%u busy=%u smi_greq=%u L1=0x%x greq=%u busy=%u smi_greq=%u L2=0x%x greq=%u busy=%u smi_greq=%u L3=0x%x greq=%u busy=%u smi_greq=%u\n",
+		event_name, ovl_name,
+		rdma0, (rdma0 >> 3) & 0x1, (rdma0 >> 30) & 0x1,
+		(rdma0 >> 31) & 0x1,
+		rdma1, (rdma1 >> 3) & 0x1, (rdma1 >> 30) & 0x1,
+		(rdma1 >> 31) & 0x1,
+		rdma2, (rdma2 >> 3) & 0x1, (rdma2 >> 30) & 0x1,
+		(rdma2 >> 31) & 0x1,
+		rdma3, (rdma3 >> 3) & 0x1, (rdma3 >> 30) & 0x1,
+		(rdma3 >> 31) & 0x1);
+}
+
+static void dpmgr_m6_dump_smi_larb0_state(const char *event_name)
+{
+	unsigned long b = DISPSYS_SMI_LARB0_BASE;
+	unsigned long c = DISPSYS_SMI_COMMON_BASE;
+
+	DISPERR("M6 DDP timeout[%s]: smi larb0 core STAT=0x%x IRQ=0x%x/0x%x SLP=0x%x CON=0x%x VC=0x%x THRT=0x%x STARV=0x%x EMI=0x%x SHARE=0x%x\n",
+		event_name,
+		DISP_REG_GET(b + 0x000), DISP_REG_GET(b + 0x004),
+		DISP_REG_GET(b + 0x008), DISP_REG_GET(b + 0x00c),
+		DISP_REG_GET(b + 0x010), DISP_REG_GET(b + 0x020),
+		DISP_REG_GET(b + 0x024), DISP_REG_GET(b + 0x028),
+		DISP_REG_GET(b + 0x02c), DISP_REG_GET(b + 0x030));
+	DISPERR("M6 DDP timeout[%s]: smi larb0 mmu/grant MMU_M4U=0x%x MMU_SMI=0x%x DOMN=0x%x/0x%x BWL=0x%x/0x%x/0x%x OSTDL=0x%x/0x%x ULTRA=0x%x/0x%x FORCE=0x%x/0x%x\n",
+		event_name,
+		DISP_REG_GET(b + M6_SMI_LARB0_MMU_EN_M4U),
+		DISP_REG_GET(b + M6_SMI_LARB0_MMU_EN_SMI),
+		DISP_REG_GET(b + 0xf08), DISP_REG_GET(b + 0xf0c),
+		DISP_REG_GET(b + 0x050), DISP_REG_GET(b + 0x054),
+		DISP_REG_GET(b + 0x058), DISP_REG_GET(b + 0x060),
+		DISP_REG_GET(b + 0x064), DISP_REG_GET(b + 0x070),
+		DISP_REG_GET(b + 0x074), DISP_REG_GET(b + 0x078),
+		DISP_REG_GET(b + 0x07c));
+	DISPERR("M6 DDP timeout[%s]: smi larb0 vio/ongoing EXT=0x%x INT=0x%x OSTD_UDF=0x%x OSTD_CRS=0x%x FIFO=0x%x BUS=0x%x THRT=0x%x REQ=0x%x/0x%x ONGOING=0x%x/0x%x MISC=0x%x\n",
+		event_name,
+		DISP_REG_GET(b + 0x0a0), DISP_REG_GET(b + 0x0a4),
+		DISP_REG_GET(b + 0x0a8), DISP_REG_GET(b + 0x0ac),
+		DISP_REG_GET(b + 0x0b0), DISP_REG_GET(b + 0x0b4),
+		DISP_REG_GET(b + 0x0b8), DISP_REG_GET(b + 0x0c0),
+		DISP_REG_GET(b + 0x0c4), DISP_REG_GET(b + 0x0c8),
+		DISP_REG_GET(b + 0x0cc), DISP_REG_GET(b + 0x0d0));
+	DISPERR("M6 DDP timeout[%s]: smi larb0 ostd_port P0-7=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x mon=%x/%x/%x/%x/%x\n",
+		event_name,
+		DISP_REG_GET(b + 0x200), DISP_REG_GET(b + 0x204),
+		DISP_REG_GET(b + 0x208), DISP_REG_GET(b + 0x20c),
+		DISP_REG_GET(b + 0x210), DISP_REG_GET(b + 0x214),
+		DISP_REG_GET(b + 0x218), DISP_REG_GET(b + 0x21c),
+		DISP_REG_GET(b + 0x410), DISP_REG_GET(b + 0x414),
+		DISP_REG_GET(b + 0x418), DISP_REG_GET(b + 0x41c),
+		DISP_REG_GET(b + 0x428));
+	DISPERR("M6 DDP timeout[%s]: smi common L1LEN=0x%x L1ARB0=0x%x L1ARB1=0x%x L1ARB2=0x%x L1ARB3=0x%x M4U_TH=0x%x READ_FIFO_TH=0x%x\n",
+		event_name,
+		DISP_REG_GET(c + 0x200), DISP_REG_GET(c + 0x204),
+		DISP_REG_GET(c + 0x208), DISP_REG_GET(c + 0x20c),
+		DISP_REG_GET(c + 0x210), DISP_REG_GET(c + 0x234),
+		DISP_REG_GET(c + 0x230));
 }
 
 static void dpmgr_m6_dump_primary_video_state(const char *event_name)
@@ -2037,6 +2233,8 @@ static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_SRC_CON),
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_FLOW_CTRL_DBG),
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_ADDCON_DBG));
+	dpmgr_m6_dump_ovl_flow_decode(event_name, "ovl0",
+		DISPSYS_OVL0_BASE);
 	DISPERR("M6 DDP timeout[%s]: ovl0 ROI=0x%x PATH=0x%x L0 CON=0x%x SIZE=0x%x ADDR=0x%x PITCH=0x%x L1 CON=0x%x SIZE=0x%x ADDR=0x%x PITCH=0x%x\n",
 		event_name,
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_ROI_SIZE),
@@ -2084,14 +2282,9 @@ static void dpmgr_m6_dump_primary_video_state(const char *event_name)
 	for (layer = 0; layer < 2; layer++)
 		dpmgr_m6_dump_ovl_layer_decode(event_name, "ovl0_2l",
 			DDP_REG_BASE_DISP_OVL0_2L, layer);
-	DISPERR("M6 DDP timeout[%s]: smi LARB0_STA=0x%x LARB0_MMU=0x%x/0x%x/0x%x/0x%x LARB0_GREQ=0x%x\n",
-		event_name,
-		DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0x0),
-		DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0xa0),
-		DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0xa4),
-		DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0xa8),
-		DISP_REG_GET(DISPSYS_SMI_LARB0_BASE + 0xac),
-		DISP_REG_GET(DISP_REG_CONFIG_SMI_LARB0_GREQ));
+	dpmgr_m6_dump_ovl_flow_decode(event_name, "ovl0_2l",
+		DDP_REG_BASE_DISP_OVL0_2L);
+	dpmgr_m6_dump_smi_larb0_state(event_name);
 	DISPERR("M6 DDP timeout[%s]: dsi0 START=0x%x STA=0x%x INTEN=0x%x INTSTA=0x%x MODE=0x%x TXRX=0x%x PS=0x%x\n",
 		event_name,
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x000),
