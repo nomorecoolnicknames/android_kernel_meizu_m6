@@ -1,5 +1,116 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #86 result / #87 scanout event marker net
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a broad M6 low-layer marker
+net for the current black-display frontier. This follows the local M6 rule
+that dense, proactive display markers are preferred over one-boundary rebuilds
+when a flash/capture cycle is expensive. The patch does not fake EOF, skip
+normal waits, change panel tables, change boot route setup, or alter normal
+scanout behavior. It adds read-only CMDQ token snapshots, timed RDMA/DSI
+progress samples, wider bounded IRQ/event sampling, and clearer DSI trigger
+dump fields.
+
+Hypothesis: FACT: #86 boot image
+`1071cafdaf3e0c5c43266946f18ca0f8b4496f95e5f5ed3a6110034084187857` was
+readback-verified on `/dev/block/platform/mtk-msdc.0/by-name/boot` and booted
+as `Linux localhost 3.18.140 #86` with `sys.boot_completed=1`. FACT: root
+capture
+`/srv/forge/android/meizu_m6/captures/20260609-1005-m6-dsi-c2v-skip-mutex-release-isolation-root-c2v`
+ran `m6_dsi_c2v_switch:0x03:1500` to completion (`c2v_rc=0`) without a new
+WDT or boot hash change. FACT: #86 logs now include `c2v-skip-mutex-release`,
+`switch-dsi-exit`, `c2v-switch-after-dsi`, and `c2v-switch-hold-end`, proving
+the previous debugfs C2V WDT was the CPU-direct `MUTEX0_EN` release boundary.
+FACT: the remaining low-layer state after C2V is not a crash but a stuck
+scanout: DSI stays at `STATE6=0x10800/Waiting TE`, `MODE=0x80003`,
+`INTSTA=0x80000780`; RDMA0 reports `GLOBAL=0x101`, `SIZE=720x1280`,
+`IN=0/1280`, `OUT=0/1280`; the OVL request has valid full-screen L0/L1
+layers; clocks are not gated; backlight is non-zero. HYPOTHESIS: the next
+fault is one of event generation/propagation, DSI TE/frame progression, or
+RDMA/MUTEX stream EOF accounting, not the already-isolated debugfs mutex
+write. A single wide marker net should show whether RDMA/DSI counters move
+over 32 ms, whether CMDQ sees RDMA0/DSI0/MUTEX EOF tokens, and whether DPMGR
+wait queues receive the same events that hardware registers report.
+
+Evidence:
+- #86 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1030-m6-dsi-c2v-skip-mutex-release-isolation-bootonly`.
+- #86 boot sha256:
+  `1071cafdaf3e0c5c43266946f18ca0f8b4496f95e5f5ed3a6110034084187857`.
+- #87 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1025-m6-scanout-event-marker-net-bootonly`.
+- #87 boot sha256:
+  `e33258ca0a09af4695fad223b3ed2c81fe68d08be1b1b45648da0f46e63968e4`.
+- #87 `Image.gz-dtb` sha256:
+  `6aafb8cca6810fe1628b8cdfb8c97d53dd8d6026897fcaec1d73fdd5b528c4b0`.
+- #87 `System.map` sha256:
+  `377222cd6f11a72c960eb6846bcd90e40a450f0a73e470e0ca1ad56a74ba6eee`.
+- #87 packaging verification: `abootimg --create`, `abootimg -i`,
+  `sha256sum -c`, unpacked `zImage` compare, unpacked `initrd.img` compare,
+  and marker-string check passed. New marker strings include
+  `M6 DISPLAY truth[*][scanout-delta]`,
+  `M6 DISPLAY truth[*][cmdq-tokens]`,
+  `M6 DPMGR event flow[*]: cmdq tokens`, and `TXRX`.
+- #86 runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1005-m6-dsi-c2v-skip-mutex-release-isolation-root-c2v`.
+- Key markers:
+  `M6Kxx c2v-skip-mutex-release`, `M6 DSI switch_mode C2V: cpu-direct path
+  skip cmdq flush/reset/wait`, `M6 DISPLAY truth[c2v-switch-hold-end]`, and
+  `M6 DISPLAY truth[after-c2v-skip-release]`.
+- Key stuck state: `STATE6=0x10800/Waiting TE`, `MODE=0x80003`,
+  `RDMA0 IN=0/1280 OUT=0/1280`, `M0_EN=0x1 M0_MOD=0x5f280 M0_SOF=0x41`,
+  `OVL0 SRC=0x3`, `LARB0_GREQ=0x0`, and backlight `bl=10 duty=21`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: adds
+  `cmdq-tokens` and 32 ms `scanout-delta` truth markers, adds those markers
+  to manual truth/route-probe captures, and includes `TXRX` in trigger-loop
+  DSI dumps.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c`: extends
+  `/proc/m6_mtkfb_early_diag` pipe snapshots with RDMA0/DSI0/MUTEX CMDQ event
+  tokens.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c`: extends
+  DPMGR wait/IRQ event flow with CMDQ event tokens and DSI mode/state6/state7;
+  raises bounded M6 sample count from 8 to 24.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_irq.c`: raises bounded
+  M6 IRQ sample count from 8 to 24.
+- `BRINGUP_STATE.md`: records the #86 result and #87 expected evidence.
+
+Why each file changed: `primary_display.c` owns the manual truth/probe path
+the next capture will use. `mtkfb.c` owns the persistent early framebuffer
+proc snapshot, useful when userspace/scrcpy is black. `ddp_manager.c` owns
+DPMGR wait queues and maps hardware IRQ bits to display events. `ddp_irq.c`
+owns hardware IRQ sampling. Together these answer the next layer without
+changing scanout behavior.
+
+Expected next marker: after flashing #87, run
+`m6_display_truth_window:post-boot-87`, `m6_display_route_probe:dump`, and
+optionally `m6_display_route_probe:trigger`. The capture should include
+`M6 DISPLAY truth[*][cmdq-tokens]`, `M6 DISPLAY truth[*][scanout-delta]`,
+`M6 DPMGR event flow[*]: cmdq tokens`, and up to 24 bounded IRQ/event samples.
+If RDMA/DSI counters and CMDQ tokens stay flat, the fault is below userspace
+and at DSI TE/frame progression or RDMA/MUTEX event generation. If counters
+move but DPMGR wait data does not, the fault is event mapping/wait propagation.
+If counters move and tokens appear, the next suspect is layer content/format or
+HWC/userspace feeding black buffers.
+
+Rollback condition: revert this diagnostic if it causes normal boot
+regression, floods logs enough to hide markers, or makes manual truth/probe
+commands block for more than the bounded sample window. It is not a display
+fix; it is a marker net for the next patch.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'id; uname -a; getprop sys.boot_completed; sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot'
+$A shell 'dmesg -C'
+$A shell 'cat /proc/m6_mtkfb_early_diag 2>/dev/null || true'
+$A shell 'echo m6_display_truth_window:post-boot-87 > /d/mtkfb; echo m6_display_route_probe:dump > /d/mtkfb; sleep 1; dmesg'
+```
+
 ## 2026-06-09 #85 result / #86 C2V MUTEX0_EN release isolation
 
 PATCH HISTORY, **ISOLATION**, 2026-06-09: for the M6-only debugfs

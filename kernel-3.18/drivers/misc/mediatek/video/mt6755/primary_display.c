@@ -1245,6 +1245,17 @@ static void primary_m6_dump_trigger_loop_state(const char *tag)
 		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
 		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTEN),
 		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTSTA));
+	DISPPR_ERROR("M6 trigger dump[%s]: cmdq tokens rdma_sof=%u rdma_eof=%u mutex0_eof=%u dsi0_sof=%u dsi0_eof=%u mdp_dsi0_te_sof=%u config_dirty=%u stream_eof=%u cabc_eof=%u\n",
+		tag,
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_SOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_SOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_MDP_DSI0_TE_SOF),
+		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_CONFIG_DIRTY),
+		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_STREAM_EOF),
+		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_CABC_EOF));
 	DISPPR_ERROR("M6 trigger dump[%s]: rdma0 INTEN=0x%x INTSTA=0x%x GLOBAL=0x%x SIZE=%ux%u MEM_CON=0x%x MEM_START=0x%x IN=%u/%u OUT=%u/%u\n",
 		tag,
 		DISP_REG_GET(DISP_REG_RDMA_INT_ENABLE),
@@ -1290,13 +1301,14 @@ static void primary_m6_dump_trigger_loop_state(const char *tag)
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_RDMA0_MEM_GMC_S2),
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_RDMAn_BUF_LOW(0)),
 		DISP_REG_GET(DISPSYS_OVL0_BASE + DISP_REG_OVL_RDMA0_DBG));
-	DISPPR_ERROR("M6 trigger dump[%s]: dsi0 START=0x%x STA=0x%x INTEN=0x%x INTSTA=0x%x MODE=0x%x PS=0x%x PHY_LCCON=0x%x LD0=0x%x\n",
+	DISPPR_ERROR("M6 trigger dump[%s]: dsi0 START=0x%x STA=0x%x INTEN=0x%x INTSTA=0x%x MODE=0x%x TXRX=0x%x PS=0x%x PHY_LCCON=0x%x LD0=0x%x\n",
 		tag,
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x000),
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x004),
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x008),
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x00c),
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x014),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x018),
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x01c),
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x104),
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x108));
@@ -6325,6 +6337,86 @@ static void primary_display_m6_copy_tag(char *dst, size_t dst_size, const char *
 	dst[i] = '\0';
 }
 
+static void primary_display_m6_dump_cmdq_truth(const char *tag)
+{
+	const char *safe_tag = tag ? tag : "manual";
+
+	DISPERR("M6 DISPLAY truth[%s][cmdq-tokens]: rdma_sof=%u rdma_eof=%u mutex0_eof=%u dsi0_sof=%u dsi0_eof=%u mdp_dsi0_te_sof=%u config_dirty=%u stream_eof=%u cabc_eof=%u\n",
+		safe_tag,
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_SOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_SOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_MDP_DSI0_TE_SOF),
+		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_CONFIG_DIRTY),
+		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_STREAM_EOF),
+		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_CABC_EOF));
+}
+
+static void primary_display_m6_dump_scanout_progress(const char *tag,
+	unsigned int hold_ms)
+{
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int rdma_in_p0;
+	unsigned int rdma_in_l0;
+	unsigned int rdma_out_p0;
+	unsigned int rdma_out_l0;
+	unsigned int rdma_fifo0;
+	unsigned int dsi_int0;
+	unsigned int dsi_mode0;
+	unsigned int dsi_state60;
+	unsigned int dsi_state70;
+	unsigned int cmdq_rdma_eof0;
+	unsigned int cmdq_mutex_eof0;
+	unsigned int busy0;
+
+	if (hold_ms > 100)
+		hold_ms = 100;
+
+	rdma_in_p0 = DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT);
+	rdma_in_l0 = DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT);
+	rdma_out_p0 = DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT);
+	rdma_out_l0 = DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT);
+	rdma_fifo0 = DISP_REG_GET(DISP_REG_RDMA_FIFO_LOG);
+	dsi_int0 = DISP_REG_GET(DISPSYS_DSI0_BASE + 0x00c);
+	dsi_mode0 = DISP_REG_GET(DISPSYS_DSI0_BASE + 0x014);
+	dsi_state60 = DISP_REG_GET(DISPSYS_DSI0_BASE + 0x160);
+	dsi_state70 = DISP_REG_GET(DISPSYS_DSI0_BASE + 0x164);
+	cmdq_rdma_eof0 = cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_EOF);
+	cmdq_mutex_eof0 = cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF);
+	busy0 = dpmgr_path_is_busy(pgc->dpmgr_handle);
+
+	msleep(hold_ms);
+
+	DISPERR("M6 DISPLAY truth[%s][scanout-delta]: hold=%ums busy=%u->%u route=0x%x/0x%x mutex=0x%x/0x%x/0x%x rdma_global=0x%x int=0x%x/0x%x in=%u/%u->%u/%u out=%u/%u->%u/%u fifo=0x%x->0x%x dsi_int=0x%x->0x%x mode=0x%x->0x%x state6=0x%x->0x%x state7=0x%x->0x%x cmdq_eof=%u->%u mutex_eof=%u->%u dsi_eof=%u dsi_sof=%u te=%u\n",
+		safe_tag, hold_ms, busy0, dpmgr_path_is_busy(pgc->dpmgr_handle),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_INT_ENABLE),
+		DISP_REG_GET(DISP_REG_RDMA_INT_STATUS),
+		rdma_in_p0, rdma_in_l0,
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		rdma_out_p0, rdma_out_l0,
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		rdma_fifo0, DISP_REG_GET(DISP_REG_RDMA_FIFO_LOG),
+		dsi_int0, DISP_REG_GET(DISPSYS_DSI0_BASE + 0x00c),
+		dsi_mode0, DISP_REG_GET(DISPSYS_DSI0_BASE + 0x014),
+		dsi_state60, DISP_REG_GET(DISPSYS_DSI0_BASE + 0x160),
+		dsi_state70, DISP_REG_GET(DISPSYS_DSI0_BASE + 0x164),
+		cmdq_rdma_eof0, cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_EOF),
+		cmdq_mutex_eof0, cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_SOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_MDP_DSI0_TE_SOF));
+}
+
 int primary_display_m6_truth_window(const char *tag)
 {
 	DISP_MODULE_ENUM dst_module;
@@ -6343,6 +6435,8 @@ int primary_display_m6_truth_window(const char *tag)
 	primary_display_m6_dump_ovl_request_truth(safe_tag);
 	dpmgr_m6_dump_primary_video_truth(safe_tag);
 	dsi_m6_dump_live(safe_tag);
+	primary_display_m6_dump_cmdq_truth(safe_tag);
+	primary_display_m6_dump_scanout_progress(safe_tag, 32);
 	m6_led_dump_backlight_truth(safe_tag);
 	DISPERR("M6 DISPLAY truth[%s][window]: end state=%u busy=%d\n",
 		safe_tag, pgc->state, dpmgr_path_is_busy(pgc->dpmgr_handle));
@@ -6403,6 +6497,8 @@ int primary_display_m6_route_probe(const char *tag, unsigned int action)
 	msleep(80);
 	dpmgr_m6_dump_primary_video_truth(after_tag);
 	dsi_m6_dump_live(after_tag);
+	primary_display_m6_dump_cmdq_truth(after_tag);
+	primary_display_m6_dump_scanout_progress(after_tag, 32);
 	m6_led_dump_backlight_truth(after_tag);
 	DISPERR("M6 DISPLAY route_probe[%s]: end trigger_ret=%d busy=%d\n",
 		safe_tag, trigger_ret, dpmgr_path_is_busy(pgc->dpmgr_handle));

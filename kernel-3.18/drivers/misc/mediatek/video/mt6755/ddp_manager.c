@@ -1183,7 +1183,7 @@ static bool dpmgr_m6_diag_sample(unsigned int *count)
 {
 	unsigned int n = (*count)++;
 
-	return n < 8;
+	return n < 24;
 }
 
 static void dpmgr_m6_sram_state(const char *tag, ddp_path_handle handle,
@@ -2161,6 +2161,20 @@ static void dpmgr_m6_dump_primary_event_flow(const char *tag,
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x000),
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x004),
 		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x00c));
+	DISPERR("M6 DPMGR event flow[%u][%s]: cmdq tokens rdma_sof=%u rdma_eof=%u mutex0_eof=%u dsi0_sof=%u dsi0_eof=%u mdp_dsi0_te_sof=%u config_dirty=%u stream_eof=%u cabc_eof=%u dsi_mode=0x%x state6=0x%x state7=0x%x\n",
+		idx, tag,
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_SOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_SOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_EOF),
+		cmdqCoreGetEvent(CMDQ_EVENT_MDP_DSI0_TE_SOF),
+		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_CONFIG_DIRTY),
+		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_STREAM_EOF),
+		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_CABC_EOF),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x014),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x160),
+		DISP_REG_GET(DISPSYS_DSI0_BASE + 0x164));
 }
 
 static void dpmgr_m6_sample_primary_event_flow(const char *tag,

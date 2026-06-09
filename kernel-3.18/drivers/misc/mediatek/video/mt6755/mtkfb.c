@@ -127,6 +127,12 @@ struct m6_mtkfb_pipe_snapshot {
 	u32 rdma_in_l;
 	u32 rdma_out_p;
 	u32 rdma_out_l;
+	u32 cmdq_rdma_sof;
+	u32 cmdq_rdma_eof;
+	u32 cmdq_mutex0_eof;
+	u32 cmdq_dsi0_sof;
+	u32 cmdq_dsi0_eof;
+	u32 cmdq_mdp_dsi0_te_sof;
 };
 
 struct m6_mtkfb_early_diag_state {
@@ -688,6 +694,12 @@ static void m6_mtkfb_capture_pipe_snapshot(struct m6_mtkfb_pipe_snapshot *snap)
 	snap->rdma_in_l = DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT);
 	snap->rdma_out_p = DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT);
 	snap->rdma_out_l = DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT);
+	snap->cmdq_rdma_sof = cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_SOF);
+	snap->cmdq_rdma_eof = cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_EOF);
+	snap->cmdq_mutex0_eof = cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF);
+	snap->cmdq_dsi0_sof = cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_SOF);
+	snap->cmdq_dsi0_eof = cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_EOF);
+	snap->cmdq_mdp_dsi0_te_sof = cmdqCoreGetEvent(CMDQ_EVENT_MDP_DSI0_TE_SOF);
 }
 
 static void m6_mtkfb_proc_print_pipe_snapshot(struct seq_file *m,
@@ -705,6 +717,10 @@ static void m6_mtkfb_proc_print_pipe_snapshot(struct seq_file *m,
 		s->rdma_pitch, s->rdma_fifo_con, s->rdma_fifo_log,
 		s->rdma_debug_sel, s->rdma_in_p, s->rdma_in_l,
 		s->rdma_out_p, s->rdma_out_l);
+	seq_printf(m, "%s_cmdq valid=%u rdma_sof=%u rdma_eof=%u mutex0_eof=%u dsi0_sof=%u dsi0_eof=%u mdp_dsi0_te_sof=%u\n",
+		tag, s->valid, s->cmdq_rdma_sof, s->cmdq_rdma_eof,
+		s->cmdq_mutex0_eof, s->cmdq_dsi0_sof, s->cmdq_dsi0_eof,
+		s->cmdq_mdp_dsi0_te_sof);
 }
 
 static void m6_mtkfb_proc_print_dsi_snapshot(struct seq_file *m,
