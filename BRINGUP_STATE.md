@@ -1,5 +1,87 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #94 postflash result: TIMCON3 already stock, MIPITX active
+
+Patch category: **STATE-ONLY / DIAGNOSTIC RESULT**, 2026-06-09. This entry
+records the #94 postflash capture and does not change source behavior.
+
+Evidence:
+- #94 preflash proof:
+  `/srv/forge/android/meizu_m6/captures/20260609-1350-m6-mipitx-vmcmd-wmt-camera-preflash-711HEBSR277K5`.
+- #94 postboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1351-m6-mipitx-vmcmd-wmt-camera-postboot-711HEBSR277K5`.
+- Fresh #94 bootdiag run:
+  `/srv/forge/android/meizu_m6/captures/20260609-1351-m6-mipitx-vmcmd-wmt-camera-postboot-711HEBSR277K5/cache-bootdiag/run-20260610-045034-323`.
+- Runtime identity: `Linux version 3.18.140 ... #93 SMP PREEMPT Tue Jun 9
+  13:45:14 CDT 2026`, `sys.boot_completed=1`, `bootanim=stopped`, battery
+  `6 Charging`.
+- Boot partition readback:
+  `7145b580e06ce030918f0ad16059bec12da173e772d25acf1e85c524d822d8dc`.
+
+Display result:
+- #94 reached the same active DSI/MIPITX scanout state as prior boots:
+  `DSI START=0x1`, `INTSTA=0x80000790`, `MODE=0x3`, `TXRX=0x1003c`,
+  `PS=0x30870`, RDMA counters moving, `STATE7=0x2020/Video data period`,
+  and `STATE9=0x0`.
+- `DSI_PHY_TIMECON3` is already stock-like in the fresh boot:
+  `TIM=0x5080404/0x8140610/0x6160100/0x82403`, decoded as
+  `CLK_HS_PRPR=3`, `CLK_HS_POST=36`, `CLK_HS_EXIT=8`. Therefore a live
+  `CLK_HS_POST 14 -> 36` poke is a reasonable isolation attempt, but it is
+  not a remaining single-field fix for the current #94 image.
+- VM payload at the first edge is sane but empty:
+  `M6 DSI vm_payload[ddp-edge-0ms] ... h=0x0/0x124/0x120/0x0
+  hstx=0x10000 vm=0x21 data=0x0/... st=0x2020/0x26a/0x0`.
+- DSI debug mux still shows moving `word` values and `line=0` for all
+  selections. MIPITX debug mux also changes `out` by selector while the lane
+  and PLL registers stay stable:
+  `lanes=0x603/0x601/0x601/0x601/0x601 top=0x82
+  pll=0x9/0x46c4ec4e/0x101`.
+- MIPITX restore is clean at all sampled points:
+  `ddp-edge-0ms`, `edge-8ms`, and `edge-33ms` each restore
+  `orig=0x0 now=0x0 out=0x0 apb=0x0`.
+
+Display conclusion: do not repeat DSI `DEBUG_OUT_SEL` sweeps or single
+`CLK_HS_POST` pokes as the next main branch. The next display patch should
+target the first not-yet-proven boundary below active host state: stock-LK
+hidden DSI/PHY/panel side effects, panel HS-video acceptance, or a controlled
+DSI/PHY stop-config-start replay that proves whether runtime TIMCON writes are
+latched by the active video stream.
+
+Connectivity result:
+- WMT/MSDC callback wiring exists, but the `connectivity-combo` IRQ node is
+  missing: `node=(null)`, `wifi_irq=4294967295`, `irq_valid=0`.
+- MSDC2 enters CMD5 but never gets a useful SDIO OCR/function:
+  `M6 MSDC2 CMD5 ... resp0=0x0 ... funcs=0`, followed by
+  `mmc2: error -22 whilst initialising SDIO card`.
+- HIF confirms no probed function: `M6 WMT HIF stp_on-entry selected=-1
+  probed=0 ref=1 irq_ref=0` and `stp_on-no-supported`.
+
+Connectivity conclusion: Wi-Fi/BT are still kernel/DT/MSDC2 enumeration
+problems, not firmware/HAL problems. Next patch should add/fix the
+`connectivity-combo` node and continue with MSDC2 CMD5 electrical/pinctrl/clock
+parity until `/sys/bus/sdio/devices` has functions.
+
+Camera/flash result:
+- Flashlight core GPIOs probe, but AW3643 is absent at `0x63`; the driver reads
+  `chipid=0x00 devid=0x0c` three times and logs `ktd2685_use=1`.
+- Camera provider registers as `legacy/0` with `0 camera devices`.
+- `ImgSensorDrv` tries driver IDs `10000..10003` and `20000..20003`, each
+  failing with `Err-ctrlCode (I/O error)` / sensor ID mismatch; final result is
+  `Error No sensor found`.
+- The new `[M6_PERIPH_DIAG][CAM]` `pr_info_ratelimited` markers did not appear
+  in dmesg/logcat for this capture. Treat that as a marker-placement/loglevel
+  gap, not as proof that the camera rail path is healthy.
+
+Camera/flash conclusion: the next camera patch should move/duplicate markers
+as `pr_warn_ratelimited` at the ioctl/kdSetDriver/check_alive/I2C boundary
+already proven by logcat, then use the exact failing sensor index and I2C
+transaction to decide whether the stock sensor list, power sequence, or bus
+addressing is wrong.
+
+Rollback condition: none for this state-only entry. Revert the #94 diagnostic
+kernel only if it regresses boot/ADB/charging/HWC/scrcpy, WMT chip power-on, or
+camera-provider startup; the capture itself shows no such regression.
+
 ## 2026-06-09 #94 MIPITX/VM payload plus WMT/MSDC/CAM diagnostic bundle
 
 PATCH HISTORY, **ISOLATION + DIAGNOSTIC**, 2026-06-09: add one grouped,
