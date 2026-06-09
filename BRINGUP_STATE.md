@@ -1,5 +1,71 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #87 bootloop suspicion / #86 rescue package
+
+PATCH HISTORY, **DIAGNOSTIC / STATE-TOOLING**, 2026-06-09: prepare a
+repeatable rescue path after the #87 readback-verified flash was followed by
+serial `711HEBSR277K5` disappearing from ADB. The rescue target is the #86
+boot image because #86 was readback-verified, booted as
+`Linux localhost 3.18.140 #86`, reached `sys.boot_completed=1`, and allowed the
+root C2V capture to complete without a fresh WDT. This entry and helper do not
+change kernel behavior; they preserve evidence before a recovery flash and
+avoid manual mistakes around serial selection, stale logs, unsupported
+`dd conv=fsync`, and boot readback verification.
+
+Hypothesis: FACT: after #87 boot sha256
+`e33258ca0a09af4695fad223b3ed2c81fe68d08be1b1b45648da0f46e63968e4` was
+written and readback-verified on the boot partition, M6 did not return to ADB
+for bounded polls while other tunnel devices stayed visible. HYPOTHESIS: the
+device is either bootlooping before adbd/USB, powered off from low battery, or
+otherwise disconnected. The first useful action when it appears is to capture
+identity/pstore/last_kmsg, then restore a known booting image before running
+more display diagnostics.
+
+Evidence:
+- Known booting #86 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1030-m6-dsi-c2v-skip-mutex-release-isolation-bootonly`.
+- Rescue copy:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1110-m6-rescue-boot86`.
+- #86 rescue boot sha256:
+  `1071cafdaf3e0c5c43266946f18ca0f8b4496f95e5f5ed3a6110034084187857`.
+- #87 no-ADB poll:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1025-m6-scanout-event-marker-net-bootonly/post-flash-adb-poll.txt`.
+- #88 boot-safe diagnostic is still available, but unflashed:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1055-m6-scanout-marker-net-hold0-bootonly`.
+
+Files changed:
+- `tools/m6-rescue-flash.sh`: waits for `711HEBSR277K5` on ADB host
+  `127.0.0.1:15038`, captures identity, reboot reason, last_kmsg, dmesg, and
+  pstore before flashing, pushes the selected boot image, writes boot with
+  plain `dd` plus `sync`, verifies boot partition sha256, and reboots.
+- `BRINGUP_STATE.md`: records the bootloop suspicion, rescue artifact, and
+  next action.
+
+Why each file changed: the helper is operational guardrail for the next moment
+the bootlooping device appears. The state entry keeps this path tied to the
+current evidence instead of relying on chat history.
+
+Expected next marker: running the helper with no arguments should create a
+capture under `/srv/forge/android/meizu_m6/captures/*-m6-rescue-boot86-*`,
+restore boot sha256
+`1071cafdaf3e0c5c43266946f18ca0f8b4496f95e5f5ed3a6110034084187857`, and make
+the next boot return to ADB as #86. If #86 returns, the next controlled display
+test can flash #88 and capture `hold=0ms` truth-window plus `hold=32ms`
+route-probe markers.
+
+Rollback condition: none for the state/tooling itself. If rescue flashing #86
+does not restore ADB with stable power, stop display patching and collect
+charger/power/USB evidence first.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+bash -n tools/m6-rescue-flash.sh
+sha256sum /srv/forge/android/export/meizu_m6_artifacts/20260609-1110-m6-rescue-boot86/boot-m6-rescue-knownboot-86-20260609.img
+WAIT_SECS=600 tools/m6-rescue-flash.sh
+```
+
 ## 2026-06-09 #86 result / #87 scanout event marker net
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a broad M6 low-layer marker
