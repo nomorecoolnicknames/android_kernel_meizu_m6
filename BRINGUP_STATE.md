@@ -1,5 +1,87 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #95 postflash result: LK-golden static register parity closed
+
+Patch category: **STATE-ONLY / DIAGNOSTIC RESULT**, 2026-06-09. This entry
+records the #95 recovery flash and capture result. It does not change source
+behavior.
+
+Evidence:
+- Capture/report:
+  `/srv/forge/android/meizu_m6/captures/20260609-1515-m6-lkgold-diff-recovery-flash-711HEBSR277K5/REPORT.md`.
+- Flashed boot image:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1426-m6-lkgold-diff-diag-bootonly/boot-m6-lkgold-diff-diag-20260609.img`.
+- Local artifact hash, recovery `/tmp` hash, and post-flash boot partition
+  readback all match:
+  `82b838e2d208fc477c7096c385fb55e39d5d8af160f8dc2e76a3312d3d11c1d3`.
+- Recovery write proof: `16+0 records in`, `16+0 records out`,
+  `16777216 bytes (16.0MB) copied`.
+- Postboot identity: `Linux version 3.18.140 ... #94 SMP PREEMPT Tue Jun 9
+  14:25:32 CDT 2026`, `sys.boot_completed=1`, `init.svc.bootanim=stopped`,
+  `ro.bootmode=normal`, `ro.product.device=meizu_m6`.
+- Fresh early bootdiag dmesg used for the register result:
+  `/srv/forge/android/meizu_m6/captures/20260609-1515-m6-lkgold-diff-recovery-flash-711HEBSR277K5/cache-bootdiag/bootdiag/run-20260610-053246-323/cmd/dmesg.txt`.
+
+LK-golden result:
+- FACT: current late `dmesg-current.txt` no longer contains early `lkgold`
+  markers; use the fresh bootdiag path above for #95 evidence.
+- FACT: #95 captured the full expected one-shot raw register set:
+  `pre-init=181`, `post-config=181`, `post-start=181`.
+- FACT: #95 produced four diff lines total, all in `blk=dsi`:
+  `off=0x008 lk=0x00000003 lin=0x0000004b` at post-config and post-start,
+  plus `off=0x168 lk=0x00000042 lin=0x00000712` at post-config and
+  `off=0x168 lk=0x00000042 lin=0x0000040a` at post-start.
+- FACT: `blk=mipitx` diff count is 0.
+- FACT: `blk=mmsys` diff count is 0.
+- INFERENCE: the sampled static LK side-effect hypothesis is closed for DSI0,
+  MIPITX, and MMSYS route/clock values. The only changed sampled DSI words are
+  interrupt enable (`0x008`) and a live debug/status/counter word (`0x168`),
+  not a hidden MIPITX or MMSYS configuration delta.
+
+Display/runtime state:
+- FACT: early display host state is still active:
+  `M6D10 start-after-hs S=1 M=3 I=80000790 H=0/124 V=2020 B=200000 L=603/601`,
+  `TIM=0x5080404/0x8140610/0x6160100/0x82403`, MIPITX lanes
+  `0x603/0x601/0x601/0x601/0x601`, PLL `0x9/0x46c4ec4e/0x101`, and
+  `M6 DSI HS edge[ddp-edge-0ms] ... rdma=0x101 in=582/1256 out=19/1253`.
+- FACT: userspace display stack is alive: SurfaceFlinger reports built-in
+  screen `720x1280`, `powerMode=2`, `flips=1571`, GLES `Mali-T860`, and
+  `FramebufferSurface` buffers.
+- FACT: late brightness reached `request=255 dcs51=0xff` twice in this
+  diagnostic boot, but no direct physical glass observation was collected by
+  this agent.
+
+Peripheral carryover:
+- FACT: AW3643 remains absent at `0x63` (`chipid=0x00`, device id `0x0c`).
+- FACT: WMT/MSDC2 remains blocked by missing `connectivity-combo` IRQ node
+  (`wifi_irq=4294967295`) plus SDIO/CMD5 enumeration failure/no usable
+  function.
+- FACT: camera userspace still logs repeated `Err-ctrlCode (I/O error)` /
+  `sensor ID mismatch`, ending with `Error No sensor found!!`.
+
+Conclusion: do not spend another flash on static DSI/MIPITX/MMSYS register
+parity or single-field timing pokes. The next display patch should trace the
+first Linux DSI0/MIPITX write sequence for the first ~3 seconds with timestamp,
+offset, old value, new value, and caller/owner bucket, then dump the ordered
+ring at the first config/start edges. If final values match but the sequence
+differs, use that evidence for a targeted replay/isolation patch.
+
+Rollback condition: none for this state-only result. Revert #95 only if the
+one-shot raw dump itself regresses boot/ADB/display services or makes bootdiag
+unreadable; this capture did not show such a regression.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/captures/20260609-1515-m6-lkgold-diff-recovery-flash-711HEBSR277K5
+sha256sum -c local-boot-image-sha256.txt
+cat postflash-boot-partition-sha256.txt
+cat identity-postboot.txt
+wc -l lkgold-raw-bootdiag.txt lkgold-diff-bootdiag.txt
+grep -c 'blk=mipitx' lkgold-diff-bootdiag.txt || true
+grep -c 'blk=mmsys' lkgold-diff-bootdiag.txt || true
+cat lkgold-diff-bootdiag.txt
+```
+
 ## 2026-06-09 #95 LK-golden DSI/MIPITX register snapshot diff
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded, read-only
