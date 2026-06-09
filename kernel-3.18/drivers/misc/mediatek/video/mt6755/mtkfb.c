@@ -3412,22 +3412,14 @@ struct pinctrl_state *lcm_pinctl_vsp_high, *lcm_pinctl_vsp_low, *lcm_pinctl_vsn_
 static int lcm_pinctl_gpio_probe(struct platform_device *pdev);
 void lcm_pinctl_gpio_output(int pin, int level) ;
 
-static void m6_lcm_gpio_dump_one(const char *tag, unsigned long pin)
-{
-	printk(KERN_ERR
-	       "[lcm_pinctl] M6 gpio[%s] pin=%lu mode=%d dir=%d out=%d in=%d pull_en=%d pull_sel=%d\n",
-	       tag, pin, mt_get_gpio_mode(pin), mt_get_gpio_dir(pin),
-	       mt_get_gpio_out(pin), mt_get_gpio_in(pin),
-	       mt_get_gpio_pull_enable(pin), mt_get_gpio_pull_select(pin));
-}
-
 static void m6_lcm_gpio_dump(const char *tag)
 {
-	m6_lcm_gpio_dump_one(tag, 17);
-	m6_lcm_gpio_dump_one(tag, 90);
-	m6_lcm_gpio_dump_one(tag, 158);
-	m6_lcm_gpio_dump_one(tag, 12);
-	m6_lcm_gpio_dump_one(tag, 101);
+	static unsigned int suppress_count;
+
+	if (suppress_count++ < 16)
+		printk(KERN_ERR
+		       "[lcm_pinctl] M6 gpio[%s] raw mt_get_gpio reads suppressed to avoid hardcode dump_stack flood\n",
+		       tag);
 }
 
 static int lcm_pinctl_gpio_probe(struct platform_device *pdev)
