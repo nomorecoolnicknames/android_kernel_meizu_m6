@@ -4858,12 +4858,27 @@ int ddp_dsi_switch_mode(DISP_MODULE_ENUM module, void *cmdq_handle, void *params
 				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
 				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
 				INREG32(&DSI_REG[i]->DSI_INTSTA));
-		DSI_MASKREG32(cmdq_handle, 0xF4020030, 0x1, 0x1);	/* mutext to video mode */
-		if (m6_seq <= 64)
-			aee_sram_printk("M6K%02u c2v-after-mutex-video S=%x M=%x I=%x\n",
-				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
-				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
-				INREG32(&DSI_REG[i]->DSI_INTSTA));
+		if (cmdq_handle) {
+			DSI_MASKREG32(cmdq_handle, 0xF4020030, 0x1, 0x1);	/* mutext to video mode */
+			if (m6_seq <= 64)
+				aee_sram_printk("M6K%02u c2v-after-mutex-video S=%x M=%x I=%x\n",
+					m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+					INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+					INREG32(&DSI_REG[i]->DSI_INTSTA));
+		} else {
+			unsigned int m6_mutex_en = DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN);
+			unsigned int m6_mutex_mod = DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD);
+			unsigned int m6_mutex_sof = DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF);
+
+			DISPERR("M6 DSI switch_mode C2V: skip cpu-direct MUTEX0_SOF video write for WDT isolation en=%x mod=%x sof=%x\n",
+				m6_mutex_en, m6_mutex_mod, m6_mutex_sof);
+			if (m6_seq <= 64)
+				aee_sram_printk("M6K%02u c2v-skip-mutex-video E=%x O=%x F=%x S=%x M=%x I=%x\n",
+					m6_seq, m6_mutex_en, m6_mutex_mod, m6_mutex_sof,
+					INREG32(&DSI_REG[i]->DSI_START),
+					INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+					INREG32(&DSI_REG[i]->DSI_INTSTA));
+		}
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x200 + 0,
 			     0x00001500 | (lcm_cmd.addr << 16) | (lcm_cmd.val[0] << 24));
 		if (m6_seq <= 64)
