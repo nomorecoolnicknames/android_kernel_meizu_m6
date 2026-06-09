@@ -745,7 +745,7 @@ void mtkfb_process_dbg_opt(const char *opt)
 			value, hold_ms);
 		primary_display_m6_lcm_mode_ctrl(value, hold_ms);
 		return;
-	} else if (0 == strncmp(opt, "m6_dsi_c2v_switch:", 19)) {
+	} else if (0 == strncmp(opt, "m6_dsi_c2v_switch:", 18)) {
 		int value_arg = 0;
 		unsigned int value = 0;
 		unsigned int hold_ms = 1000;

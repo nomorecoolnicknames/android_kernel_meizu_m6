@@ -1,5 +1,75 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #80 DSI C2V debugfs parser fix
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: fix the `m6_dsi_c2v_switch`
+debugfs command prefix length so the #79 low-level DSI C2V switch probe can
+actually execute. The previous parser compared `m6_dsi_c2v_switch:` with length
+`19`, but the literal including the colon is 18 bytes, so any value-bearing
+command such as `m6_dsi_c2v_switch:0x03:1500` failed the prefix check before
+`sscanf()` and before `primary_display_m6_dsi_c2v_switch()` could run. This
+patch does not change DSI timing, panel commands, route, clocks, MIPITX state,
+PQ/HWC/OVL/RDMA behavior, or boot-time display sequencing.
+
+Hypothesis: FACT: #79/r2 boot image
+`01ec11277d92fa319f36a4b955d51476c5c1cf8fed22758eb580ae223233c4c2` was
+verified running on `/dev/block/platform/mtk-msdc.0/by-name/boot` in capture
+`/srv/forge/android/meizu_m6/captures/20260609-0928-m6-dsi-c2v-switch-probe-dsi0-r2-root-postflash`.
+FACT: the same capture ran as `uid=0(root)` and the follow-up
+`m6_display_truth_window:after-c2v-switch` marker appeared, proving debugfs was
+writable. FACT: that dmesg contains no `M6 DSI c2v_switch`,
+`switch-lcm-enter`, or `switch-dsi-enter` markers, so the #79 C2V path did not
+execute. FACT: source inspection shows the `strncmp()` length was one byte too
+long. HYPOTHESIS: correcting the prefix length is sufficient to make the
+existing #79 diagnostic path execute; the next capture can then answer whether
+`DDP_SWITCH_DSI_MODE` toggles C2V/VM command state while `line` remains zero.
+
+Evidence:
+- Failed #79 runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0928-m6-dsi-c2v-switch-probe-dsi0-r2-root-postflash`.
+- `identity-before-c2v-root.txt`: root ADB, `sys.boot_completed=1`, boot sha256
+  matches #79/r2 artifact.
+- `run-c2v-command.txt`: no shell permission error, unlike the earlier failed
+  shell-user capture.
+- `dmesg-after-c2v.txt`: only the later truth-window marker appears; #79 C2V
+  entry/exit markers are absent.
+- `disp_debug.c`: `m6_dsi_c2v_switch:` literal length is 18, while the parser
+  used `strncmp(..., 19)`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: fixes the
+  `m6_dsi_c2v_switch:` prefix length from 19 to 18.
+- `BRINGUP_STATE.md`: records why the #79 runtime result was invalid and what
+  the corrected rerun must prove.
+
+Why each file changed: `disp_debug.c` owns the runtime debugfs command parser;
+without this one-byte parser fix the already-built DSI switch instrumentation is
+unreachable. This state file keeps later agents from mistaking the #79/r2
+capture for a negative C2V hardware result.
+
+Expected next marker: after flashing this parser fix, rerun
+`m6_dsi_c2v_switch:0x03:1500`. Dmesg must show `M6 DSI c2v_switch`,
+`c2v-switch-before-stop`, `switch-lcm-enter`, `switch-dsi-enter`,
+`switch-dsi-exit`, `c2v-switch-after-dsi`, and
+`c2v-switch-restart-after-write`. Only then interpret `line`, `word`,
+VM command, MIPITX, and physical LCD state.
+
+Rollback condition: revert only if the corrected parser dispatch destabilizes
+debugfs writes or the C2V command path hangs before producing the entry marker.
+If the command executes and the panel remains black, keep the parser fix and
+move the hardware diagnosis to the next proven low layer.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'dmesg -C'
+$A shell 'echo m6_dsi_c2v_switch:0x03:1500 > /d/mtkfb; sleep 1; echo m6_display_truth_window:after-c2v-switch > /d/mtkfb'
+$A shell 'dmesg | grep -E "M6 DSI c2v_switch|switch-lcm|switch-dsi|c2v-switch|M6 DSI state_decode|word=|line=|MIPITX|backlight" | tail -420'
+```
+
 ## 2026-06-09 #79 DSI C2V switch-bit probe
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded M6-only debugfs probe
