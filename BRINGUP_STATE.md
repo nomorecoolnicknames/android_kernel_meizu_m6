@@ -1,5 +1,78 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 #67 runtime verdict: DSI BIST latches below Android content
+
+STATE UPDATE, 2026-06-08: `7ed8d3a9379` was flashed and verified on
+`711HEBSR277K5`. This update records runtime evidence only; it does not add a
+new behavior patch.
+
+Evidence:
+- Commit: `7ed8d3a9379 display: add M6 RDMA EOF DSI window diagnostics`.
+- Flashed artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-2343-m6-rdma-eof-dsi-window-diag-bootonly`.
+- Built boot image sha256:
+  `7c51e2ded765f003191390e3aec5d811ba0c1ebeabf46b7bbed6b3e465fb7a77`.
+- Flash/readback capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-2348-m6-rdma-eof-dsi-window-diag-flash-711HEBSR277K5`.
+- Late postboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-2355-m6-rdma-eof-dsi-window-diag-late-711HEBSR277K5`.
+- Corrected debugfs capture using `/d/mtkfb`:
+  `/srv/forge/android/meizu_m6/captures/20260608-2358-m6-rdma-eof-dsi-window-diag-mtkfb-debugfs-711HEBSR277K5`.
+
+Facts:
+- `boot-after.img` from the flash capture matches the built boot image sha256
+  `7c51e2ded765f003191390e3aec5d811ba0c1ebeabf46b7bbed6b3e465fb7a77`.
+- The flashed kernel is `Linux localhost 3.18.140 #67 SMP PREEMPT Mon Jun 8
+  23:40:37 CDT 2026 aarch64`.
+- Late postboot has `sys.boot_completed=1`, `bootanim=stopped`, and a valid
+  nonblack `720x1280` screencap. This keeps Android composition, HWC visible
+  output, and framebuffer content out of the earliest physical-black frontier.
+- `/d/dispsys` is the wrong command node for M6 debugfs helpers; the earlier
+  `parse command error` lines in the ring buffer are from that failed path.
+  The same commands written to `/d/mtkfb` run successfully.
+- `m6_display_truth_window:post67root_mtkfb` shows two enabled OVL layers with
+  real buffers, `bypass_pq=1`, active DSI0 destination, and nonzero backlight
+  cache: `lcd-backlight ... bl=10 duty=21`.
+- `m6_display_route_probe:dump` shows the normal route active enough for
+  OVL/RDMA/DSI: route `VALID=0x4000937a`, RDMA0 enabled at `720x1280`, and
+  DSI0 in video mode.
+- `/proc/interrupts` counters rise during the debugfs window for `mutex`,
+  `ovl0`, and `rdma0`; the `dsi0` GIC line stays at zero in that proc view.
+  The LP DCS read path still emits internal DSI read/IRQ markers, so the
+  zero proc counter is not evidence that DSI command transport is dead.
+- `m6_dsi_dcs_status:stock_pages` reads real panel register values from ILI
+  pages and returns to DSI video mode; examples include page-2 gamma bytes
+  through `0x7e` and `M6 LCM stock_pages: read end`.
+- `m6_dsi_bist_full:0xff0000` latches in DSI registers:
+  `BIST_PATTERN=0xff0000`, `BIST_CON=0x200446`, `self_pat=1`, `bist_en=1`,
+  `fix=1`, `lane=4`; 500 ms later the same latch remains active.
+- During and after BIST, DSI snapshots remain in HS video state with
+  `MODE=0x3`, `TXRX=0x1003c`, `PS=0x30870`, `STATE7=Video data period`, and
+  MIPITX lanes/PLL matching the current stock-parity baseline.
+- Charger evidence in the same boot is healthy enough for continued testing:
+  `chrdet=1`, VBUS around `4346-4380 mV`, and `bq2415x` current programming
+  returns `ret=0`.
+
+Inference:
+- The current evidence puts the physical-lit-black frontier below Android
+  composition, PQ/HWC, framebuffer content, OVL layer programming, and normal
+  RDMA activity.
+- Because LP DCS reads work and DSI BIST latches while physical visibility has
+  historically stayed black, the remaining display frontier is DSI host output
+  to physical pixels: panel HS-video acceptance, MIPITX electrical/lane/timing
+  parity, panel LED/electrical routing, or a stock-LK-only panel/PHY side
+  effect that Linux still does not replay.
+- Do not reopen PQ or generic OVL/HWC hypotheses unless a fresh capture
+  contradicts this verdict.
+
+Next diagnostic direction:
+- Compare stock LK hidden DSI/MIPITX/panel side effects against the Linux
+  `DSI_Start()` and `ili9881p_hd_dsi_txd` init/resume paths.
+- If adding another patch, keep it **DIAGNOSTIC** and focus on the exact
+  DSI-start/panel-HS boundary: DSI IRQ enable/status, VM_DONE/FRAME_DONE,
+  lane FSM, panel page/status before and after `0x11`/`0x29`, and physical
+  BIST visibility windows.
+
 ## 2026-06-08 RDMA EOF first-wait DSI/MIPITX diagnostics
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add bounded read-only full
