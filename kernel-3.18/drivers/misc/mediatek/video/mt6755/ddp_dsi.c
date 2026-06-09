@@ -45,6 +45,7 @@
 #include "disp_dts_gpio.h"
 #endif
 #include <mt-plat/sync_write.h>
+#include <mt-plat/aee.h>
 #ifndef CONFIG_MTK_CLKMGR
 #include "ddp_clkmgr.h"
 #endif
@@ -1655,6 +1656,26 @@ static void dsi_m6_dump_state_decode(const char *tag)
 }
 #endif
 
+static void dsi_m6_sram_snapshot(const char *tag, DISP_MODULE_ENUM module)
+{
+	static unsigned int count;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL || count >= 28)
+		return;
+
+	count++;
+	aee_sram_printk("M6D%02u %s S=%x M=%x I=%x H=%x/%x V=%x B=%x L=%x/%x\n",
+		count, tag, INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x17c),
+		INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008));
+}
+
 static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void *cmdq)
 {
 	uint32_t start;
@@ -1943,6 +1964,7 @@ void dsi_m6_dump_takeover(const char *tag)
 {
 	const char *safe_tag = tag ? tag : "takeover";
 
+	dsi_m6_sram_snapshot(safe_tag, DISP_MODULE_DSI0);
 	DISPERR("M6 DSI takeover[%s]: begin\n", safe_tag);
 	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
 #ifndef CONFIG_FPGA_EARLY_PORTING
@@ -4431,6 +4453,7 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 	    atomic_read(&PMaster_enable) == 0 && !dsi_force_config) {
 		DISPERR("M6 DSI lk-handoff[config]: skip first DSI reconfig to preserve LK bootlogo state enabled=%d\n",
 			mipitx_enabled);
+		dsi_m6_sram_snapshot("lk-handoff-config-skip", module);
 		dsi_m6_dump_snapshot_limited("lk-handoff-config-skip", module,
 					     cmdq, &dump_count, 4);
 		goto done;
@@ -4484,6 +4507,7 @@ force_config:
 
 
 done:
+	dsi_m6_sram_snapshot("config-done", module);
 	dsi_m6_dump_hs_video_limited("config-done", module, cmdq,
 				     &dump_count, 4);
 #ifndef CONFIG_FPGA_EARLY_PORTING
@@ -4505,6 +4529,7 @@ int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq)
 	if (M6_LK_HANDOFF_SKIP_FIRST_DSI_CONFIG &&
 	    atomic_read(&PMaster_enable) == 0 && !dsi_force_config) {
 		DISPERR("M6 DSI lk-handoff[start]: skip first DSI start to preserve LK bootlogo state\n");
+		dsi_m6_sram_snapshot("lk-handoff-start-skip", module);
 		dsi_m6_dump_snapshot_limited("lk-handoff-start-skip", module,
 					     cmdq, &dump_count, 4);
 		return 0;
@@ -4514,6 +4539,7 @@ int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq)
 			     _dsi_context[i].lcm_height);
 		DSI_SetMode(module, cmdq, _dsi_context[i].dsi_params.mode);
 		DSI_clk_HS_mode(module, cmdq, true);
+		dsi_m6_sram_snapshot("start-after-hs", module);
 		dsi_m6_dump_snapshot_limited("start-after-hs", module, cmdq, &dump_count, 4);
 #ifndef CONFIG_FPGA_EARLY_PORTING
 		dsi_m6_dump_mipitx_block("start-after-hs");

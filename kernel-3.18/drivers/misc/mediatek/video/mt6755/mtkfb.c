@@ -982,6 +982,9 @@ out:
 		cfg_ret, trigger_ret, layer_id, M6_OVL_CONST_WHITE_MAGIC_KEY,
 		var->xres, var->yres, var->xres, var->yoffset,
 		fbi->fix.line_length);
+	aee_sram_printk("M6F const cfg=%d tr=%d l=%u wh=%u/%u key=%x\n",
+		cfg_ret, trigger_ret, layer_id, var->xres, var->yres,
+		M6_OVL_CONST_WHITE_MAGIC_KEY);
 	m6_mtkfb_schedule_early_diag_report();
 #endif
 }
@@ -1479,6 +1482,10 @@ static int mtkfb_set_par(struct fb_info *fbi)
 				var->yoffset, fbi->fix.line_length,
 				fb_layer.src_fmt, fb_layer.src_pitch,
 				fb_layer.src_width, fb_layer.src_height);
+			aee_sram_printk("M6F trig cfg=%d tr=%d y=%u fmt=%x wh=%u/%u\n",
+				cfg_ret, trigger_ret, var->yoffset,
+				fb_layer.src_fmt, fb_layer.src_width,
+				fb_layer.src_height);
 			m6_mtkfb_config_const_white_marker(fbi, &fb_layer);
 		}
 #endif
@@ -2548,6 +2555,8 @@ static void m6_mtkfb_fill_early_marker(struct mtkfb_device *fbdev, const char *t
 		tag, bytes, fbdev->fb_va_base, &fbdev->fb_pa_base,
 		first, mid, last, MTK_FB_XRES, MTK_FB_YRES, MTK_FB_BPP,
 		MTK_FB_PAGES, MTK_FB_LINE);
+	aee_sram_printk("M6F fill %s b=%zu pa=%pa s=%08x/%08x/%08x\n",
+		tag, bytes, &fbdev->fb_pa_base, first, mid, last);
 	m6_early_fb_diag.filled = true;
 	m6_early_fb_diag.marker_pending = true;
 	m6_early_fb_diag.bytes = bytes;

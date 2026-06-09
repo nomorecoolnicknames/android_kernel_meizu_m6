@@ -1,5 +1,105 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #71 ram_console display breadcrumbs
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: duplicate the shortest display
+handoff breadcrumbs into MTK `ram_console` through `aee_sram_printk()`. This
+patch does not change display registers, DSI timing, panel command tables,
+DDP routing, HWC/PQ/OVL/RDMA behavior, backlight, or boot image ramdisk/cmdline.
+
+Hypothesis: FACT: boot image
+`75a1436a1e34bd0b4904e0f3405f3bf295bf6769aeee07a33f6085acde35aeab` boots as
+kernel `#71`, reaches `sys.boot_completed=1`, and preserves nonblack
+`720x1280` screencaps. FACT: the #71 isolation capture proves runtime HSA
+override writes `DSI_HSA_WC=0x38`, page5 `0x2A` write/read probes accept both
+`0x14` and `0x18`, and white DSI BIST latches `BIST_CON=0x200446`. FACT:
+latest bootdiag starts at kernel timestamp ~36.7s while the human-observed
+physical bootlogo loss happens at ~3-4s, so normal dmesg/bootdiag misses the
+frontier. HYPOTHESIS: the earliest failing boundary is still the LK-to-Linux
+display takeover, but the current evidence channel loses the exact early
+marker sequence before ADB/bootdiag can preserve it.
+
+Evidence:
+- #71 isolation capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0237-m6-hsa-page5-isolation-postflash`.
+- #71 artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0224-m6-dsi-hsa-page5-isolation-bootonly`.
+- #71 boot image sha256:
+  `75a1436a1e34bd0b4904e0f3405f3bf295bf6769aeee07a33f6085acde35aeab`.
+- #71 capture identity reports kernel
+  `3.18.140 #71 SMP PREEMPT Tue Jun 9 02:27:26 CDT 2026`,
+  `sys.boot_completed=1`, `bootanim=stopped`, battery `6`, `Charging`, and
+  matching boot-partition sha256.
+- `dmesg-hsa-page5-isolation.txt` reports `M6 DSI hsa_wc: after-write ... live=0x38/...`,
+  `M6 LCM page5_2a_probe ... write=14 read=14 ...`, later
+  `write=18 read=18 ...`, and `M6 DSI bist_profile ... BIST_CON=0x200446`.
+- Latest bootdiag
+  `/cache/bootdiag/run-20260609-063652-1512/cmd/dmesg.txt` starts at
+  `[36.717694]`; this is after the physical 3-4s bootlogo drop.
+- Generated `.config` has `CONFIG_MTK_RAM_CONSOLE=y`,
+  `CONFIG_MTK_RAM_CONSOLE_SIZE=0xc00`, and
+  `CONFIG_MTK_RAM_CONSOLE_ADDR=0x0011D000`.
+- Source audit shows `aee_sram_printk()` is exported by
+  `drivers/misc/mediatek/aee/common/aee-common.c` and writes through
+  `ram_console_write()`.
+- #72 breadcrumb artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0258-m6-ramconsole-display-breadcrumbs-bootonly`.
+- #72 boot image sha256:
+  `9388695ce7bd572d3c5f6a24393b98be4aa787bdf09bc544c897c910fd015431`.
+- #72 `Image.gz-dtb` sha256:
+  `75dd801075706839f272019db84489e6a4175d9a9efb00b751b6ecba2e03fe3c`.
+- #72 `System.map` sha256:
+  `133c09d1a2746fea5f1a07c3551eb9f577538420e6d5a518caaaae550e07ba27`.
+- #72 kernel string:
+  `3.18.140 #72 SMP PREEMPT Tue Jun 9 02:56:30 CDT 2026`.
+- Artifact verification: `sha256sum -c SHA256SUMS` passed, `abootimg -x`
+  unpacked successfully, `cmp Image.gz-dtb verify-unpack/zImage` passed,
+  `cmp initrd.img verify-unpack/initrd.img` passed, and gzip-expanded marker
+  strings include `M6D`, `M6P`, `M6L`, and `M6F`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds bounded
+  `M6Dxx` ram_console lines for DSI config skip, takeover, config-done, and
+  start-after-HS snapshots.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: adds
+  bounded `M6Pxx` primary takeover breadcrumbs.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_lcm.c`: adds bounded
+  `M6Lxx` LCM init/call/skip breadcrumbs.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c`: adds `M6F`
+  early framebuffer white/trigger/const marker breadcrumbs.
+- `BRINGUP_STATE.md`: records this diagnostic patch and the #71 capture
+  verdict.
+
+Why each file changed: `ddp_dsi.c`, `primary_display.c`, `disp_lcm.c`, and
+`mtkfb.c` are the exact LK-to-Linux handoff and early marker boundaries that can
+occur before ADB and before bootdiag's dmesg capture. `ram_console` is small, so
+the patch intentionally writes compact one-line breadcrumbs rather than full
+register dumps.
+
+Expected next marker: after flashing the next boot image and rebooting once more,
+`/sys/fs/pstore/console-ramoops` or the latest bootdiag `pstore/console-ramoops`
+should contain compact `M6P`, `M6D`, `M6L`, and `M6F` lines from the boot that
+just lost the physical bootlogo. Those lines should bracket whether the visual
+drop is before framebuffer white marker, during DSI config/start skip, around
+`disp_lcm_init()`, or after DSI HS start.
+
+Rollback condition: revert this diagnostic patch if the new ram_console writes
+regress `sys.boot_completed=1`, flood/evict all useful ram_console content,
+break AEE/pstore capture, change physical display timing, or cause a boot loop.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A shell 'sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot; uname -a; getprop sys.boot_completed'
+$A reboot
+$A wait-for-device
+$A root
+$A shell 'cat /sys/fs/pstore/console-ramoops | grep -E "M6P|M6D|M6L|M6F"'
+$A shell 'BOOTDIAG=$(ls -td /cache/bootdiag/run-* 2>/dev/null | head -1); grep -E "M6P|M6D|M6L|M6F" "$BOOTDIAG/pstore/console-ramoops"'
+```
+
 ## 2026-06-09 #70 BIST sweep / panel-private drift isolation
 
 PATCH HISTORY, **DIAGNOSTIC/ISOLATION**, 2026-06-09: add DSI timing/VM_CMD

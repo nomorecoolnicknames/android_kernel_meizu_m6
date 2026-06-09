@@ -301,6 +301,9 @@ static void primary_m6_takeover_marker(const char *tag, int is_lcm_inited,
 		primary_display_is_video_mode(), primary_m6_state_name(pgc->state),
 		pgc->state, pgc->session_mode, pgc->mode, pgc->dpmgr_handle,
 		pgc->cmdq_handle_config);
+	aee_sram_printk("M6P%02u %s arg=%d in=%d cmdq=%d vid=%d st=%x\n",
+		count, tag, is_lcm_inited, plcm_inited, use_cmdq,
+		primary_display_is_video_mode(), pgc->state);
 	primary_m6_power_marker(tag);
 	dsi_m6_dump_takeover(tag);
 }

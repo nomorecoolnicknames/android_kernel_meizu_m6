@@ -29,6 +29,7 @@
 /* for multiple LCM, we should assign I/F Port id in lcm driver, such as DPI0, DSI0/1 */
 
 #include <misc/app_info.h>
+#include <mt-plat/aee.h>
 
 #ifdef CONFIG_HUAWEI_LCD_DSM//lcd
 static struct dsm_dev dsm_lcd = {
@@ -389,6 +390,18 @@ FAIL:
 	return NULL;
 }
 
+static void disp_lcm_m6_sram(const char *tag, int force, int inited)
+{
+	static unsigned int count;
+
+	if (count >= 12)
+		return;
+
+	count++;
+	aee_sram_printk("M6L%02u %s f=%d i=%d\n",
+		count, tag, force, inited);
+}
+
 int disp_lcm_init(disp_lcm_handle *plcm, int force)
 {
 	LCM_DRIVER *lcm_drv = NULL;
@@ -400,27 +413,34 @@ int disp_lcm_init(disp_lcm_handle *plcm, int force)
 		inited = disp_lcm_is_inited(plcm);
 		DISPERR("M6 LCM disp_lcm_init: enter force=%d inited=%d plcm=%p drv=%s\n",
 			force, inited, plcm, lcm_drv->name ? lcm_drv->name : "unknown");
+		disp_lcm_m6_sram("enter", force, inited);
 
 		if (lcm_drv->init_power) {
 			if (!inited || force) {
 				DISPERR("M6 LCM disp_lcm_init: call init_power force=%d inited=%d\n",
 					force, inited);
+				disp_lcm_m6_sram("call-power", force, inited);
 				pr_debug("lcm init power()\n");
 				lcm_drv->init_power();
-			} else
+			} else {
 				DISPERR("M6 LCM disp_lcm_init: skip init_power force=%d inited=%d\n",
 					force, inited);
+				disp_lcm_m6_sram("skip-power", force, inited);
+			}
 		}
 
 		if (lcm_drv->init) {
 			if (!inited || force) {
 				DISPERR("M6 LCM disp_lcm_init: call init force=%d inited=%d\n",
 					force, inited);
+				disp_lcm_m6_sram("call-init", force, inited);
 				pr_debug("lcm init()\n");
 				lcm_drv->init();
-			} else
+			} else {
 				DISPERR("M6 LCM disp_lcm_init: skip init force=%d inited=%d\n",
 					force, inited);
+				disp_lcm_m6_sram("skip-init", force, inited);
+			}
 		} else {
 			DISPERR("FATAL ERROR, lcm_drv->init is null\n");
 			return -1;
