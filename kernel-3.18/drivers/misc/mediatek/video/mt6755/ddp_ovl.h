@@ -32,6 +32,13 @@ struct m6_ovl_layer_snapshot {
 	unsigned int fmt;
 	unsigned int bpp;
 	unsigned int security;
+	unsigned int key_en;
+	unsigned int key;
+	unsigned int aen;
+	unsigned int alpha;
+	unsigned int larc;
+	unsigned int con;
+	unsigned int clr;
 	unsigned int src_x;
 	unsigned int src_y;
 	unsigned int src_w;

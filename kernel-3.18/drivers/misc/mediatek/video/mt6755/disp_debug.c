@@ -129,6 +129,9 @@ char MTKFB_STR_HELP[] =
 	"\n"
 	"        m6_dsi_dcs_status[:stock_pages]\n"
 	"             Meizu M6 diagnostic DSI/ILI9881P DCS status dump\n"
+	"        m6_dsi_bist_profile:<profile>:<rgb>[:hold_ms]\n"
+	"             Meizu M6 manual DSI BIST profile sweep; auto-disables\n"
+	"\n"
 	"\n"
 	"        m6_display_truth_window[:tag]\n"
 	"             Meizu M6 read-only DDP/OVL/RDMA/DSI/MIPITX/backlight truth dump\n"
@@ -572,6 +575,26 @@ void mtkfb_process_dbg_opt(const char *opt)
 		DSI_M6_BIST_Full_Test(DISP_MODULE_DSI0, NULL, pattern != 0, pattern);
 		primary_display_manual_unlock();
 		DISPMSG("m6 dsi bist full: 0x%08x\n", pattern);
+	} else if (0 == strncmp(opt, "m6_dsi_bist_profile:", 20)) {
+		unsigned int profile = 0;
+		unsigned int pattern = 0;
+		unsigned int hold_ms = 3000;
+		int pattern_arg = 0;
+
+		ret = sscanf(opt, "m6_dsi_bist_profile:%u:%i:%u\n",
+			     &profile, &pattern_arg, &hold_ms);
+		if (ret < 2 || pattern_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		pattern = (unsigned int)pattern_arg;
+
+		primary_display_manual_lock();
+		DSI_M6_BIST_Profile_Test(DISP_MODULE_DSI0, NULL, profile,
+					 pattern, hold_ms);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi bist profile: profile=%u pattern=0x%08x hold=%u\n",
+			profile, pattern, hold_ms);
 	} else if (0 == strncmp(opt, "bypass_blank:", 13)) {
 		char *p = (char *)opt + 13;
 		unsigned int blank;

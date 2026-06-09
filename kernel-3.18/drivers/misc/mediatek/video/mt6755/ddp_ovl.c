@@ -33,6 +33,7 @@
 #define OVL_REG_BACK_MAX          (40)
 #define OVL_LAYER_OFFSET        (0x20)
 #define OVL_RDMA_DEBUG_OFFSET   (0x4)
+#define M6_OVL_CONST_WHITE_MAGIC_KEY 0x006d3657
 
 enum OVL_COLOR_SPACE {
 	OVL_COLOR_SPACE_RGB = 0,
@@ -312,7 +313,8 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 		unsigned int programmed_dst_h,
 		unsigned int byte_offset,
 		unsigned long final_addr,
-		unsigned int con_value)
+		unsigned int con_value,
+		unsigned int clr_value)
 {
 	static unsigned int m6_ovl_diag_count;
 	unsigned long visible_span = 0;
@@ -320,6 +322,7 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 	unsigned long pitch_span = 0;
 	unsigned long pitch_end = final_addr;
 	unsigned int idx;
+	unsigned int larc = REG_FLD_VAL_GET(L_CON_FLD_LARC, con_value);
 
 	if (!is_module_ovl(module) || m6_ovl_diag_count >= 72)
 		return;
@@ -334,11 +337,12 @@ static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
 		pitch_end = final_addr + pitch_span;
 
 	idx = m6_ovl_diag_count++;
-	DISPERR("M6 OVL diag cfg[%u]: mod=%s L%u global=%u en=%u source=%u fmt=%s/0x%x bpp=%u sec=%u alpha=%u/%u const=%d key=%u/0x%x con=0x%x\n",
+	DISPERR("M6 OVL diag cfg[%u]: mod=%s L%u global=%u en=%u source=%u larc=%u fmt=%s/0x%x bpp=%u sec=%u alpha=%u/%u const=%d key=%u/0x%x con=0x%x clr=0x%x\n",
 		idx, m6_ovl_module_name(module), local_layer, cfg->layer,
-		cfg->layer_en, cfg->source, unified_color_fmt_name(cfg->fmt),
-		cfg->fmt, bpp, cfg->security, cfg->aen, cfg->alpha,
-		cfg->const_bld, cfg->keyEn, cfg->key, con_value);
+		cfg->layer_en, cfg->source, larc,
+		unified_color_fmt_name(cfg->fmt), cfg->fmt, bpp,
+		cfg->security, cfg->aen, cfg->alpha, cfg->const_bld,
+		cfg->keyEn, cfg->key, con_value, clr_value);
 	DISPERR("M6 OVL diag cfg[%u]: mod=%s addr=0x%lx vaddr=0x%lx final=0x%lx low=0x%lx byte_off=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u hw_h=%u pitch=%u adj_src_x=%u adj_dst_w=%u bounds=%u\n",
 		idx, m6_ovl_module_name(module), cfg->addr, cfg->vaddr,
 		final_addr, final_addr & 0xfff, byte_offset, cfg->src_x,
@@ -458,6 +462,10 @@ static void m6_ovl_capture_last_config(DISP_MODULE_ENUM module,
 		layer->source = cfg->source;
 		layer->fmt = cfg->fmt;
 		layer->security = cfg->security;
+		layer->key_en = cfg->keyEn;
+		layer->key = cfg->key;
+		layer->aen = cfg->aen;
+		layer->alpha = cfg->alpha;
 		layer->src_x = cfg->src_x;
 		layer->src_y = cfg->src_y;
 		layer->src_w = cfg->src_w;
@@ -473,6 +481,11 @@ static void m6_ovl_capture_last_config(DISP_MODULE_ENUM module,
 		layer->final_addr = m6_ovl_calc_final_addr(module, cfg,
 			layer->hw_dst_h, &layer->bpp, &layer->visible_last,
 			&layer->pitch_end);
+		layer->con = DISP_REG_GET(ovl_base_addr(module) +
+			DISP_REG_OVL_L0_CON + local_layer * OVL_LAYER_OFFSET);
+		layer->clr = DISP_REG_GET(ovl_base_addr(module) +
+			DISP_REG_OVL_L0_CLR + local_layer * 4);
+		layer->larc = REG_FLD_VAL_GET(L_CON_FLD_LARC, layer->con);
 	}
 
 	m6_ovl0_last_config_snapshot = snap;
@@ -503,6 +516,7 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 	unsigned long layer_offset = ovl_base + layer * OVL_LAYER_OFFSET;
 	unsigned int offset = 0;
 	unsigned long final_addr = 0;
+	unsigned int clr_value = 0xff000000;
 	enum UNIFIED_COLOR_FMT format = cfg->fmt;
 	unsigned int src_x = cfg->src_x;
 	unsigned int dst_w = cfg->dst_w;
@@ -607,7 +621,11 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 
 	DISP_REG_SET(handle, DISP_REG_OVL_L0_CON + layer_offset, value);
 
-	DISP_REG_SET(handle, DISP_REG_OVL_L0_CLR + ovl_base + layer * 4, 0xff000000);
+	if (cfg->source == OVL_LAYER_SOURCE_RESERVED &&
+	    !cfg->keyEn && cfg->key == M6_OVL_CONST_WHITE_MAGIC_KEY)
+		clr_value = 0xffffffff;
+	DISP_REG_SET(handle, DISP_REG_OVL_L0_CLR + ovl_base + layer * 4,
+		     clr_value);
 
 	if (programmed_dst_h != cfg->dst_h &&
 	    m6_ovl_bounds_profile_apply_count < 96) {
@@ -630,7 +648,7 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 
 	final_addr = cfg->addr + offset;
 	m6_ovl_diag_log_config(module, layer, cfg, Bpp, src_x, dst_w,
-		programmed_dst_h, offset, final_addr, value);
+		programmed_dst_h, offset, final_addr, value, clr_value);
 
 	if (!is_engine_sec) {
 		DISP_REG_SET(handle, DISP_REG_OVL_L0_ADDR + layer_offset, final_addr);

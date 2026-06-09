@@ -33,6 +33,9 @@
 #include <linux/uaccess.h>
 #include <linux/atomic.h>
 #include <linux/err.h>
+#include <linux/workqueue.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 /* #include <asm/mach-types.h> */
 #include <asm/cacheflush.h>
 #include <linux/io.h>
@@ -69,6 +72,7 @@
 #include "lcdkit_fb_util.h"
 #endif
 #include "ddp_dsi.h"
+#include "ddp_reg.h"
 #ifdef CONFIG_LOG_JANK
 #include <huawei_platform/log/log_jank.h>
 #endif
@@ -88,6 +92,87 @@ static int vsync_cnt;
 static const struct timeval FRAME_INTERVAL = { 0, 30000 };	/* 33ms */
 
 static bool no_update;
+
+#define M6_EARLY_FB_WHITE_MARKER 1
+#define M6_EARLY_FB_WHITE_MARKER_TRIGGER 1
+#define M6_EARLY_FB_CONST_LAYER_ISOLATION 1
+#define M6_EARLY_FB_DIAG_DELAY_MS 30000
+#define M6_EARLY_FB_DIAG_REPORT_LIMIT 10
+#define M6_EARLY_FB_DIAG_PROC_NAME "m6_mtkfb_early_diag"
+#define M6_OVL_CONST_WHITE_MAGIC_KEY 0x006d3657
+struct m6_mtkfb_pipe_snapshot {
+	bool valid;
+	u32 dl_valid0;
+	u32 dl_ready0;
+	u32 dl_valid1;
+	u32 dl_ready1;
+	u32 mutex_inten;
+	u32 mutex_intsta;
+	u32 mutex_en;
+	u32 mutex_mod;
+	u32 mutex_sof;
+	u32 rdma_inten;
+	u32 rdma_intsta;
+	u32 rdma_global;
+	u32 rdma_size0;
+	u32 rdma_size1;
+	u32 rdma_target;
+	u32 rdma_mem_con;
+	u32 rdma_mem_start;
+	u32 rdma_pitch;
+	u32 rdma_fifo_con;
+	u32 rdma_fifo_log;
+	u32 rdma_debug_sel;
+	u32 rdma_in_p;
+	u32 rdma_in_l;
+	u32 rdma_out_p;
+	u32 rdma_out_l;
+};
+
+struct m6_mtkfb_early_diag_state {
+	bool filled;
+	bool marker_pending;
+	bool fb_triggered;
+	bool const_attempted;
+	bool const_triggered;
+	bool const_ovl_snapshot_valid;
+	size_t bytes;
+	void *va;
+	dma_addr_t pa;
+	u32 sample_first;
+	u32 sample_mid;
+	u32 sample_last;
+	u32 xres;
+	u32 yres;
+	u32 bpp;
+	u32 pages;
+	u32 line;
+	u32 yoffset;
+	u32 line_length;
+	u32 fb_fmt;
+	u32 fb_pitch;
+	u32 width;
+	u32 height;
+	u8 layer_id;
+	int fb_cfg_ret;
+	int fb_trigger_ret;
+	int const_cfg_ret;
+	int const_trigger_ret;
+	struct m6_ovl_config_snapshot const_ovl_snapshot;
+	struct m6_mtkfb_pipe_snapshot const_pipe_pre;
+	struct m6_mtkfb_pipe_snapshot const_pipe_cfg;
+	struct m6_mtkfb_pipe_snapshot const_pipe_trigger;
+	struct m6_dsi_live_snapshot const_dsi_pre;
+	struct m6_dsi_live_snapshot const_dsi_cfg;
+	struct m6_dsi_live_snapshot const_dsi_trigger;
+};
+static struct m6_mtkfb_early_diag_state m6_early_fb_diag;
+static unsigned int m6_early_fb_diag_reports;
+static bool m6_early_fb_diag_started;
+static bool m6_early_fb_diag_proc_registered;
+static void m6_mtkfb_early_diag_work(struct work_struct *work);
+static DECLARE_DELAYED_WORK(m6_mtkfb_early_diag_work_item,
+			    m6_mtkfb_early_diag_work);
 static disp_session_input_config session_input;
 
 /* macro definiton */
@@ -540,6 +625,365 @@ static int _convert_fb_layer_to_disp_input(struct fb_overlay_layer *src, disp_in
 	     dst->alpha_enable);
 #endif
 	return 0;
+}
+
+static void m6_mtkfb_schedule_early_diag_report(void)
+{
+	if (m6_early_fb_diag_started)
+		return;
+
+	m6_early_fb_diag_started = true;
+	schedule_delayed_work(&m6_mtkfb_early_diag_work_item,
+			      msecs_to_jiffies(M6_EARLY_FB_DIAG_DELAY_MS));
+}
+
+static void m6_mtkfb_early_diag_work(struct work_struct *work)
+{
+	const struct m6_mtkfb_early_diag_state *d = &m6_early_fb_diag;
+	unsigned int report = m6_early_fb_diag_reports++;
+
+	DISPERR("M6 mtkfb early-diag[%u]: filled=%u pending=%u fb_trigger=%u const_attempt=%u const_trigger=%u bytes=%zu va=%p pa=0x%pa sample=%08x/%08x/%08x fb_ret=%d/%d const_ret=%d/%d yoff=%u line=%u fmt=0x%x pitch=%u wh=%u/%u layer=%u screen=%u/%u bpp=%u pages=%u fbline=%u\n",
+		report, d->filled, d->marker_pending, d->fb_triggered,
+		d->const_attempted, d->const_triggered, d->bytes, d->va,
+		&d->pa, d->sample_first, d->sample_mid, d->sample_last,
+		d->fb_cfg_ret, d->fb_trigger_ret, d->const_cfg_ret,
+		d->const_trigger_ret, d->yoffset, d->line_length,
+		d->fb_fmt, d->fb_pitch, d->width, d->height, d->layer_id,
+		d->xres, d->yres, d->bpp, d->pages, d->line);
+
+	if (m6_early_fb_diag_reports < M6_EARLY_FB_DIAG_REPORT_LIMIT)
+		schedule_delayed_work(&m6_mtkfb_early_diag_work_item,
+				      msecs_to_jiffies(M6_EARLY_FB_DIAG_DELAY_MS));
+}
+
+static void m6_mtkfb_capture_pipe_snapshot(struct m6_mtkfb_pipe_snapshot *snap)
+{
+	if (!snap)
+		return;
+
+	memset(snap, 0, sizeof(*snap));
+	snap->valid = true;
+	snap->dl_valid0 = DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0);
+	snap->dl_ready0 = DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0);
+	snap->dl_valid1 = DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_1);
+	snap->dl_ready1 = DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_1);
+	snap->mutex_inten = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTEN);
+	snap->mutex_intsta = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_INTSTA);
+	snap->mutex_en = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(0));
+	snap->mutex_mod = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(0));
+	snap->mutex_sof = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(0));
+	snap->rdma_inten = DISP_REG_GET(DISP_REG_RDMA_INT_ENABLE);
+	snap->rdma_intsta = DISP_REG_GET(DISP_REG_RDMA_INT_STATUS);
+	snap->rdma_global = DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON);
+	snap->rdma_size0 = DISP_REG_GET(DISP_REG_RDMA_SIZE_CON_0);
+	snap->rdma_size1 = DISP_REG_GET(DISP_REG_RDMA_SIZE_CON_1);
+	snap->rdma_target = DISP_REG_GET(DISP_REG_RDMA_TARGET_LINE);
+	snap->rdma_mem_con = DISP_REG_GET(DISP_REG_RDMA_MEM_CON);
+	snap->rdma_mem_start = DISP_REG_GET(DISP_REG_RDMA_MEM_START_ADDR);
+	snap->rdma_pitch = DISP_REG_GET(DISP_REG_RDMA_MEM_SRC_PITCH);
+	snap->rdma_fifo_con = DISP_REG_GET(DISP_REG_RDMA_FIFO_CON);
+	snap->rdma_fifo_log = DISP_REG_GET(DISP_REG_RDMA_FIFO_LOG);
+	snap->rdma_debug_sel = DISP_REG_GET(DISP_REG_RDMA_DEBUG_OUT_SEL);
+	snap->rdma_in_p = DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT);
+	snap->rdma_in_l = DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT);
+	snap->rdma_out_p = DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT);
+	snap->rdma_out_l = DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT);
+}
+
+static void m6_mtkfb_proc_print_pipe_snapshot(struct seq_file *m,
+					      const char *tag,
+					      const struct m6_mtkfb_pipe_snapshot *s)
+{
+	seq_printf(m, "%s_pipe valid=%u dl=0x%x/0x%x/0x%x/0x%x mutex=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, s->valid, s->dl_valid0, s->dl_ready0, s->dl_valid1,
+		s->dl_ready1, s->mutex_inten, s->mutex_intsta, s->mutex_en,
+		s->mutex_mod, s->mutex_sof);
+	seq_printf(m, "%s_rdma valid=%u irq=0x%x/0x%x global=0x%x size=%u/%u target=%u mem=0x%x/0x%x pitch=%u fifo=0x%x/0x%x dbgsel=0x%x in=%u/%u out=%u/%u\n",
+		tag, s->valid, s->rdma_inten, s->rdma_intsta, s->rdma_global,
+		s->rdma_size0 & 0xfff, s->rdma_size1 & 0xfffff,
+		s->rdma_target, s->rdma_mem_con, s->rdma_mem_start,
+		s->rdma_pitch, s->rdma_fifo_con, s->rdma_fifo_log,
+		s->rdma_debug_sel, s->rdma_in_p, s->rdma_in_l,
+		s->rdma_out_p, s->rdma_out_l);
+}
+
+static void m6_mtkfb_proc_print_dsi_snapshot(struct seq_file *m,
+					     const char *tag,
+					     const struct m6_dsi_live_snapshot *s)
+{
+	seq_printf(m, "%s_dsi valid=%u start=0x%x sta=0x%x irq=0x%x/0x%x mode=0x%x txrx=0x%x ps=0x%x vm=0x%x bist=0x%x/0x%x dbgsel=0x%x\n",
+		tag, s->valid, s->start, s->status, s->inten, s->intsta,
+		s->mode, s->txrx, s->psctrl, s->vm_cmd, s->bist_pattern,
+		s->bist_con, s->debug_sel);
+	seq_printf(m, "%s_dsi_timing v=0x%x/0x%x/0x%x/0x%x h=0x%x/0x%x/0x%x/0x%x/0x%x phy=0x%x/0x%x/0x%x time=0x%x/0x%x/0x%x/0x%x\n",
+		tag, s->vsa, s->vbp, s->vfp, s->vact, s->hsa, s->hbp,
+		s->hfp, s->bllp, s->hstx_ckl, s->phy_lccon,
+		s->phy_ld0con, s->phy_syncon, s->phy_timecon0,
+		s->phy_timecon1, s->phy_timecon2, s->phy_timecon3);
+	seq_printf(m, "%s_dsi_state dbg=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x state=0x%x/0x%x/0x%x/0x%x vm_payload=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, s->state_dbg[0], s->state_dbg[1], s->state_dbg[2],
+		s->state_dbg[3], s->state_dbg[4], s->state_dbg[5],
+		s->state_dbg[6], s->state_dbg[7], s->state_dbg[8],
+		s->state_dbg[9], s->vm_payload[0], s->vm_payload[1],
+		s->vm_payload[2], s->vm_payload[3], s->vm_payload[4],
+		s->vm_payload[5], s->vm_payload[6], s->vm_payload[7]);
+	seq_printf(m, "%s_mipitx lanes=0x%x/0x%x/0x%x/0x%x/0x%x top/bg/con=0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x rgs/gpi/pull/sel=0x%x/0x%x/0x%x/0x%x sw=0x%x/0x%x/0x%x dbg=0x%x/0x%x/0x%x\n",
+		tag, s->mipitx_lane_c, s->mipitx_lane0, s->mipitx_lane1,
+		s->mipitx_lane2, s->mipitx_lane3, s->mipitx_top,
+		s->mipitx_bg, s->mipitx_con, s->mipitx_pll[0],
+		s->mipitx_pll[1], s->mipitx_pll[2], s->mipitx_pll[3],
+		s->mipitx_pll[4], s->mipitx_pll[5], s->mipitx_pll[6],
+		s->mipitx_rgs, s->mipitx_gpi, s->mipitx_pull,
+		s->mipitx_phy_sel, s->mipitx_sw_ctrl, s->mipitx_sw0,
+		s->mipitx_sw1, s->mipitx_dbg, s->mipitx_apb,
+		s->mipitx_apb_async);
+}
+
+static int m6_mtkfb_early_diag_proc_show(struct seq_file *m, void *v)
+{
+	const struct m6_mtkfb_early_diag_state *d = &m6_early_fb_diag;
+	struct m6_mtkfb_pipe_snapshot live_pipe;
+	struct m6_dsi_live_snapshot live_dsi;
+	struct m6_ovl_config_snapshot snap;
+	unsigned int layer;
+	int have;
+
+	m6_mtkfb_capture_pipe_snapshot(&live_pipe);
+	dsi_m6_capture_live_snapshot(&live_dsi);
+
+	seq_printf(m, "version=3 delay_ms=%u report_limit=%u reports=%u\n",
+		M6_EARLY_FB_DIAG_DELAY_MS, M6_EARLY_FB_DIAG_REPORT_LIMIT,
+		m6_early_fb_diag_reports);
+	seq_printf(m, "filled=%u pending=%u fb_trigger=%u const_attempt=%u const_trigger=%u\n",
+		d->filled, d->marker_pending, d->fb_triggered,
+		d->const_attempted, d->const_triggered);
+	seq_printf(m, "fb bytes=%zu va=%p pa=0x%pa sample=%08x/%08x/%08x screen=%u/%u bpp=%u pages=%u line=%u\n",
+		d->bytes, d->va, &d->pa, d->sample_first, d->sample_mid,
+		d->sample_last, d->xres, d->yres, d->bpp, d->pages, d->line);
+	seq_printf(m, "handoff fb_ret=%d/%d const_ret=%d/%d yoff=%u line=%u fmt=0x%x pitch=%u wh=%u/%u layer=%u magic=0x%x\n",
+		d->fb_cfg_ret, d->fb_trigger_ret, d->const_cfg_ret,
+		d->const_trigger_ret, d->yoffset, d->line_length,
+		d->fb_fmt, d->fb_pitch, d->width, d->height, d->layer_id,
+		M6_OVL_CONST_WHITE_MAGIC_KEY);
+	seq_printf(m, "const_ovl have=%u seq=%u enabled=0x%x first=%u scanned=0x%x/0x%x dst=%u/%u sec=%u cmdq=%u direct=%u bypass_pq=%u\n",
+		d->const_ovl_snapshot_valid, d->const_ovl_snapshot.seq,
+		d->const_ovl_snapshot.enabled_layers,
+		d->const_ovl_snapshot.first_global_layer,
+		d->const_ovl_snapshot.scanned_before,
+		d->const_ovl_snapshot.scanned_after,
+		d->const_ovl_snapshot.dst_w, d->const_ovl_snapshot.dst_h,
+		d->const_ovl_snapshot.has_sec_layer, d->const_ovl_snapshot.cmdq,
+		d->const_ovl_snapshot.direct, d->const_ovl_snapshot.bypass_pq);
+	if (d->const_ovl_snapshot_valid) {
+		for (layer = 0; layer < ARRAY_SIZE(d->const_ovl_snapshot.layer); layer++) {
+			const struct m6_ovl_layer_snapshot *l =
+				&d->const_ovl_snapshot.layer[layer];
+
+			seq_printf(m, "const_ovl_l%u valid=%u en=%u global=%u source=%u larc=%u fmt=0x%x bpp=%u sec=%u alpha=%u/%u key=%u/0x%x con=0x%x clr=0x%x\n",
+				layer, l->valid, l->enabled, l->global_layer,
+				l->source, l->larc, l->fmt, l->bpp,
+				l->security, l->aen, l->alpha, l->key_en,
+				l->key, l->con, l->clr);
+			seq_printf(m, "const_ovl_l%u src_xywh=%u/%u/%u/%u dst_xywh=%u/%u/%u/%u hw_dst_h=%u bounds=%u addr=0x%lx final=0x%lx visible_last=0x%lx pitch_end=0x%lx pitch=%u\n",
+				layer, l->src_x, l->src_y, l->src_w, l->src_h,
+				l->dst_x, l->dst_y, l->dst_w, l->dst_h,
+				l->hw_dst_h, l->bounds_profile, l->addr,
+				l->final_addr, l->visible_last, l->pitch_end,
+				l->src_pitch);
+		}
+	}
+	m6_mtkfb_proc_print_pipe_snapshot(m, "const_pre",
+					  &d->const_pipe_pre);
+	m6_mtkfb_proc_print_dsi_snapshot(m, "const_pre",
+					 &d->const_dsi_pre);
+	m6_mtkfb_proc_print_pipe_snapshot(m, "const_cfg",
+					  &d->const_pipe_cfg);
+	m6_mtkfb_proc_print_dsi_snapshot(m, "const_cfg",
+					 &d->const_dsi_cfg);
+	m6_mtkfb_proc_print_pipe_snapshot(m, "const_trigger",
+					  &d->const_pipe_trigger);
+	m6_mtkfb_proc_print_dsi_snapshot(m, "const_trigger",
+					 &d->const_dsi_trigger);
+	m6_mtkfb_proc_print_pipe_snapshot(m, "live", &live_pipe);
+	m6_mtkfb_proc_print_dsi_snapshot(m, "live", &live_dsi);
+
+	have = ovl_m6_get_last_config_snapshot(&snap);
+	seq_printf(m, "ovl have=%d seq=%u enabled=0x%x first=%u scanned=0x%x/0x%x dst=%u/%u sec=%u cmdq=%u direct=%u bypass_pq=%u\n",
+		have, have ? snap.seq : 0, have ? snap.enabled_layers : 0,
+		have ? snap.first_global_layer : 0,
+		have ? snap.scanned_before : 0, have ? snap.scanned_after : 0,
+		have ? snap.dst_w : 0, have ? snap.dst_h : 0,
+		have ? snap.has_sec_layer : 0, have ? snap.cmdq : 0,
+		have ? snap.direct : 0, have ? snap.bypass_pq : 0);
+	if (!have)
+		return 0;
+
+	for (layer = 0; layer < ARRAY_SIZE(snap.layer); layer++) {
+		const struct m6_ovl_layer_snapshot *l = &snap.layer[layer];
+
+		seq_printf(m, "ovl_l%u valid=%u en=%u global=%u source=%u larc=%u fmt=0x%x bpp=%u sec=%u alpha=%u/%u key=%u/0x%x con=0x%x clr=0x%x\n",
+			layer, l->valid, l->enabled, l->global_layer,
+			l->source, l->larc, l->fmt, l->bpp, l->security,
+			l->aen, l->alpha, l->key_en, l->key, l->con, l->clr);
+		seq_printf(m, "ovl_l%u src_xywh=%u/%u/%u/%u dst_xywh=%u/%u/%u/%u hw_dst_h=%u bounds=%u addr=0x%lx final=0x%lx visible_last=0x%lx pitch_end=0x%lx pitch=%u\n",
+			layer, l->src_x, l->src_y, l->src_w, l->src_h,
+			l->dst_x, l->dst_y, l->dst_w, l->dst_h,
+			l->hw_dst_h, l->bounds_profile, l->addr,
+			l->final_addr, l->visible_last, l->pitch_end,
+			l->src_pitch);
+	}
+
+	return 0;
+}
+
+static int m6_mtkfb_early_diag_proc_open(struct inode *inode,
+					 struct file *file)
+{
+	return single_open(file, m6_mtkfb_early_diag_proc_show, NULL);
+}
+
+static const struct file_operations m6_mtkfb_early_diag_proc_fops = {
+	.owner = THIS_MODULE,
+	.open = m6_mtkfb_early_diag_proc_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static void m6_mtkfb_register_early_diag_proc(void)
+{
+	if (m6_early_fb_diag_proc_registered)
+		return;
+
+	if (!proc_create(M6_EARLY_FB_DIAG_PROC_NAME, S_IRUGO, NULL,
+			 &m6_mtkfb_early_diag_proc_fops)) {
+		DISPERR("M6 mtkfb early-diag: proc_create %s failed\n",
+			M6_EARLY_FB_DIAG_PROC_NAME);
+		return;
+	}
+	m6_early_fb_diag_proc_registered = true;
+	DISPERR("M6 mtkfb early-diag: proc /proc/%s registered\n",
+		M6_EARLY_FB_DIAG_PROC_NAME);
+}
+
+static void m6_mtkfb_unregister_early_diag_proc(void)
+{
+	if (!m6_early_fb_diag_proc_registered)
+		return;
+
+	remove_proc_entry(M6_EARLY_FB_DIAG_PROC_NAME, NULL);
+	m6_early_fb_diag_proc_registered = false;
+}
+
+static void m6_mtkfb_record_fb_trigger(const struct mtkfb_device *fbdev,
+				       const struct fb_info *fbi,
+				       const struct fb_overlay_layer *fb_layer,
+				       int cfg_ret, int trigger_ret)
+{
+	struct m6_mtkfb_early_diag_state *d = &m6_early_fb_diag;
+
+	d->fb_triggered = true;
+	d->fb_cfg_ret = cfg_ret;
+	d->fb_trigger_ret = trigger_ret;
+	if (fbdev) {
+		d->va = fbdev->fb_va_base;
+		d->pa = fbdev->fb_pa_base;
+		d->bytes = fbdev->fb_size_in_byte;
+	}
+	if (fbi) {
+		d->yoffset = fbi->var.yoffset;
+		d->line_length = fbi->fix.line_length;
+	}
+	if (fb_layer) {
+		d->fb_fmt = fb_layer->src_fmt;
+		d->fb_pitch = fb_layer->src_pitch;
+		d->width = fb_layer->src_width;
+		d->height = fb_layer->src_height;
+		d->layer_id = fb_layer->layer_id;
+	}
+	m6_mtkfb_schedule_early_diag_report();
+}
+
+static void m6_mtkfb_config_const_white_marker(struct fb_info *fbi,
+					       const struct fb_overlay_layer *fb_layer)
+{
+#if M6_EARLY_FB_CONST_LAYER_ISOLATION
+	struct m6_mtkfb_early_diag_state *d = &m6_early_fb_diag;
+	disp_session_input_config *const_session;
+	disp_input_config *input;
+	struct fb_var_screeninfo *var;
+	int cfg_ret = -ENOMEM;
+	int trigger_ret = 0;
+	u8 layer_id;
+
+	if (!fbi || !d->marker_pending || d->const_triggered)
+		return;
+
+	var = &fbi->var;
+	layer_id = fb_layer ? fb_layer->layer_id :
+		primary_display_get_option("FB_LAYER");
+	d->const_attempted = true;
+	m6_mtkfb_capture_pipe_snapshot(&d->const_pipe_pre);
+	dsi_m6_capture_live_snapshot(&d->const_dsi_pre);
+
+	const_session = kzalloc(sizeof(*const_session), GFP_KERNEL);
+	if (!const_session)
+		goto out;
+
+	if (!is_DAL_Enabled()) {
+		input = &const_session->config[const_session->config_layer_num++];
+		input->layer_id = primary_display_get_option("ASSERT_LAYER");
+		input->layer_enable = 0;
+		input->next_buff_idx = -1;
+	}
+
+	input = &const_session->config[const_session->config_layer_num++];
+	input->layer_id = layer_id;
+	input->layer_enable = 1;
+	input->buffer_source = DISP_BUFFER_ALPHA;
+	input->security = DISP_NORMAL_BUFFER;
+	input->src_fmt = DISP_FORMAT_RGB888;
+	input->src_alpha = DISP_ALPHA_ONE;
+	input->dst_alpha = DISP_ALPHA_ONE;
+	input->yuv_range = DISP_YUV_BT601_FULL;
+	input->layer_rotation = DISP_ORIENTATION_0;
+	input->layer_type = DISP_LAYER_2D;
+	input->video_rotation = DISP_ORIENTATION_0;
+	input->next_buff_idx = -1;
+	input->src_fence_fd = -1;
+	input->src_color_key = M6_OVL_CONST_WHITE_MAGIC_KEY;
+	input->src_pitch = var->xres;
+	input->src_width = var->xres;
+	input->src_height = var->yres;
+	input->tgt_width = var->xres;
+	input->tgt_height = var->yres;
+	input->alpha_enable = 1;
+	input->alpha = 0xff;
+	input->sur_aen = 0;
+	input->src_use_color_key = 0;
+	input->src_direct_link = 0;
+
+	cfg_ret = primary_display_config_input_multiple(const_session);
+	m6_mtkfb_capture_pipe_snapshot(&d->const_pipe_cfg);
+	dsi_m6_capture_live_snapshot(&d->const_dsi_cfg);
+	if (!cfg_ret)
+		d->const_ovl_snapshot_valid =
+			!!ovl_m6_get_last_config_snapshot(&d->const_ovl_snapshot);
+	trigger_ret = primary_display_trigger(1, NULL, 0);
+	m6_mtkfb_capture_pipe_snapshot(&d->const_pipe_trigger);
+	dsi_m6_capture_live_snapshot(&d->const_dsi_trigger);
+	d->const_triggered = true;
+	kfree(const_session);
+
+out:
+	d->const_cfg_ret = cfg_ret;
+	d->const_trigger_ret = trigger_ret;
+	DISPERR("M6 mtkfb const-white-trigger: cfg_ret=%d trigger_ret=%d layer=%u key=0x%x wh=%u/%u pitch=%u yoff=%u line=%u\n",
+		cfg_ret, trigger_ret, layer_id, M6_OVL_CONST_WHITE_MAGIC_KEY,
+		var->xres, var->yres, var->xres, var->yoffset,
+		fbi->fix.line_length);
+	m6_mtkfb_schedule_early_diag_report();
+#endif
 }
 #if 0
 static int _overlay_info_convert(struct fb_overlay_layer *src, OVL_CONFIG_STRUCT *dst)
@@ -1019,7 +1463,26 @@ static int mtkfb_set_par(struct fb_info *fbi)
 
 	input = &session_input->config[session_input->config_layer_num++];
 	_convert_fb_layer_to_disp_input(&fb_layer, input);
-	primary_display_config_input_multiple(session_input);
+	{
+		int cfg_ret;
+		int trigger_ret = 0;
+
+		cfg_ret = primary_display_config_input_multiple(session_input);
+#if M6_EARLY_FB_WHITE_MARKER_TRIGGER
+		if (m6_early_fb_diag.marker_pending &&
+		    !m6_early_fb_diag.fb_triggered) {
+			trigger_ret = primary_display_trigger(1, NULL, 0);
+			m6_mtkfb_record_fb_trigger(fbdev, fbi, &fb_layer,
+						   cfg_ret, trigger_ret);
+			DISPERR("M6 mtkfb fb-marker-trigger: cfg_ret=%d trigger_ret=%d pa=0x%pa yoff=%u line=%u fmt=0x%x pitch=%u wh=%u/%u\n",
+				cfg_ret, trigger_ret, &fbdev->fb_pa_base,
+				var->yoffset, fbi->fix.line_length,
+				fb_layer.src_fmt, fb_layer.src_pitch,
+				fb_layer.src_width, fb_layer.src_height);
+			m6_mtkfb_config_const_white_marker(fbi, &fb_layer);
+		}
+#endif
+	}
 	kfree(session_input);
 
 out:
@@ -2060,6 +2523,48 @@ static int init_framebuffer(struct fb_info *info)
 	return 0;
 }
 
+static void m6_mtkfb_fill_early_marker(struct mtkfb_device *fbdev, const char *tag)
+{
+#if M6_EARLY_FB_WHITE_MARKER
+	volatile void __iomem *base;
+	size_t bytes;
+	u32 first = 0, mid = 0, last = 0;
+
+	if (!fbdev || !fbdev->fb_va_base || !fbdev->fb_size_in_byte)
+		return;
+
+	base = (volatile void __iomem *)fbdev->fb_va_base;
+	bytes = fbdev->fb_size_in_byte;
+	DISP_memset_io(base, 0xff, bytes);
+	wmb();
+
+	first = __raw_readl(base);
+	if (bytes >= 8)
+		mid = __raw_readl(base + bytes / 2);
+	if (bytes >= 4)
+		last = __raw_readl(base + bytes - 4);
+
+	DISPERR("M6 mtkfb fb-marker[%s]: fill=0xff bytes=%zu va=%p pa=0x%pa sample=%08x/%08x/%08x x=%u y=%u bpp=%u pages=%u line=%u\n",
+		tag, bytes, fbdev->fb_va_base, &fbdev->fb_pa_base,
+		first, mid, last, MTK_FB_XRES, MTK_FB_YRES, MTK_FB_BPP,
+		MTK_FB_PAGES, MTK_FB_LINE);
+	m6_early_fb_diag.filled = true;
+	m6_early_fb_diag.marker_pending = true;
+	m6_early_fb_diag.bytes = bytes;
+	m6_early_fb_diag.va = fbdev->fb_va_base;
+	m6_early_fb_diag.pa = fbdev->fb_pa_base;
+	m6_early_fb_diag.sample_first = first;
+	m6_early_fb_diag.sample_mid = mid;
+	m6_early_fb_diag.sample_last = last;
+	m6_early_fb_diag.xres = MTK_FB_XRES;
+	m6_early_fb_diag.yres = MTK_FB_YRES;
+	m6_early_fb_diag.bpp = MTK_FB_BPP;
+	m6_early_fb_diag.pages = MTK_FB_PAGES;
+	m6_early_fb_diag.line = MTK_FB_LINE;
+	m6_mtkfb_schedule_early_diag_report();
+#endif
+}
+
 
 /* Free driver resources. Can be called to rollback an aborted initialization
  * sequence.
@@ -2534,6 +3039,7 @@ static int mtkfb_probe(struct device *dev)
 		r = -ENOMEM;
 		goto cleanup;
 	}
+	m6_mtkfb_fill_early_marker(fbdev, "pre-fbinfo-set-par");
 	init_state++;		/* 2 */
 
 	r = mtkfb_fbinfo_init(fbi);
@@ -3046,6 +3552,7 @@ int __init mtkfb_init(void)
 #endif
 	PanelMaster_Init();
 	DBG_Init();
+	m6_mtkfb_register_early_diag_proc();
 	mtkfb_ipo_init();
 exit:
 	MSG_FUNC_LEAVE();
@@ -3067,6 +3574,7 @@ static void __exit mtkfb_cleanup(void)
 #endif
 	/*PanelMaster_Deinit();*/
 	DBG_Deinit();
+	m6_mtkfb_unregister_early_diag_proc();
 
 	MSG_FUNC_LEAVE();
 }

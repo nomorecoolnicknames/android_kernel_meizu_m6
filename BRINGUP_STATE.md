@@ -1,5 +1,760 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-08 DSI LK-handoff skip removal and #66 verdict
+
+PATCH HISTORY, **PROPER-FIX + DIAGNOSTIC**, 2026-06-08: disable the old
+M6-only `M6_LK_HANDOFF_SKIP_FIRST_DSI_CONFIG` isolation in `ddp_dsi.c`.
+The previous #65 live root capture proved that this isolation left DSI in CMD
+mode after `m6_dsi_dcs_status:stock_pages` stopped and restarted the video
+path. The #66 patch keeps normal Linux-owned DSI config/start enabled.
+
+Hypothesis: FACT: #65 booted and showed normal Android userspace, active
+OVL/RDMA/MUTEX, and DSI video mode before manual debugfs intervention. FACT:
+after `stock_pages` stopped the video path, `ddp_dsi_start()` printed
+`M6 DSI lk-handoff[start]: skip first DSI start`, and the subsequent window
+snapshot stayed at `DSI MODE=0x0`, `START=0x1`, with RDMA counters idle.
+HYPOTHESIS: the LK-handoff skip was a stale isolation patch that could preserve
+a bad DSI state after any stop/restart and could also interfere with the early
+Linux handoff where the physical bootlogo disappears. Removing it should make
+DSI restart behavior observable and kernel-owned, without changing LCM command
+tables, panel GPIOs, PQ, OVL content, or MIPITX parameters.
+
+Evidence:
+- Prior harmful-skip capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-2306-m6-dsi-pipe-live-truth-stockpages-root-711HEBSR277K5`.
+- New build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-dsi-disable-lk-handoff-skip-20260608.log`.
+- New artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-2257-m6-dsi-disable-lk-handoff-skip-bootonly`.
+- Built boot image sha256:
+  `6f221b28db7e34715585c0342a60fa9ba8a2ce3a6c994599f490bd8ff9239aaf`.
+- Built `Image.gz-dtb` sha256:
+  `6034e11cdaefebbfb6bf31b17701ec457eb8f725f194d12b381533ea9745b6a0`.
+- Built `System.map` sha256:
+  `d27a5b770790fe2c5db613562dcfaae04336dad1bc058c4c397c908b09ce86c1`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Artifact verification: `sha256sum -c SHA256SUMS`, boot unpack, kernel
+  `cmp`, and ramdisk `cmp` passed.
+- Flash/readback capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-2301-m6-dsi-disable-lk-handoff-skip-flash-711HEBSR277K5`.
+- Flash readback sha256 matched the local boot image:
+  `6f221b28db7e34715585c0342a60fa9ba8a2ce3a6c994599f490bd8ff9239aaf`.
+- Runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-2305-m6-dsi-disable-lk-handoff-skip-postboot-711HEBSR277K5`.
+- Runtime kernel identity:
+  `Linux localhost 3.18.140 #66 SMP PREEMPT Mon Jun 8 22:51:50 CDT 2026 aarch64`.
+- Runtime userspace: `sys.boot_completed=1`, `bootanim=stopped`, root ADB
+  works, and `m6-screen.png` is a valid 720x1280 RGBA PNG.
+- Runtime before live debugfs:
+  `/proc/m6_mtkfb_early_diag` shows
+  `const_ovl_l0 source=1 larc=1 clr=0xffffffff`, `live_pipe valid=1`,
+  `live_rdma valid=1`, and `live_dsi ... mode=0x3`.
+- Runtime live debugfs: `live-debugfs-dmesg.txt` contains no
+  `M6 DSI lk-handoff[...]` skip line. During `stock_pages`, DSI enters CMD
+  mode for DCS reads; after that, BIST is entered from video mode:
+  `M6 DSI snapshot[bist-full-pre] ... MODE=0x3`,
+  `M6 DSI snapshot[bist-full-post] ... MODE=0x3`,
+  `BIST_PATTERN=0xff0000 BIST_CON=0x200446`, and
+  `STATE7=0x2020/Video data period`.
+- Runtime IRQ proof: `/proc/interrupts` shows `dsi0` at zero before live
+  debugfs and nonzero after the live sequence (`62` and `81` on visible CPU
+  columns in this capture).
+- External 4PDA sanity check:
+  `https://4pda.to/forum/index.php?showtopic=583114` search results reinforce
+  that PQ/MiraVision is AAL/display processing, while LCM bring-up still hinges
+  on stock `lcm_get_params`, DSI timing, LK state, GPIO, and panel command
+  parity.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: disables the
+  stale M6 LK-handoff skip isolation so Linux DSI config/start paths run.
+- `BRINGUP_STATE.md`: records artifact identity, runtime verdict, expected
+  next marker, rollback condition, and verification commands.
+- Capture-local `CAPTURE_VERDICT.md`: records the #66 runtime verdict next to
+  the exact evidence bundle.
+
+Why each file changed: `ddp_dsi.c` owns the DSI config/start path that the #65
+capture proved was being skipped after a stop/restart. The state files preserve
+the tested artifact identity and prevent future agents from treating this
+fixed skip as an open physical-display root cause.
+
+Expected next marker: if the physical panel remains black, do not retest OVL
+content, SurfaceFlinger, or normal HWC composition. The next marker set should
+compare stock LK host-side DSI/MIPITX writes against #66 live state and log any
+hidden differences in MIPITX lane drive/settle/ULPS/non-continuous clock,
+DSI PHY timing, VM/PS/TXRX, and panel-private post-init state before applying
+behavior changes.
+
+Rollback condition: revert only if a fresh capture proves this change causes
+no-ADB boot failure, DSI config/start deadlock, loss of stock-pages DCS reads,
+loss of BIST latch, or regression from Android `sys.boot_completed=1`.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260608-2257-m6-dsi-disable-lk-handoff-skip-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+cmp "$ART/Image.gz-dtb" "$ART/verify-unpack/zImage"
+cmp "$ART/initrd.img" "$ART/verify-unpack/initrd.img"
+CAP=/srv/forge/android/meizu_m6/captures/20260608-2301-m6-dsi-disable-lk-handoff-skip-flash-711HEBSR277K5
+sha256sum "$CAP/boot-after.img" "$ART/boot-m6-dsi-disable-lk-handoff-skip-20260608.img"
+POST=/srv/forge/android/meizu_m6/captures/20260608-2305-m6-dsi-disable-lk-handoff-skip-postboot-711HEBSR277K5
+rg -n 'lk-handoff|bist-full-(pre|post)|MODE=0x3|BIST_CON=0x200446|live_dsi|const_ovl_l0' \
+  "$POST/live-debugfs-dmesg.txt" "$POST/m6_mtkfb_early_diag-before-live.txt"
+rg -n 'dsi0' "$POST/proc-interrupts-before-live.txt" "$POST/proc-interrupts-after-live.txt"
+```
+
+## 2026-06-08 post-#66 remaining display frontiers
+
+FACT: #66 proves userspace, HWC object creation, OVL constant-white content,
+MUTEX route programming, RDMA enable/counters, DSI video mode, MIPITX lanes/PLL,
+and DSI BIST latch are all observable in the same fresh boot. FACT:
+`live-debugfs-dmesg.txt` still shows `CMDQ_EVENT_DISP_RDMA0_EOF` token value
+`0`, VSYNC timeouts with `rdma_eof=0 mutex_eof=0`, and route READY dropping
+from `0x40009000`/`0x0`/`0x300` while VALID stays `0x4000937a`. INFERENCE:
+the normal digital frame-retirement frontier is now RDMA0 EOF / DDP READY
+propagation, not framebuffer content, PQ, normal Android composition, or
+LCM command reads.
+
+HYPOTHESIS: if the human observes no physical red/white/other visible output
+while the DSI BIST markers are latched for a bounded visible window, physical
+black is below RDMA/OVL and at DSI host output, MIPITX analog/lane mapping, or
+panel HS-video acceptance. If BIST becomes physically visible, return to the
+RDMA EOF/DDP READY frontier for the normal pipeline and do not patch MIPITX.
+
+Next DIAGNOSTIC patch should add read-only snapshots at the first trigger and
+first RDMA EOF timeout: route VALID/READY, mutex INTSTA/MOD/SOF, RDMA
+INTSTA/GLOBAL/counters, OVL STA/INTSTA/FLOW/ROI/layer enable, DSI STATE7,
+and MIPITX lane/PLL state. Roll back if boot completion, stock-pages recovery,
+DSI BIST latch, or root ADB regresses.
+
+## 2026-06-08 OVL constant-white handoff isolation
+
+PATCH HISTORY, **ISOLATION + DIAGNOSTIC**, 2026-06-08: preserve the existing
+early framebuffer `0xff` marker, force one marker-backed scanout trigger, then
+perform one additional first-handoff OVL constant-white scanout using
+`DISP_BUFFER_ALPHA` plus an M6-only magic key that writes
+`OVL_L0_CLR=0xffffffff`. The patch also adds delayed `mtkfb` proof prints so
+the next post-boot capture can prove the early action even when the early dmesg
+ring has already wrapped. This patch does not change panel DCS init, DSI timing,
+MIPITX PLL, panel reset GPIOs, DDP route, PQ, HWC, Android composition policy,
+or backlight policy.
+
+Hypothesis: FACT: prior verified captures show the physical LK bootlogo
+disappears at the same timeline as the first Linux `mtkfb_set_par()` /
+OVL handoff, while Android later reaches `sys.boot_completed=1` and screencap
+contains a nonblack 720x1280 RGBA frame. FACT: the simple framebuffer marker
+plus forced trigger produced no physical flicker according to the human, but
+the runtime marker was not captured because postboot dmesg started too late.
+FACT: source audit shows MTK `DISP_BUFFER_ALPHA` maps to
+`OVL_LAYER_SOURCE_RESERVED`, but `ddp_ovl.c` normally writes the reserved-layer
+color as `0xff000000`, i.e. opaque black. HYPOTHESIS: a constant-white OVL layer
+at the first Linux handoff is the narrowest test that bypasses framebuffer
+memory, M4U, and userspace content; if `source=reserved`, `LARC=1`, and
+`clr=0xffffffff` are proven while the physical panel stays black, the frontier
+moves below OVL content to OVL output/RDMA/MUTEX/DSI HS stream/panel HS
+acceptance.
+
+Evidence:
+- Prior capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-1856-m6-lk-handoff-pstore-711HEBSR277K5`.
+- Prior bootdiag shows first Linux OVL handoff at `3.501528` with
+  `PA=0x9f370000`, `BGRA8888`, and `720x1280`, matching the human-reported
+  3-4 second bootlogo drop.
+- Prior human observation after
+  `boot-m6-mtkfb-white-trigger-20260608.img`: physical bootlogo still
+  disappears at about 3.5 seconds and no white flicker is visible.
+- Source audit result: `DISP_BUFFER_ALPHA` alone is not a white marker because
+  `ddp_ovl.c` wrote `DISP_REG_OVL_L0_CLR` as `0xff000000`.
+- Read-only rizin/LK audit result: stock LK contains DDP/OVL/RDMA/DSI route
+  writes for `OVL0 -> ... -> RDMA0 -> DSI0`, with OVL register targets around
+  `0x1400802c/30/34/38/3c/44/8f40/c8` and route registers
+  `0x1400006c/70/74/7c`; no targeted stock-LK display clear/disable before
+  kernel jump was found.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-ovl-const-white-20260608.log`,
+  ending in `CAT arch/arm64/boot/Image.gz-dtb`.
+- Export artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-2133-m6-ovl-const-white-bootonly`.
+- Built boot image sha256:
+  `834a20f74a79cc59f96c5e380bc07f5f0cd42dc0b9b80b79eda39ea5e8313e7a`.
+- Built `Image.gz-dtb` sha256:
+  `54d069d950e901dc18dcfcfc24910e76ef9bd66422ed52f5d92de0418df2da10`.
+- Built `System.map` sha256:
+  `74d7f91751f3c09cdfd9cadee445ec128afb12498b2054206316197a11df5f56`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Built `initrd.img` sha256:
+  `7de975b4485324f4a76eb44fa4cc61472e829421e8d27e31f50d80b984cb4a4f`.
+- Build log sha256:
+  `17a3b3687d71157a9d20fa5f53e77a4f53beeb59b2b446345ca8249df66205a0`.
+- `sha256sum -c SHA256SUMS` passed in the export directory.
+- `cmp Image.gz-dtb verify-unpack-zImage` and
+  `cmp initrd.img verify-unpack-initrd.img` passed.
+- Marker string check against the exact `Image.gz-dtb` includes
+  `M6 mtkfb early-diag`, `M6 mtkfb const-white-trigger`,
+  `M6 mtkfb fb-marker-trigger`, `M6 mtkfb fb-marker`, and the extended
+  `M6 OVL diag cfg` line with `larc` and `clr`.
+- Flash attempt capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-2136-m6-ovl-const-white-flash-711HEBSR277K5`.
+  The flash did not start because reverse ADB ports `15037` and `15038` were
+  not listening; local `adb -P 5037 devices` only showed non-M6 serial
+  `30785d1a`. There is no runtime verdict for this artifact yet.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c`: adds delayed
+  proof state/reporting for the early framebuffer marker and performs one
+  marker-backed constant-white OVL config/trigger after the first FB scanout
+  trigger.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c`: adds an
+  M6-only magic-key check for reserved-source layers so the diagnostic layer
+  writes `OVL_L0_CLR=0xffffffff`, and extends OVL diagnostics with `larc` and
+  `clr`.
+- `BRINGUP_STATE.md`: records the hypothesis, evidence, build identity,
+  expected observation, rollback condition, and verification commands.
+
+Why each file changed: `mtkfb.c` owns the first Linux framebuffer/OVL handoff
+that matches the physical bootlogo disappearance. `ddp_ovl.c` is the only
+place that programs the constant-color register for reserved OVL layers, and
+the stock black constant color would otherwise make a constant-layer test
+indistinguishable from the current black-screen symptom. The state file
+preserves the artifact identity and makes clear that runtime flash/capture is
+still pending.
+
+Expected next marker: after flashing
+`boot-m6-ovl-const-white-20260608.img`, postboot dmesg should contain delayed
+`M6 mtkfb early-diag[...]` with `filled=1`, `fb_trigger=1`,
+`const_attempt=1`, and `const_trigger=1`, plus `M6 mtkfb const-white-trigger`
+and an `M6 OVL diag cfg` line for the tagged layer with `source=1`, `larc=1`,
+`key=0/0x6d3657`, and `clr=0xffffffff`. If the physical LCD turns white, the
+next fix should focus on framebuffer/M4U/content/format. If those proof markers
+are present and the physical LCD stays black without flicker, stop patching
+framebuffer content and move below OVL content to RDMA/MUTEX/DSI HS stream and
+MIPITX/panel HS acceptance.
+
+Rollback condition: revert this isolation patch if it prevents boot, breaks
+`sys.boot_completed=1`, fails to produce the constant-white proof markers,
+changes ordinary non-tagged dim layers, triggers a display/CMDQ deadlock, or
+if the physical constant-white marker becomes visible and the next work pivots
+to content/M4U instead.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260608-2133-m6-ovl-const-white-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+cmp "$ART/Image.gz-dtb" "$ART/verify-unpack-zImage"
+cmp "$ART/initrd.img" "$ART/verify-unpack-initrd.img"
+gzip -cd "$ART/Image.gz-dtb" 2>/tmp/m6-ovl-const-white-gzip.err | strings \
+  | rg 'M6 mtkfb early-diag|M6 mtkfb const-white-trigger|M6 OVL diag cfg|clr=0x|fb-marker'
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A reboot recovery
+$A push "$ART/boot-m6-ovl-const-white-20260608.img" /tmp/m6-boot.img
+$A shell 'dd if=/tmp/m6-boot.img of=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot bs=1048576 conv=fsync; sync'
+$A shell 'dd if=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot of=/tmp/boot-after.img bs=1048576 count=16; sha256sum /tmp/boot-after.img /tmp/m6-boot.img'
+$A reboot
+$A wait-for-device
+$A shell 'sleep 20; dmesg | grep -E "M6 mtkfb early-diag|M6 mtkfb const-white-trigger|M6 OVL diag cfg.*(clr=0xffffffff|key=0/0x6d3657)|mtkfb_probe|mtkfb_init"'
+```
+
+## 2026-06-08 mtkfb early framebuffer white-marker forced trigger
+
+PATCH HISTORY, **ISOLATION + DIAGNOSTIC**, 2026-06-08: keep the existing
+early Linux framebuffer `0xff` marker, and force exactly one blocking
+`primary_display_trigger(1, NULL, 0)` after the first marker-backed
+`mtkfb_set_par()` config. This patch does not change DSI timing, MIPITX
+registers, LCM commands, panel reset, DDP route, PQ, HWC, Android composition,
+backlight policy, or later SurfaceFlinger buffers.
+
+Hypothesis: FACT: source review shows `mtkfb_fbinfo_init()` calls
+`mtkfb_set_par()` but does not call `init_framebuffer()`, so the white marker
+should still be present when the first OVL input is configured. FACT: source
+review also shows `primary_display_config_input_multiple()` reaches
+`primary_frame_cfg_input()` / `_config_ovl_input()` but does not itself call
+`primary_display_trigger()`. HYPOTHESIS: the previous early white-marker image
+could leave the marker in framebuffer memory without forcing the first OVL
+config through the active video path soon enough for a human-visible test; a
+single bounded blocking trigger after the marker-backed `mtkfb_set_par()` makes
+the negative physical result meaningful.
+
+Evidence:
+- Source file:
+  `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c`.
+- Prior capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-1856-m6-lk-handoff-pstore-711HEBSR277K5`.
+- Prior bootdiag shows first Linux OVL handoff at `3.501528` with
+  `PA=0x9f370000`, `BGRA8888`, and `720x1280`, matching the human-reported
+  3-4 second bootlogo drop.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-mtkfb-white-trigger-20260608.log`,
+  ending in `CAT arch/arm64/boot/Image.gz-dtb`.
+- Export artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1959-m6-mtkfb-white-trigger-bootonly`.
+- Built boot image sha256:
+  `f119d8dfe6420e05e4f292d8ac6c942358a793b814f87cb473867b022db1444a`.
+- Built `Image.gz-dtb` sha256:
+  `b8be6edb74f0df8e467f3b0d3e25e29675ae7fb8c5d18b5abe98dfecf9fba918`.
+- Built `System.map` sha256:
+  `e7ea065ac9eb893262bdb405edee8bcd3a2ed61de49f107b4be28263ed0c98d7`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Build log sha256:
+  `4ca6ce111139affba908efb42d1beb5c0473f4080b11d1f38eed2f8319b736e0`.
+- `sha256sum -c SHA256SUMS` passed in the export directory.
+- `cmp Image.gz-dtb verify-unpack/zImage` and
+  `cmp initrd.img verify-unpack/initrd.img` passed.
+- Marker string check against the exact `Image.gz-dtb` includes
+  `M6 mtkfb fb-marker`, `M6 mtkfb fb-marker-trigger`,
+  `pre-fbinfo-set-par`, and the LK-handoff markers.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c`: adds a pending
+  flag set by `m6_mtkfb_fill_early_marker()` and performs one blocking
+  `primary_display_trigger()` after the first marker-backed `mtkfb_set_par()`,
+  logging `cfg_ret`, `trigger_ret`, physical base, format, pitch, and size.
+- `BRINGUP_STATE.md`: records the hypothesis, evidence, artifact identity,
+  expected observation, rollback condition, and verification commands.
+
+Why each file changed: `mtkfb.c` owns the first Linux framebuffer takeover that
+matches the physical bootlogo disappearance. The forced trigger makes the
+existing white marker a real scanout test rather than only a memory-write
+test. The state file preserves the artifact identity and stop conditions.
+
+Expected next marker: after flashing
+`boot-m6-mtkfb-white-trigger-20260608.img`, bootdiag dmesg should contain
+`M6 mtkfb fb-marker[pre-fbinfo-set-par]` followed by
+`M6 mtkfb fb-marker-trigger` and the first `M6 OVL handoff[1:pre-dpmgr]`.
+If the physical LCD turns white/light, the next fix should focus on
+framebuffer/M4U/content/format/handoff. If it stays black with those markers
+present and boot readback matching this image, the next diagnostic should be
+OVL constant-color or a lower OVL/RDMA/DSI handoff proof, not another
+framebuffer fill.
+
+Rollback condition: revert this isolation patch after the visual test, or
+immediately if it prevents ADB boot, breaks `sys.boot_completed=1`, changes
+boot image identity unexpectedly, triggers a display/CMDQ deadlock before
+`M6 mtkfb fb-marker-trigger`, or makes the device unusable.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260608-1959-m6-mtkfb-white-trigger-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+cmp "$ART/Image.gz-dtb" "$ART/verify-unpack/zImage"
+cmp "$ART/initrd.img" "$ART/verify-unpack/initrd.img"
+gzip -cd "$ART/Image.gz-dtb" 2>/tmp/m6-mtkfb-white-trigger-gzip.err | strings \
+  | rg 'M6 mtkfb fb-marker|M6 mtkfb fb-marker-trigger|pre-fbinfo-set-par'
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A shell 'uname -a; getprop sys.boot_completed; sha256sum /dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot'
+$A shell 'BOOTDIAG=$(ls -d /cache/bootdiag/run-* 2>/dev/null | tail -1); grep -E "M6 mtkfb fb-marker|M6 mtkfb fb-marker-trigger|M6 OVL handoff\\[1:pre-dpmgr\\]|mtkfb_probe|mtkfb_init" "$BOOTDIAG/cmd/dmesg.txt"'
+```
+
+## 2026-06-08 mtkfb early framebuffer white-marker isolation
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: fill the Linux framebuffer mapping
+with `0xff` before the first `mtkfb_fbinfo_init()` / `mtkfb_set_par()` handoff.
+This patch does not change DSI timing, MIPITX registers, LCM commands, panel
+reset, DDP route, PQ, HWC, Android composition, backlight policy, or later
+SurfaceFlinger buffers.
+
+Hypothesis: FACT: the LK-handoff skip image proved that first Linux DSI
+config/start was skipped at `1.633820` / `1.635620` seconds while DSI/MIPITX
+stayed in video data period. FACT: the same fresh bootdiag shows the next
+strong physical-timing boundary at `3.501528` seconds:
+`mtkfb_probe -> mtkfb_fbinfo_init -> mtkfb_set_par ->
+primary_display_config_input_multiple`, which programs OVL0 from the Linux
+framebuffer at `PA=0x9f370000`, `BGRA8888`, pitch `2944`. FACT: the human
+reports the LK bootlogo disappears at about 3-4 seconds. HYPOTHESIS: Linux may
+be replacing the visible LK bootlogo with a black/empty framebuffer layer at
+the `mtkfb_set_par()` takeover rather than losing the DSI physical link at the
+earlier DSI config/start boundary.
+
+Evidence:
+- Pstore/bootdiag capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-1856-m6-lk-handoff-pstore-711HEBSR277K5`.
+- In that capture, `bootdiag/cmd__dmesg.txt` contains
+  `M6 DSI lk-handoff[config]` at `1.633820`,
+  `M6 DSI lk-handoff[start]` at `1.635620`, and the first mtkfb framebuffer
+  takeover at `3.501528`.
+- The same dmesg shows `M6 OVL handoff[1:pre-dpmgr]` with
+  `input phy=000000009f370000`, `base=ffffff8000500000`, `pitch_px=736`,
+  `src_wh=720/1280`, and `ovl_fmt=BGRA8888/0xc00809`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-mtkfb-early-white-marker-20260608.log`,
+  ending in `CAT arch/arm64/boot/Image.gz-dtb`.
+- Export artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-2045-m6-mtkfb-early-white-marker-bootonly`.
+- Built boot image sha256:
+  `5dc85549fc47961e132e525207d4bf9c65c5cc1efeb7a58eaece2ff66a666906`.
+- Built `Image.gz-dtb` sha256:
+  `193fdc13b17b75823819b69c1fd61af410e518e713e559307fbaeb09f1183acf`.
+- Built `System.map` sha256:
+  `da38c60880c902715d3cda188a7da0c5e4de91fd52bb71309c5980fee734abaa`.
+- Build log sha256:
+  `8fc659db49ecc1342aeccc2f3fdced0566c8b1145dfc08af70d682e38b7931b7`.
+- `sha256sum -c SHA256SUMS` passed in the export directory.
+- `cmp Image.gz-dtb verify-unpack/zImage` and
+  `cmp initrd.img verify-unpack/initrd.img` passed.
+- Marker string check against the exact `Image.gz-dtb` includes
+  `M6 mtkfb fb-marker` and `pre-fbinfo-set-par`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/mtkfb.c`: adds
+  `m6_mtkfb_fill_early_marker()` and calls it before `mtkfb_fbinfo_init()` to
+  fill the mapped framebuffer with visible `0xff` bytes and log sample words.
+- `BRINGUP_STATE.md`: records the hypothesis, evidence, artifact identity,
+  expected observation, rollback condition, and verification commands.
+
+Why each file changed: `mtkfb.c` owns the first Linux framebuffer takeover that
+matches the 3-4 second physical bootlogo drop. Filling exactly that framebuffer
+before it is configured into OVL is the narrowest diagnostic for separating
+black FB content from lower DDP/DSI/panel failure.
+
+Expected next marker: after flashing
+`boot-m6-mtkfb-early-white-marker-20260608.img`, bootdiag dmesg should contain
+`M6 mtkfb fb-marker[pre-fbinfo-set-par]` before the first `M6 OVL
+handoff[1:pre-dpmgr]`. Human-visible observation is decisive: if the physical
+LCD turns white/light when the LK bootlogo disappears, the DSI physical path is
+able to display Linux OVL content and the next fix should focus on framebuffer
+content/format/initial handoff. If the LCD stays black despite the marker log
+and OVL pointing at the filled framebuffer, move below content to OVL/RDMA/DSI
+takeover, output mux, or panel stream acceptance after LK.
+
+Rollback condition: revert this diagnostic patch after the visual test, or
+immediately if it prevents ADB boot, breaks `sys.boot_completed=1`, changes
+boot image identity unexpectedly, corrupts framebuffer memory outside
+`MTK_FB_SIZEV`, or hides a lower DSI/DDP failure by leaving the device unusable.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260608-2045-m6-mtkfb-early-white-marker-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+cmp "$ART/Image.gz-dtb" "$ART/verify-unpack/zImage"
+cmp "$ART/initrd.img" "$ART/verify-unpack/initrd.img"
+gzip -cd "$ART/Image.gz-dtb" 2>/tmp/m6-mtkfb-marker-gzip.err | strings \
+  | rg 'M6 mtkfb fb-marker|pre-fbinfo-set-par'
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A shell 'uname -a; getprop sys.boot_completed; sha256sum /dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot'
+$A shell 'BOOTDIAG=$(ls -d /cache/bootdiag/run-* 2>/dev/null | tail -1); grep -E "M6 mtkfb fb-marker|M6 OVL handoff\\[1:pre-dpmgr\\]|mtkfb_probe|mtkfb_init" "$BOOTDIAG/cmd/dmesg.txt"'
+```
+
+## 2026-06-08 LK handoff DSI config/start skip isolation
+
+PATCH HISTORY, **ISOLATION + DIAGNOSTIC**, 2026-06-08: skip the first
+Linux-side DSI config/start when LK already left the panel and MIPITX enabled.
+This patch is intentionally narrow: it does not change the LCM init table,
+panel reset GPIOs, DDP route, OVL/RDMA/HWC/PQ, BIST controls, PLL math, porch
+values, lane count, backlight, or userspace composition.
+
+Hypothesis: FACT: the human reports that the physical bootlogo is visible and
+then disappears around 3-4 seconds, before ADB. FACT: the current post-boot
+captures prove Android composition is nonblack in screencap, backlight is
+nonzero, DSI/MIPITX lanes are active, public LP DCS reads still work, and DSI
+BIST profiles latch without physical flicker. FACT: `/proc/bootprof` from the
+fresh capture places `mtkfb_probe` at about `4376.877624 ms` and `mtkfb_init`
+at about `4392.804855 ms`, matching the observed bootlogo drop. HYPOTHESIS:
+the earliest destructive boundary is Linux display handoff reprogramming DSI
+or starting the DSI path over the working LK state; preserving LK DSI state on
+the first config/start should keep the bootlogo alive if that boundary is the
+culprit.
+
+Evidence:
+- Fresh bootlogo-drop capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-1952-m6-bootlogo-drop-711HEBSR277K5`.
+- `bootprof-cmdline.txt` in that capture shows `mtkfb_probe` at
+  `4376.877624 ms` and `mtkfb_init` at `4392.804855 ms`.
+- Boot image during that capture matched sha256
+  `ca4063ce29f4d1bca3f23dd1fa38e343092b2852f6063d00a44b2beb026bd69a`.
+- Post-boot screencap in that capture is valid/nonblack while the physical
+  display is black.
+- Earlier route/content verdict:
+  `/srv/forge/android/meizu_m6/captures/20260608-1759-m6-display-route-probe-711HEBSR277K5/CAPTURE_VERDICT.md`.
+- Earlier BIST profile sweep verdict:
+  `/srv/forge/android/meizu_m6/captures/20260608-1915-m6-dsi-bist-profile-sweep-711HEBSR277K5/CAPTURE_VERDICT.md`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-dsi-lk-handoff-skip-20260608.log`,
+  ending in `CAT arch/arm64/boot/Image.gz-dtb`.
+- Export artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-2005-m6-dsi-lk-handoff-skip-bootonly`.
+- Built boot image sha256:
+  `6f8233c04041aec537df8a5c0f68f41c6bf9e75878b9c4ade62c04c91f44f8e9`.
+- Built `Image.gz-dtb` sha256:
+  `e53c33a59b2beaa661908f56c44b99632af1d3d654548c328f2933a913d24d56`.
+- Built `System.map` sha256:
+  `01a3f7ac3a8f8448efd9bb7fc1e18475851207e34c204d28bc90f8acdfa6271e`.
+- `sha256sum -c SHA256SUMS` passed in the export directory.
+- `cmp Image.gz-dtb verify-unpack/zImage` and
+  `cmp initrd.img verify-unpack/initrd.img` passed.
+- Marker string check against the exact `Image.gz-dtb` includes
+  `M6 DSI lk-handoff[config]`, `lk-handoff-config-skip`,
+  `M6 DSI lk-handoff[start]`, and `lk-handoff-start-skip`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  `M6_LK_HANDOFF_SKIP_FIRST_DSI_CONFIG` and skips the first DSI config/start
+  when `PMaster_enable == 0` and `dsi_force_config == 0`, logging snapshots at
+  both skip points.
+- `BRINGUP_STATE.md`: records the handoff hypothesis, artifact identity,
+  expected observation, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the Linux DSI config/start boundary
+that can overwrite a panel state proven working in LK. Skipping exactly that
+first boundary is the narrowest non-destructive isolation for the new human
+observation; the state file preserves the evidence chain and rollback rule.
+
+Expected next marker: after flashing
+`boot-m6-dsi-lk-handoff-skip-20260608.img`, dmesg should contain
+`M6 DSI lk-handoff[config]` and/or `M6 DSI lk-handoff[start]` before Android
+boot completion. The human-visible observation is decisive: if the LK bootlogo
+does not disappear at 3-4 seconds, re-enable DSI config/start pieces one at a
+time to find the destructive register group. If the bootlogo still disappears,
+move earlier than DSI config/start to `dpmgr_path_init`, display power/reset,
+mutex/module reset, or primary-display path initialization.
+
+Rollback condition: revert this isolation patch if it prevents ADB boot,
+breaks `sys.boot_completed=1`, leaves Android composition disabled, regresses
+nonblack screencap, triggers DSI/CMDQ timeouts, or if the bootlogo still
+disappears before the skip markers can prove DSI config/start is the earliest
+destructive boundary.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260608-2005-m6-dsi-lk-handoff-skip-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+cmp "$ART/Image.gz-dtb" "$ART/verify-unpack/zImage"
+cmp "$ART/initrd.img" "$ART/verify-unpack/initrd.img"
+gzip -cd "$ART/Image.gz-dtb" 2>/tmp/m6-dsi-lk-handoff-gzip.err | strings \
+  | rg 'M6 DSI lk-handoff|lk-handoff-config-skip|lk-handoff-start-skip'
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A shell 'uname -a; getprop sys.boot_completed; dmesg | grep -E "M6 DSI lk-handoff|lk-handoff-(config|start)-skip|primary_display_init begin|mtkfb_probe"'
+```
+
+## 2026-06-08 DSI PHY LK-delay parity isolation
+
+PATCH HISTORY, **ISOLATION + DIAGNOSTIC**, 2026-06-08: change only the MIPITX
+analog settle waits in `DSI_PHY_clk_setting()` to LK-like values and log the
+MIPITX state around each wait. This patch does not change panel init commands,
+PLL math, porch values, lane count, PHY map, DSI mode, DDP route, PQ, HWC,
+OVL, RDMA, or BIST register profiles.
+
+Hypothesis: FACT: the profile sweep below proves alternate DSI BIST profile
+selection does not make the physical LCD flicker, while Android composition,
+DSI video/BIST registers, lane/FSM decode, nonblack screencap, and LP DCS
+reads remain alive. FACT: stock LK reverse found a concrete low-level delta in
+the MIPITX/DSI PHY setup sequence: LK waits about `0x1e` after BG enable,
+`0x14` after PLL enable, and `0xc8` after PCW_CHG plus pad-low release, while
+Linux used `mdelay(1)` at the comparable settle points. HYPOTHESIS: the panel
+may accept LP reads but reject the HS video stream because Linux starts HS
+traffic before the MIPITX analog/PLL/pad path has settled the way stock LK
+does.
+
+Evidence:
+- Profile-sweep capture verdict:
+  `/srv/forge/android/meizu_m6/captures/20260608-1915-m6-dsi-bist-profile-sweep-711HEBSR277K5/CAPTURE_VERDICT.md`.
+- Stock reverse notes:
+  `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/m6_lowlevel_dsi_mipitx_parity_20260608.md`.
+- Source lines patched: `DSI_PHY_clk_setting()` in
+  `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-dsi-phy-lk-delay-20260608.log`,
+  ending in `CAT arch/arm64/boot/Image.gz-dtb`.
+- Export artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1935-m6-dsi-phy-lk-delay-bootonly`.
+- Built boot image sha256:
+  `ca4063ce29f4d1bca3f23dd1fa38e343092b2852f6063d00a44b2beb026bd69a`.
+- Built `Image.gz-dtb` sha256:
+  `d66c958fa35337cd7e6451b162f64a3866de13f7b4582690b075291083bb584a`.
+- Built `System.map` sha256:
+  `c1faceed5504ab1d4c34596af3bc2622c50bace0aab0d48e188cf3c725f64fb7`.
+- Build log sha256:
+  `b1f18536defb436b539e99fc652bdf02dcc004a25e2e6594f4d6362b10ce8c7a`.
+- `sha256sum -c SHA256SUMS` passed in the export directory.
+- `cmp Image.gz-dtb verify-unpack/zImage` and
+  `cmp initrd.img verify-unpack/initrd.img` passed.
+- Marker string check against the exact `Image.gz-dtb` includes
+  `M6 DSI physeq[%s]: lk-delay`, `phy-clk-bg-settle`,
+  `phy-clk-pll-en-settle`, and `phy-clk-pcw-pad-settle`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  LK-delay constants and `M6 DSI physeq[...]` markers, replaces the BG settle
+  wait with 30 ms, the PLL-enable settle wait with 20 ms, and the PCW/pad-low
+  settle wait with 200 ms.
+- `BRINGUP_STATE.md`: records hypothesis, evidence, expected next markers,
+  rollback condition, and verification commands.
+- `captures/20260608-1915-m6-dsi-bist-profile-sweep-711HEBSR277K5/CAPTURE_VERDICT.md`:
+  records the profile sweep result that justified moving below BIST profile
+  selection.
+
+Why each file changed: `ddp_dsi.c` owns the MIPITX analog/PLL/pad enable
+sequence and is the narrow owner for this LK-parity isolation. The state and
+capture verdict files preserve the evidence chain so future agents do not
+reopen PQ/HWC/RDMA/BIST-profile hypotheses without contradictory fresh logs.
+
+Expected next marker: after flashing
+`boot-m6-dsi-phy-lk-delay-20260608.img`, boot dmesg should contain
+`M6 DSI physeq[phy-clk-bg-settle]`, `phy-clk-pll-en-settle`, and
+`phy-clk-pcw-pad-settle` begin/end pairs with the same final PLL/lane/PHY map
+as the prior image, followed by `sys.boot_completed=1`. If physical LCD shows
+anything, keep this patch and narrow the exact wait. If physical LCD stays
+black while markers prove LK-like waits ran and DCS/BIST still work, move to
+stock-hidden MIPITX register side effects, lane electrical polarity/swap not
+visible in `PHY_SEL`, or panel-side HS acceptance.
+
+Rollback condition: revert this isolation patch if it prevents ADB boot,
+breaks `sys.boot_completed=1`, changes final lane/PLL values unexpectedly,
+regresses nonblack screencap, breaks LP DCS reads, or creates new DSI/CMDQ
+timeouts before producing all three `physeq` markers.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260608-1935-m6-dsi-phy-lk-delay-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+cmp "$ART/Image.gz-dtb" "$ART/verify-unpack/zImage"
+cmp "$ART/initrd.img" "$ART/verify-unpack/initrd.img"
+gzip -cd "$ART/Image.gz-dtb" 2>/tmp/m6-dsi-phy-lk-delay-gzip.err | strings \
+  | rg 'M6 DSI physeq\[|phy-clk-bg-settle|phy-clk-pll-en-settle|phy-clk-pcw-pad-settle'
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A shell 'uname -a; getprop sys.boot_completed; dmesg | grep -E "M6 DSI physeq\\[|M6 DSI phydecode\\[phy-clk|M6 DSI rtcal\\[phy-clk-after|M6 DSI snapshot\\[start-after"'
+```
+
+## 2026-06-08 DSI BIST profile / lane-FSM diagnostic
+
+PATCH HISTORY, **ISOLATION + DIAGNOSTIC**, 2026-06-08: add manual
+`m6_dsi_bist_profile:<profile>:<rgb>[:hold_ms]` debugfs control and richer
+DSI state decode. The command is manual-only, writes only DSI BIST registers,
+holds the selected pattern for a bounded time, logs forced DSI/MIPITX/FSM
+snapshots, then disables BIST before returning. It does not change boot-time
+panel init, DSI timing, PLL, lanes, DDP route, PQ, HWC, OVL, RDMA, backlight,
+or public/private DCS tables.
+
+Hypothesis: FACT: verified capture
+`/srv/forge/android/meizu_m6/captures/20260608-1816-m6-dsi-bist-physical-marker-711HEBSR277K5`
+shows `m6_dsi_bist_full` setting `BIST_CON=0x200446`, `self_pat=1`,
+`bist_en=1`, `fix=1`, `lane=4`, active DSI video period, and active MIPITX
+lanes, but the human reported no physical flicker. FACT: stock reverse says
+visible DSI params, visible init table, and ordinary runtime DSI state mostly
+match, leaving BIST/HS-video/PHY acceptance as the open layer. HYPOTHESIS: the
+current `BIST_CON=0x200446` profile may not be the physical self-test profile
+on this SoC; toggling `BIST_MODE`, `BIST_HS_FREE`, and legacy `SELF_PAT_MODE`
+profiles can distinguish "wrong BIST profile" from "panel/PHY still invisible
+even when alternate BIST modes are driven".
+
+Evidence:
+- Current physical-BIST capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-1816-m6-dsi-bist-physical-marker-711HEBSR277K5`.
+- Route/content capture verdict:
+  `/srv/forge/android/meizu_m6/captures/20260608-1759-m6-display-route-probe-711HEBSR277K5/CAPTURE_VERDICT.md`.
+- Stock reverse:
+  `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/lk_display_reverse.md`.
+- Low-level parity note:
+  `/srv/forge/android/meizu_m6/captures/20260530-stock-lk-boot-reverse-inputs/m6_lowlevel_dsi_mipitx_parity_20260608.md`.
+- Build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-dsi-bist-profile-diag-20260608.log`,
+  ending in `CAT arch/arm64/boot/Image.gz-dtb`.
+- Export artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260608-1905-m6-dsi-bist-profile-bootonly`.
+- Built boot image sha256:
+  `466cfde97f6b9e69d33456e472e41a0a74c526d1a73a1fd85f5ec5d48176995c`.
+- Built `Image.gz-dtb` sha256:
+  `c4f469b2caf4d0cef420e8ef100efb6674fadc5b6dcf5f36a9052388392e5f36`.
+- Built `System.map` sha256:
+  `0b096ac5e465b05f3e0fb726f012624a0ded229785fa3cc445f11795ce16f2a1`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Build log sha256:
+  `ef9419b354919c7e27a8cfe27778260c3569f9da478b9ca9b9131a4afb742f28`.
+- `sha256sum -c SHA256SUMS` passed in the export directory. `cmp Image.gz-dtb
+  verify-unpack/zImage` and `cmp initrd.img verify-unpack/initrd.img` passed.
+- Marker string check against the exact `Image.gz-dtb` includes
+  `m6_dsi_bist_profile`, `M6 DSI bist_profile`, `M6 DSI state_decode`, and
+  `M6 DSI phydecode[%s]: dbg_out=0x%x apb_async=0x%x`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds BIST
+  profile construction, bounded manual hold/disable, and DBG0-5 / STATE6-9
+  decode markers.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the
+  profile-test helper to debugfs.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: exposes the
+  `m6_dsi_bist_profile` command and help text.
+- `BRINGUP_STATE.md`: records the category, evidence, expected markers,
+  rollback, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns BIST_CON, DSI state registers, and
+MIPITX register snapshots, so it is the narrow owner for testing alternative
+BIST profiles and decoding lane FSM state. `disp_debug.c` is the existing
+manual root-triggered display command surface. The state file is the durable
+anti-repeat record required for the next capture.
+
+Expected next marker: after flashing this diagnostic boot, a manual sweep like
+profiles `0..5` should print `M6 DSI bist_profile: begin`, the raw BIST_CON
+value, repeated `M6 DSI state_decode[...]` lines, and
+`bist-profile-post-disable` for each profile. If one profile physically
+flickers, the previous `m6_dsi_bist_full` result is demoted and the next patch
+should use that profile as the physical-path sentinel. If no profile flickers
+while state decode shows HS/video/lane state remains active, do not reopen
+PQ/HWC/RDMA/OVL; continue with stock-hidden PHY side effects or panel-side
+electrical acceptance.
+
+Rollback condition: revert this isolation patch if the profile command hangs
+debugfs, fails to auto-disable BIST, leaves the panel in a persistent test
+pattern, regresses `sys.boot_completed=1`, breaks the previously working
+nonblack screencap, or makes DSI/DCS reads time out after a profile sweep.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check -- \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h \
+  kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c \
+  BRINGUP_STATE.md
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  -j8 Image.gz-dtb
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A shell 'dmesg -C; svc power stayon true; input keyevent 224; settings put system screen_brightness 255; echo 255 > /sys/class/leds/lcd-backlight/brightness; for p in 0 1 2 3 4 5; do echo m6_dsi_bist_profile:$p:0x00ff0000:2500 > /d/mtkfb; sleep 1; done; dmesg' \
+  | rg 'M6 DSI bist_profile|M6 DSI state_decode|BIST_CON|bist-profile-post-disable'
+```
+
+Runtime capture result, 2026-06-08:
+
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260608-1915-m6-dsi-bist-profile-sweep-711HEBSR277K5`.
+- Capture verdict:
+  `/srv/forge/android/meizu_m6/captures/20260608-1915-m6-dsi-bist-profile-sweep-711HEBSR277K5/CAPTURE_VERDICT.md`.
+- FACT: `sha256sum -c SHA256SUMS` passes inside the capture directory.
+- FACT: the capture ran on boot image
+  `466cfde97f6b9e69d33456e472e41a0a74c526d1a73a1fd85f5ec5d48176995c`,
+  matching the diagnostic artifact above.
+- FACT: profiles 0, 1, 2, 3, and 5 latched `bist_en=1` with `BIST_CON`
+  values `0x200446`, `0x200447`, `0x200456`, `0x200457`, and `0x200417`;
+  profile 4 was the legacy/self-pattern variant `0x200040` with `bist_en=0`.
+- FACT: active profile markers show DSI lane/FSM state in video/HS operation
+  with moving word counters; each profile auto-disable returned `BIST_CON=0x0`.
+- FACT: post-sweep screencap stayed valid 720x1280 RGBA and nonblack
+  (`identify` mean around `0.296` per RGB channel), so logical Android content
+  is alive after the test.
+- FACT: post-sweep `m6_dsi_dcs_status:stock_pages` completed with
+  `M6 LCM stock_pages: read end`, so the LP DCS/control path still works.
+- FACT: human observation during the sweep: no physical flicker at all.
+
+INFERENCE: alternate DSI BIST profile selection is not the missing piece. The
+earliest open display frontier is now below Android composition, DDP routing,
+OVL/RDMA scanout, DSI BIST register programming, and public LP DCS reads.
+Continue with LK-like MIPITX/DSI PHY analog settle parity or another
+stock-hidden MIPITX/panel-side HS acceptance test. Do not reopen PQ, HWC,
+RDMA, OVL, backlight, page5_2a, public DCS, or route validity unless a fresh
+capture contradicts the facts above.
+
 ## 2026-06-08 Display route-probe diagnostic
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-08: add manual
