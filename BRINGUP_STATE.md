@@ -127,6 +127,28 @@ Runtime result, **FACT**, 2026-06-09:
   `OSTD_CRS=0`, `ONGOING=0`, and `REQ=0`. No `[DEVAPC] M6 DEVAPC vio[...]`
   lines appear in the cycle capture.
 
+Live follow-up after checkpoint, **FACT**, 2026-06-09:
+- Forced-awake power-key capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1838-m6-100-forced-awake-then-suspend-711HEBSR277K5/`;
+  capture `sha256sum -c SHA256SUMS` passed.
+- Pre-trigger identity: `mWakefulness=Awake`, `mDisplayReady=true`,
+  `Display Power: state=ON`, `sys.boot_completed=1`, bootanim stopped,
+  brightness mode `0`, brightness `255`, timeout `2147483647`, and boot
+  partition hash
+  `f0a3b28a43ef546595afb10d3ed200d27ef81b8214ba27745ad29d60c30c45db`.
+- Trigger: `input keyevent 26` after forcing stay-awake/ON state.
+- Post-trigger identity: userspace moved to `mWakefulness=Dozing` with
+  `mDisplayReady=false`, but display power remained `Display Power: state=ON`
+  and the boot partition hash still matched #100.
+- FACT: the capture contains `0` matches for `primary_display_suspend`,
+  `mtkfb blank`, `M6 primary power[suspend-*]`, `dpmgr_path_stop`, and
+  `dpmgr_path_power_off`.
+- FACT: the only display-side kernel signature during the window is the
+  already-known wedged path: `present_fence_w` VSYNC timeouts, OVL0
+  `fsm=0x200/s_w_rst`, `rdma_idle=1/0/1/1`, and RDMA0 `IN/OUT=0/0`; logcat
+  also shows HWC fence waits such as
+  `[OVL-PF] (0) fence 126 didn't signal in 1000 ms`.
+
 INFERENCE: DEVAPC and the previously suspected SMI MMU/grant profile are not
 the observed root of this clean resume wedge. The earliest proven digital
 frontier is now earlier than HWC memory-layer fetch and earlier than
@@ -135,6 +157,14 @@ frontier is now earlier than HWC memory-layer fetch and earlier than
 should target the pre-poweroff stop/idle/reset-domain sequence, MMSYS/display
 MTCMOS reset behavior, and SMI/LARB clock/reset ordering. The optical HS-panel
 acceptance bug remains separate because DSI-generated BIST was also invisible.
+
+INFERENCE from the forced-awake power-key follow-up: once OVL is already
+wedged, the power-key path stalls above kernel fb blank/suspend while userspace
+waits for display readiness/fences. Therefore an already-wedged runtime cannot
+prove `dpmgr_path_stop()` or `dpmgr_path_power_off()` behavior. The next useful
+digital patch should instrument the pre-wedge boot/first-HWC-commit boundary,
+or add a tightly-scoped **ISOLATION** reset before the first real OVL memory
+fetch, rather than trying to observe display stop/power-off after the wedge.
 
 ## 2026-06-09 #98 suppress resume-time LCM DCS trace reads
 
