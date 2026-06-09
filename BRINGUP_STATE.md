@@ -1,5 +1,102 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #72 pstore retention / display flood cap
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: reduce late M6 display diagnostic
+flood enough for early handoff breadcrumbs to survive in `dmesg`,
+`/proc/last_kmsg`, and pstore, and duplicate compact `M6D`/`M6L` breadcrumbs
+to normal display printk in addition to `aee_sram_printk()`. This patch does
+not change display registers, DDP routing, DSI timing, LCM command tables,
+OVL/RDMA/HWC/PQ behavior, backlight, or boot image ramdisk/cmdline.
+
+Hypothesis: FACT: #72 boot image
+`9388695ce7bd572d3c5f6a24393b98be4aa787bdf09bc544c897c910fd015431` boots,
+reaches `sys.boot_completed=1`, preserves nonblack `720x1280` screencaps, and
+does not regress charging status. FACT: after a second #72 reboot,
+`/proc/last_kmsg` and pstore are fresh enough to show #72-era display logs, but
+they start around kernel timestamp `217s` and contain late `M6 OVL irq diag`
+flood instead of the human-observed 3-4s bootlogo drop boundary. HYPOTHESIS:
+the early `M6P`/`M6D`/`M6L`/`M6F` breadcrumbs are being overwritten by late
+diagnostic flood, so reducing late flood and emitting compact breadcrumbs into
+the normal printk channel should preserve the earliest takeover sequence in the
+next capture.
+
+Evidence:
+- #73 pstore-retention artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0332-m6-pstore-retention-flood-cap-bootonly`.
+- #73 boot image sha256:
+  `e842ab565cb9cfbceea02ced6fc2621ce1771b36d96748a7441a1210bfcfc24f`.
+- #73 `Image.gz-dtb` sha256:
+  `7ca7d1f43e7c73f09edaf6d613baabecd6619e8a853ec5852e5810fa7b9b52d4`.
+- #73 `System.map` sha256:
+  `db5ba3640bd231a8a6e7eb0cc6300d3b02f0c93dbed38dedc05bf1ded474fd2d`.
+- #73 kernel string:
+  `3.18.140 #73 SMP PREEMPT Tue Jun 9 03:31:47 CDT 2026`.
+- Artifact verification: `sha256sum -c SHA256SUMS` passed, `abootimg -x`
+  unpacked successfully, `cmp Image.gz-dtb verify-unpack/zImage` passed,
+  `cmp initrd.img verify-unpack/initrd.img` passed, and gzip-expanded marker
+  strings include `M6D`, `M6P`, `M6L`, `M6F`, `M6 OVL irq diag`, and
+  `M6 DDP irq diag`.
+- #72 first boot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0303-m6-ramconsole-breadcrumbs-firstboot`.
+- #72 second boot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0306-m6-ramconsole-breadcrumbs-after-second-reboot`.
+- #72 identity: `identity-status.txt` reports kernel
+  `3.18.140 #72 SMP PREEMPT Tue Jun 9 02:56:30 CDT 2026`,
+  `sys.boot_completed=1`, `bootanim=stopped`, battery `6`, `Charging`, and
+  matching boot-partition sha256
+  `9388695ce7bd572d3c5f6a24393b98be4aa787bdf09bc544c897c910fd015431`.
+- `bootdiag-latest/proc/last_kmsg.txt` starts with late
+  `M6 OVL irq diag[67]` at `[217.701142]` and continues with repeated
+  OVL diagnostic lines, proving the retained log window is dominated by late
+  display flood rather than the 3-4s physical drop.
+- `pstore-pmsg-ramoops-after-second-reboot.txt`, pstore console, and
+  `/proc/last_kmsg` contain no `M6P`, `M6D`, `M6L`, or `M6F` compact lines.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_irq.c`: caps M6 IRQ
+  diagnostic sampling to the first 8 events, removing the periodic late tail.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c`: caps M6
+  DPMGR event-flow sampling to the first 8 events, removing the periodic late
+  tail.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: duplicates the
+  compact `M6D` DSI snapshot to `DISPERR()` as well as `aee_sram_printk()`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_lcm.c`: duplicates the
+  compact `M6L` LCM breadcrumb to `DISPERR()` as well as `aee_sram_printk()`.
+- `BRINGUP_STATE.md`: records the #72 capture verdict and retention patch.
+
+Why each file changed: `ddp_irq.c` and `ddp_manager.c` are the proven late
+flood sources that evict the early timeline from pstore/last_kmsg. `ddp_dsi.c`
+and `disp_lcm.c` own the compact early DSI/LCM breadcrumbs that need to survive
+through the normal printk-backed evidence path. The change is diagnostic-only:
+it only changes log volume and log routing.
+
+Expected next marker: the next verified boot and second-reboot capture should
+show `M6D`, `M6L`, existing `M6P`, and `M6F` lines in current dmesg and/or
+previous-boot pstore/`/proc/last_kmsg`, with the retained log window beginning
+near early display handoff instead of around 217s. If the physical panel still
+goes black, those lines should bracket whether the drop is before LCM init skip,
+during DSI config/start skip, or after DSI HS start.
+
+Rollback condition: revert if the cap hides the only remaining late OVL/RDMA
+failure evidence, if compact breadcrumbs still do not survive after a clean
+second reboot, or if #73 regresses `sys.boot_completed=1`, ADB root, pstore,
+charging status, or physical display timing.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A shell 'uname -a; getprop sys.boot_completed; sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot'
+$A shell 'dmesg | grep -E "M6P|M6D|M6L|M6F|M6 OVL irq diag|M6 DDP irq diag" | head -160'
+$A reboot
+$A wait-for-device
+$A root
+$A shell 'cat /proc/last_kmsg | grep -E "M6P|M6D|M6L|M6F|M6 OVL irq diag|M6 DDP irq diag" | head -200'
+$A shell 'cat /sys/fs/pstore/console-ramoops | grep -E "M6P|M6D|M6L|M6F|M6 OVL irq diag|M6 DDP irq diag" | head -200'
+```
+
 ## 2026-06-09 #71 ram_console display breadcrumbs
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: duplicate the shortest display

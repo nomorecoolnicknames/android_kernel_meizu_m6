@@ -1674,6 +1674,16 @@ static void dsi_m6_sram_snapshot(const char *tag, DISP_MODULE_ENUM module)
 		INREG32(DDP_REG_BASE_DSI0 + 0x17c),
 		INREG32(MIPITX_BASE + 0x004),
 		INREG32(MIPITX_BASE + 0x008));
+	DISPERR("M6D%02u %s S=%x M=%x I=%x H=%x/%x V=%x B=%x L=%x/%x\n",
+		count, tag, INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x17c),
+		INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008));
 }
 
 static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void *cmdq)

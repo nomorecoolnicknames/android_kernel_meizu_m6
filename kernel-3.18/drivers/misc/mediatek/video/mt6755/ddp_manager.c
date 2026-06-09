@@ -1124,7 +1124,7 @@ static bool dpmgr_m6_diag_sample(unsigned int *count)
 {
 	unsigned int n = (*count)++;
 
-	return n < 16 || ((n & 0x3ff) == 0);
+	return n < 8;
 }
 
 int dpmgr_path_config(disp_path_handle dp_handle, disp_ddp_path_config *config, void *cmdq_handle)

@@ -400,6 +400,8 @@ static void disp_lcm_m6_sram(const char *tag, int force, int inited)
 	count++;
 	aee_sram_printk("M6L%02u %s f=%d i=%d\n",
 		count, tag, force, inited);
+	DISPERR("M6L%02u %s f=%d i=%d\n",
+		count, tag, force, inited);
 }
 
 int disp_lcm_init(disp_lcm_handle *plcm, int force)

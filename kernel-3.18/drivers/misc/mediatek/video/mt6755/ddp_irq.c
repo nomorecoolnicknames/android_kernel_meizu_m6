@@ -64,7 +64,7 @@ static bool disp_irq_m6_diag_sample(unsigned int *count)
 {
 	unsigned int n = (*count)++;
 
-	return n < 128 || ((n & 0x3ff) == 0);
+	return n < 8;
 }
 
 static void disp_irq_m6_dump_ovl0_layer(unsigned int idx, unsigned long base,
