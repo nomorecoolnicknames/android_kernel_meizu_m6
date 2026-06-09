@@ -1,5 +1,105 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #79 DSI C2V switch-bit probe
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded M6-only debugfs probe
+for the low-level DDP/DSI command-to-video path:
+`m6_dsi_c2v_switch:<value>[:hold_ms]`. Unlike #78, this does not only issue a
+plain LCM DCS write. It builds the same `LCM_DSI_MODE_SWITCH_CMD` shape used by
+the MTK switch path, forces `cmd_if=LCM_INTERFACE_DSI0` because this M6 LCM does
+not populate `params->lcm_cmd_if`, stops video, calls `DDP_SWITCH_LCM_MODE`,
+then calls `DDP_SWITCH_DSI_MODE` so `ddp_dsi_switch_mode()` can set
+`DSI_MODE_CTRL.C2V_SWITCH_ON`, program the VM command packet, assert
+`DSI_START=2`, flush CMDQ, restart the trigger loop/path, and dump live DSI,
+MIPITX, and backlight truth around each boundary. It does not change boot-time
+LCM timing, porch values, PLL, lane count, PQ/HWC/OVL/RDMA routing, or fake any
+ready/fence state.
+
+Hypothesis: FACT: #78 runtime capture
+`/srv/forge/android/meizu_m6/captures/20260609-0643-m6-lcm-mode-ctrl-bb03-probe-afterboot`
+booted #78, reached `sys.boot_completed=1`, and ran
+`m6_lcm_mode_ctrl:0x03:1500`. FACT: #78 showed DSI host in video data period
+with MIPITX lanes/PLL stable and moving word counts, but `line=0` persisted
+before and after the plain `0xBB=0x03` write. FACT: #78 DCS readback for `0xBB`
+stayed `00` before/after/hold, so a simple read/write/read DCS probe did not
+prove that the panel entered HS-video acceptance. FACT: source inspection shows
+the generic C2V path also toggles `DSI_MODE_CTRL.C2V_SWITCH_ON`, writes the VM
+packet at `DSI_REG + 0x200`, writes `DSI_START=2`, and flushes CMDQ in
+`ddp_dsi_switch_mode()`. HYPOTHESIS: the missing low-level C2V switch bit/VM
+packet path may be the earliest remaining layer between the already-working
+RDMA route and the physical-lit-black panel; if it runs and `line` still stays
+zero, this branch closes and the next target moves below DSI host switching into
+MIPITX lane/drive/settle/polarity or stock LK hidden PHY side effects.
+
+Evidence:
+- #79 final artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0848-m6-dsi-c2v-switch-probe-dsi0-r2-bootonly`.
+- #79 boot image sha256:
+  `01ec11277d92fa319f36a4b955d51476c5c1cf8fed22758eb580ae223233c4c2`.
+- #79 `Image.gz-dtb` sha256:
+  `043c74c74974a59d41f908425b7eab84a3d49e03b9202b4b25bf32342a58db8f`.
+- #79 `System.map` sha256:
+  `400d1378884a456ec429f3e3412f03116a9afed6756875d1be3e3001a871c68b`.
+- #79 `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- #79 artifact verification: `sha256sum -c SHA256SUMS` passed,
+  `abootimg -x` unpacked successfully, `cmp Image.gz-dtb verify-unpack/zImage`
+  passed, `cmp initrd.img verify-unpack/initrd.img` passed, and gzip-expanded
+  marker strings include `m6_dsi_c2v_switch`, `M6 DSI c2v_switch`,
+  `switch-lcm-enter`, `switch-dsi-enter`, and `c2v-switch-*`.
+- #78 capture facts:
+  `/srv/forge/android/meizu_m6/captures/20260609-0643-m6-lcm-mode-ctrl-bb03-probe-afterboot`.
+  The simple `0xBB=0x03` probe produced `mode-ctrl-restart-after-write` and
+  `after-bb03` snapshots with nonzero `word` but `line=0`, backlight still 255,
+  and a nonblack screencap unchanged from before the probe.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: logs entry/exit
+  of the existing `DDP_SWITCH_LCM_MODE` and `DDP_SWITCH_DSI_MODE` paths plus
+  live DSI snapshots around the low-level switch.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: adds
+  `primary_display_m6_dsi_c2v_switch()` to stop video, run the MTK C2V switch
+  path with `cmd_if=LCM_INTERFACE_DSI0`, rebuild/restart the trigger path, and
+  dump post-switch truth.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.h`: exposes
+  the M6 debug wrapper to debugfs.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  `m6_dsi_c2v_switch:<value>[:hold_ms]` debugfs command and help text.
+- `BRINGUP_STATE.md`: records the #78 result, #79 purpose, evidence, expected
+  markers, rollback condition, and verification commands.
+
+Why each file changed: DSI owns the actual hardware switch bit/VM packet path;
+primary display owns safe stop/restart and trigger-loop recovery; debugfs is the
+existing runtime injection surface; this state file preserves why the work moved
+below plain DCS writes after #78.
+
+Expected next marker: after flashing #79, run
+`m6_dsi_c2v_switch:0x03:1500`. Dmesg should show
+`M6 DSI c2v_switch`, `switch-lcm-enter`, `switch-dsi-enter`,
+`c2v-switch-after-dsi`, `c2v-switch-restart-after-write`, and
+`c2v-switch-hold-end`. If `switch-dsi-enter/exit` runs, `cmd_if=1`, C2V video
+state/VM packet markers appear, but DSI `line` remains zero and the physical LCD
+stays black, close the C2V-switch branch and target MIPITX/panel electrical or
+stock LK PHY side effects next. If `switch_dsi_mode ret` fails or `cmd_if` is
+not DSI0, fix that path before moving lower.
+
+Rollback condition: revert this checkpoint if the debugfs command destabilizes
+ADB/SurfaceFlinger/RDMA/backlight, fails before `switch-dsi-enter`, leaves the
+display path unable to restart, or produces new CMDQ/DSI timeouts that prevent
+comparison with #78/#77.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'svc power stayon true; settings put system screen_off_timeout 2147483647; input keyevent 224; settings put system screen_brightness 255; echo 255 > /sys/class/leds/lcd-backlight/brightness'
+$A shell 'echo m6_dsi_c2v_switch:0x03:1500 > /d/mtkfb; sleep 1; echo m6_display_truth_window:after-c2v-switch > /d/mtkfb'
+$A shell 'dmesg | grep -E "M6 DSI c2v_switch|switch-lcm|switch-dsi|c2v-switch|M6 DSI state_decode|word=|line=|MIPITX|backlight" | tail -320'
+$A shell 'cat /d/mtkfb | head -180'
+```
+
 ## 2026-06-09 #78 ILI9881P mode-control C2V probe
 
 PATCH HISTORY, **ISOLATION / DIAGNOSTIC**, 2026-06-09: add a bounded M6-only

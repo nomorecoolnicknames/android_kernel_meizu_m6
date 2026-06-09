@@ -6195,6 +6195,76 @@ done:
 	return ret;
 }
 
+int primary_display_m6_dsi_c2v_switch(unsigned int value, unsigned int hold_ms)
+{
+	DISP_STATUS ret = DISP_STATUS_OK;
+	LCM_DSI_MODE_SWITCH_CMD lcm_cmd;
+	unsigned int bounded = hold_ms;
+	int ioctl_ret;
+
+	if (bounded > 10000)
+		bounded = 10000;
+
+	memset(&lcm_cmd, 0, sizeof(lcm_cmd));
+	lcm_cmd.mode = BURST_VDO_MODE;
+	lcm_cmd.cmd_if = (unsigned int)LCM_INTERFACE_DSI0;
+	lcm_cmd.addr = 0xBB;
+	lcm_cmd.val[0] = value & 0xff;
+
+	DISPFUNC();
+	primary_display_esd_check_enable(0);
+	_primary_path_lock(__func__);
+	disp_irq_esd_cust_bycmdq(0);
+	if (pgc->state == 0) {
+		DISPMSG("M6 DSI c2v_switch, primary display path is already sleep, skip\n");
+		goto done;
+	}
+
+	DISPERR("M6 DSI c2v_switch: begin value=0x%x hold=%u cmd_if=%u mode=%d\n",
+		value, bounded, lcm_cmd.cmd_if, lcm_cmd.mode);
+	dsi_m6_dump_live("c2v-switch-before-stop");
+	if (primary_display_is_video_mode())
+		dpmgr_path_ioctl(pgc->dpmgr_handle, NULL, DDP_STOP_VIDEO_MODE, NULL);
+	msleep(20);
+	dsi_m6_dump_live("c2v-switch-after-stop");
+
+	DISPERR("M6 DSI c2v_switch: switch_lcm_mode begin\n");
+	ioctl_ret = dpmgr_path_ioctl(pgc->dpmgr_handle, pgc->cmdq_handle_config,
+				     DDP_SWITCH_LCM_MODE, &lcm_cmd);
+	DISPERR("M6 DSI c2v_switch: switch_lcm_mode ret=%d\n", ioctl_ret);
+	dsi_m6_dump_live("c2v-switch-after-lcm");
+
+	dpmgr_path_set_video_mode(pgc->dpmgr_handle, 1);
+	DISPERR("M6 DSI c2v_switch: switch_dsi_mode begin\n");
+	ioctl_ret = dpmgr_path_ioctl(pgc->dpmgr_handle, pgc->cmdq_handle_config,
+				     DDP_SWITCH_DSI_MODE, &lcm_cmd);
+	DISPERR("M6 DSI c2v_switch: switch_dsi_mode ret=%d\n", ioctl_ret);
+	dsi_m6_dump_live("c2v-switch-after-dsi");
+
+	_cmdq_stop_trigger_loop();
+	_cmdq_build_trigger_loop();
+	_cmdq_start_trigger_loop();
+	_cmdq_reset_config_handle();
+	_cmdq_handle_clear_dirty(pgc->cmdq_handle_config);
+	_cmdq_insert_wait_frame_done_token_mira(pgc->cmdq_handle_config);
+
+	dpmgr_path_start(pgc->dpmgr_handle, CMDQ_DISABLE);
+	if (primary_display_is_video_mode())
+		dpmgr_path_trigger(pgc->dpmgr_handle, NULL, CMDQ_DISABLE);
+	msleep(80);
+	dsi_m6_dump_live("c2v-switch-restart-after-write");
+	if (bounded)
+		msleep(bounded);
+	dsi_m6_dump_live("c2v-switch-hold-end");
+	m6_led_dump_backlight_truth("c2v-switch-hold-end");
+
+done:
+	disp_irq_esd_cust_bycmdq(1);
+	_primary_path_unlock(__func__);
+	primary_display_esd_check_enable(1);
+	return ret;
+}
+
 static void primary_display_m6_dump_ovl_request_truth(const char *tag)
 {
 	struct m6_ovl_config_snapshot snap;

@@ -139,6 +139,8 @@ char MTKFB_STR_HELP[] =
 	"             Meizu M6 isolation write/read probe for ILI9881P page5 cmd 0x2A\n"
 	"        m6_lcm_mode_ctrl:<value>[:hold_ms]\n"
 	"             Meizu M6 isolation write/read probe for ILI9881P cmd 0xBB mode control\n"
+	"        m6_dsi_c2v_switch:<value>[:hold_ms]\n"
+	"             Meizu M6 diagnostic DDP DSI C2V switch path probe using cmd 0xBB\n"
 	"\n"
 	"\n"
 	"        m6_display_truth_window[:tag]\n"
@@ -742,6 +744,22 @@ void mtkfb_process_dbg_opt(const char *opt)
 		DISPERR("M6 LCM mode_ctrl command: value=0x%x hold=%u\n",
 			value, hold_ms);
 		primary_display_m6_lcm_mode_ctrl(value, hold_ms);
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_c2v_switch:", 19)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+
+		ret = sscanf(opt, "m6_dsi_c2v_switch:%i:%u\n",
+			     &value_arg, &hold_ms);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		DISPERR("M6 DSI c2v_switch command: value=0x%x hold=%u\n",
+			value, hold_ms);
+		primary_display_m6_dsi_c2v_switch(value, hold_ms);
 		return;
 	} else if (0 == strncmp(opt, "m6_display_truth_window", 23)) {
 		const char *tag = "manual";

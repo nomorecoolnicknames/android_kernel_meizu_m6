@@ -4705,6 +4705,10 @@ int ddp_dsi_switch_lcm_mode(DISP_MODULE_ENUM module, void *params)
 	LCM_DSI_MODE_SWITCH_CMD lcm_cmd = *((LCM_DSI_MODE_SWITCH_CMD *) (params));
 	int mode = (int)(lcm_cmd.mode);
 
+	DISPERR("M6 DSI switch_lcm_mode enter: module=%d cur=%d mode=%d cmd_if=%u addr=0x%x val=%02x/%02x/%02x/%02x\n",
+		module, dsi_currect_mode, mode, lcm_cmd.cmd_if, lcm_cmd.addr,
+		lcm_cmd.val[0], lcm_cmd.val[1], lcm_cmd.val[2], lcm_cmd.val[3]);
+	dsi_m6_dump_live("switch-lcm-enter");
 	if (dsi_currect_mode == mode) {
 		DISPMSG
 		    ("[ddp_dsi_switch_mode] not need switch mode, current mode = %d, switch to %d\n",
@@ -4728,6 +4732,9 @@ int ddp_dsi_switch_lcm_mode(DISP_MODULE_ENUM module, void *params)
 		wait_vm_cmd_done = false;
 		wait_event_interruptible(_dsi_wait_vm_cmd_done_queue[i], wait_vm_cmd_done);
 	}
+	dsi_m6_dump_live("switch-lcm-exit");
+	DISPERR("M6 DSI switch_lcm_mode exit: module=%d cur=%d mode=%d ret=0\n",
+		module, dsi_currect_mode, mode);
 	return 0;
 }
 
@@ -4737,6 +4744,11 @@ int ddp_dsi_switch_mode(DISP_MODULE_ENUM module, void *cmdq_handle, void *params
 	LCM_DSI_MODE_SWITCH_CMD lcm_cmd = *((LCM_DSI_MODE_SWITCH_CMD *) (params));
 	int mode = (int)(lcm_cmd.mode);
 
+	DISPERR("M6 DSI switch_mode enter: module=%d handle=%p cur=%d mode=%d cmd_if=%u addr=0x%x val=%02x/%02x/%02x/%02x\n",
+		module, cmdq_handle, dsi_currect_mode, mode, lcm_cmd.cmd_if,
+		lcm_cmd.addr, lcm_cmd.val[0], lcm_cmd.val[1], lcm_cmd.val[2],
+		lcm_cmd.val[3]);
+	dsi_m6_dump_live("switch-dsi-enter");
 	if (dsi_currect_mode == mode) {
 		DISPMSG
 		    ("[ddp_dsi_switch_mode] not need switch mode, current mode = %d, switch to %d\n",
@@ -4784,6 +4796,9 @@ int ddp_dsi_switch_mode(DISP_MODULE_ENUM module, void *cmdq_handle, void *params
 	dsi_currect_mode = mode;
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++)
 		_dsi_context[i].dsi_params.mode = mode;
+	dsi_m6_dump_live("switch-dsi-exit");
+	DISPERR("M6 DSI switch_mode exit: module=%d cur=%d mode=%d ret=0\n",
+		module, dsi_currect_mode, mode);
 	return 0;
 }
 
