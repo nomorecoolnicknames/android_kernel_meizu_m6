@@ -1,5 +1,153 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #101 OVL stale disabled-layer CPU-clear isolation
+
+PATCH HISTORY, **ISOLATION / DIAGNOSTIC**, 2026-06-09: stop mirroring the
+stale disabled-layer clear through CPU MMIO while a CMDQ handle is active, keep
+the same clear queued on CMDQ, and add a debugfs switch to re-enable the old CPU
+mirror live (`m6_ovl_stale_cpu_clear:1`). This patch does not change active
+layer configuration, OVL bounds defaults, M4U/SMI programming, DSI timing, LCM
+commands, IF_VSYNC mapping, CMDQ event waits, or backlight policy.
+
+Hypothesis: FACT from #100 postboot capture: immediately before the first OVL0
+IRQ failure, Linux logged `M6 OVL stale clear[1]` for `old_src=0x3`,
+`enabled=0x1`, `stale=0x2`, meaning L1 was being disabled while L0 stayed
+active. Ten milliseconds later OVL reported `L1 not complete until EOF`,
+`frame underflow`, and abnormal SOF, then settled into the historical
+`h_w_rst/s_w_rst` reset wedge. HYPOTHESIS: in direct-link video mode the
+CPU-side mirror of stale disabled-layer clear races the CMDQ/video timeline;
+queueing the stale clear on CMDQ while skipping CPU MMIO for that stale path
+will prevent the L1 EOF/reset wedge without undoing the active-layer CPU mirror
+that fixed older stale-active-layer state.
+
+Evidence:
+- #100 postboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1755-m6-100-ovl-reset-lifecycle-diag-711HEBSR277K5/`.
+- #100 key lines: `M6 OVL stale clear[1] ... old_src=0x3 enabled=0x1
+  stale=0x2 handle=... direct=1`; then `L1 not complete until EOF`,
+  `frame underflow`, `abnormal SOF`, and `M6 OVL irq diag` with
+  `fsm=0x100/h_w_rst`.
+- #101 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1945-m6-ovl-stale-cpu-clear-isolation-bootonly/boot-m6-ovl-stale-cpu-clear-isolation-20260609.img`.
+- #101 boot image sha256:
+  `c975c665c5590293284609056a56d84e07de8459524601bffa31c789b304d3cd`.
+- #101 `Image.gz-dtb` sha256:
+  `ae79b311718b1ce0503e45beeaad97a56d5e448cd65d202a51ad872694b6ce67`.
+- #101 `System.map` sha256:
+  `33af0bc543633e05ee618fe656aad755aba20c0081e1761dffcecc544e93f423`.
+- #101 `vmlinux` sha256:
+  `01b1660ff895bdc9cf749e401e8e8f53d8ad16b8937f0acd121c39e4dadb6a24`.
+- Build/packaging verification: `git diff --check` passed, `make
+  Image.gz-dtb` completed, `strings vmlinux` includes the new
+  `M6 OVL stale clear ... cpu_clear` and `m6_ovl_stale_cpu_clear` markers,
+  `abootimg -i` preserved 16 MiB boot geometry, artifact
+  `sha256sum -c SHA256SUMS` passed, and unpacked `zImage` / `initrd.img`
+  match packaged inputs.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.c`: adds the
+  `m6_ovl_stale_cpu_clear_enabled` isolation flag, logs `cpu_clear`, queues
+  stale disabled-layer register clears on CMDQ, and skips CPU MMIO for that
+  stale clear when `handle != NULL` unless the debug switch is enabled.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_ovl.h`: exposes
+  `ovl_m6_set_stale_cpu_clear()` to the debug command parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  `m6_ovl_stale_cpu_clear:[0|1]` command for live rollback/probing.
+- `BRINGUP_STATE.md`: records category, evidence, expected next marker,
+  rollback condition, artifact identity, runtime result, and verification
+  commands.
+
+Why each file changed: `ddp_ovl.c` owns the stale disabled-layer clear that
+#100 correlated with the first L1 EOF failure; the patch needs to change only
+that boundary and keep the active OVL config path intact. `ddp_ovl.h` and
+`disp_debug.c` provide a live rollback switch so the old CPU mirror can be
+restored without another flash if the isolation regresses behavior. The state
+file is the durable M6 bring-up record required for this isolation patch.
+
+Expected next marker: in the next boot/off-on capture, stale disabled-layer
+events should log `M6 OVL stale clear[...] ... cpu_clear=0` for CMDQ-backed
+clears, with no immediate `L1 not complete until EOF`, no `M6 OVL irq diag`
+`h_w_rst/s_w_rst` storm, and RDMA0/OVL0 IRQ counters continuing to increase
+after wake. If the old behavior is needed live, run
+`echo m6_ovl_stale_cpu_clear:1 > /d/mtkfb`.
+
+Rollback condition: revert this patch or enable `m6_ovl_stale_cpu_clear:1` if
+active layers stop updating, stale disabled layers remain visibly/structurally
+enabled, boot regresses before SurfaceFlinger finishes, power-key resume again
+hits `L1 not complete until EOF` / `abnormal SOF` / `wait VSYNC timeout`, or
+the debug switch itself causes display lock ordering issues. Do not revert only
+because the panel glass remains black; optical DSI/PHY acceptance is a separate
+frontier.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-1945-m6-ovl-stale-cpu-clear-isolation-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-1840-m6-101-powerkey-cycle-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+rg -n 'M6 OVL stale clear|cpu_clear=0|not complete until EOF|abnormal SOF|wait VSYNC timeout|M6 DPMGR life|primary_display_resume' "$CAP/dmesg.txt"
+```
+
+Runtime result, **FACT**, 2026-06-09:
+- #101 was flashed through the reverse ADB tunnel to device `711HEBSR277K5`.
+  Preflash boot partition hash was #100
+  `f0a3b28a43ef546595afb10d3ed200d27ef81b8214ba27745ad29d60c30c45db`;
+  post-write readback matched #101
+  `c975c665c5590293284609056a56d84e07de8459524601bffa31c789b304d3cd`.
+- Root postboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1837-m6-101-ovl-stale-cpu-clear-isolation-root-711HEBSR277K5/`.
+- Power-key cycle capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1840-m6-101-powerkey-cycle-711HEBSR277K5/`.
+- FACT: both capture directories pass `sha256sum -c SHA256SUMS`; #101 root
+  identity reports `sys.boot_completed=1`, bootanim stopped, brightness mode
+  `0`, brightness `255`, `mWakefulness=Awake`, `mDisplayReady=true`,
+  `Display Power: state=ON`, and #101 boot hash.
+- FACT: postboot/root capture contains no `M6 OVL irq diag`,
+  no `L1 not complete until EOF`, no `frame underflow`, no `abnormal SOF`, and
+  no `wait VSYNC timeout` in the captured kernel window. A live root interrupt
+  sample after #101 boot showed OVL0 and RDMA0 counters ticking
+  (`ovl0` around `6.6k`, `rdma0` around `13k`) instead of RDMA0 staying
+  `0/0`.
+- FACT: the #101 power-key cycle moved from `Awake/ON` to `Dozing/OFF` and
+  back to `Awake/ON`. After wake, boot hash still matched #101 and IRQ
+  counters were active: `mtk_cmdq`, `mutex`, `ovl0`, and `rdma0` all had
+  non-zero counts; `dsi0` showed `3` IRQs.
+- FACT: the power-key cycle contains exactly the intended isolation marker:
+  `M6 OVL stale clear` count `2`, both with `cpu_clear=0`. It contains `0`
+  matches for `M6 OVL irq diag`, `L1 not complete until EOF`,
+  `not complete until EOF`, `frame underflow`, `abnormal SOF`,
+  `wait VSYNC timeout`, and `RDMA0_EOF`.
+- FACT: resume reaches `M6 LCM pm[resume-after-callback]`,
+  `M6 DPMGR life[start-begin]`, `M6 DPMGR life[start-done]`,
+  `primary state: SLEPT -> ALIVE`, then DSI/RDMA state advances:
+  `edge-1ms` shows route `VALID=0x4000937a`, RDMA `in=464/1105
+  out=624/1101`; `after-500ms` shows DSI video mode active with
+  `STATE7=0x2010/Hsync back porch` and `word=1770`.
+- FACT: userspace still logs a bounded `DispDevice::setPowerMode` SW watchdog
+  during wake (`Screen on took 3747 ms`), but it no longer becomes the #100
+  permanent RDMA0/OVL0 wedge.
+
+INFERENCE: the #100 digital stop was the stale disabled L1 CPU-clear race, not
+DEVAPC, real LARB0 MMU/grant state, IF_VSYNC mapping, or RDMA0_EOF token
+delivery. The Linux-owned resume path is now digitally alive enough to stop
+and restart the display path, complete OVL/RDMA work, and continue VSYNC waits.
+
+INFERENCE: the remaining black glass is now back to the independent optical
+DSI/MIPITX/panel-acceptance frontier. DSI-generated BIST was invisible with
+proven brightness, and #101 still shows DSI/MIPITX configured and video state
+advancing while the human-visible panel remains black. Next useful work should
+target HS electrical/lane behavior, LP/ULPS transitions, `hstx_cklp`, DSI
+`MODE`/`PHY_LCCON` sequencing, and panel-side command acceptance, not OVL/RDMA
+digital scanout.
+
 ## 2026-06-09 #100 OVL reset lifecycle / SMI / DEVAPC diagnostics
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add bounded read-only

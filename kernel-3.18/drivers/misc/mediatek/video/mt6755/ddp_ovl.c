@@ -56,6 +56,7 @@ static unsigned int m6_ovl_greq_profile_id;
 static unsigned int m6_ovl_greq_profile_apply_count;
 static unsigned int m6_ovl_bounds_profile_id = 1;
 static unsigned int m6_ovl_bounds_profile_apply_count;
+static unsigned int m6_ovl_stale_cpu_clear_enabled;
 static struct m6_ovl_config_snapshot m6_ovl0_last_config_snapshot;
 static unsigned int m6_ovl0_last_config_seq;
 static unsigned int m6_ovl_reset_diag_count;
@@ -1222,35 +1223,43 @@ static int ovl_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, 
 		unsigned int stale_layers = old_src & ~enabled_layers & layer_mask;
 
 		if (stale_layers && m6_ovl_cpu_preclear_count < 80) {
-			DISPERR("M6 OVL stale clear[%u]: mod=%s old_src=0x%x enabled=0x%x stale=0x%x handle=%p direct=%d bypass_pq=%d bounds_default=%u\n",
+			DISPERR("M6 OVL stale clear[%u]: mod=%s old_src=0x%x enabled=0x%x stale=0x%x handle=%p cpu_clear=%u direct=%d bypass_pq=%d bounds_default=%u\n",
 				m6_ovl_cpu_preclear_count,
 				m6_ovl_module_name(module), old_src, enabled_layers,
-				stale_layers, handle, !primary_display_is_decouple_mode(),
+				stale_layers, handle,
+				!handle || m6_ovl_stale_cpu_clear_enabled,
+				!primary_display_is_decouple_mode(),
 				disp_helper_get_option(DISP_OPT_BYPASS_PQ),
 				m6_ovl_bounds_profile_id);
 			m6_ovl_cpu_preclear_count++;
 		}
 		if (stale_layers) {
 			unsigned int i;
+			unsigned int cpu_clear =
+				!handle || m6_ovl_stale_cpu_clear_enabled;
 			unsigned int stale_intsta_clear =
 				((stale_layers & 0xfU) << 5) | (1U << 2) |
 				(1U << 13);
 
 			DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_SRC_CON,
 				enabled_layers);
-			DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_SRC_CON,
-				enabled_layers);
+			if (cpu_clear)
+				DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_SRC_CON,
+					enabled_layers);
 			for (i = 0; i < ovl_layer_num(module); i++) {
 				if (stale_layers & (1U << i)) {
 					m6_ovl_clear_inactive_layer(module, i,
 						handle);
-					if (handle)
+					if (handle && cpu_clear)
 						m6_ovl_clear_inactive_layer(module,
 							i, NULL);
 				}
 			}
-			DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_INTSTA,
+			DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_INTSTA,
 				~stale_intsta_clear);
+			if (cpu_clear)
+				DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_INTSTA,
+					~stale_intsta_clear);
 		}
 	}
 	DISP_REG_SET(handle, ovl_base_addr(module) + DISP_REG_OVL_SRC_CON, enabled_layers);
@@ -1732,6 +1741,16 @@ int ovl_m6_set_bounds_profile(unsigned int profile)
 	m6_ovl_bounds_profile_apply_count = 0;
 	DISPERR("M6 OVL bounds profile set: profile=%u; future OVL0 MEM layer configs will use it\n",
 		profile);
+
+	return 0;
+}
+
+int ovl_m6_set_stale_cpu_clear(unsigned int enable)
+{
+	m6_ovl_stale_cpu_clear_enabled = !!enable;
+	DISPERR("M6 OVL stale cpu clear set: enable=%u; future stale disabled layer clears will %s CPU mirror\n",
+		m6_ovl_stale_cpu_clear_enabled,
+		m6_ovl_stale_cpu_clear_enabled ? "use" : "skip");
 
 	return 0;
 }

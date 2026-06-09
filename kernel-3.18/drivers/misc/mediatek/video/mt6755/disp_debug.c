@@ -156,6 +156,9 @@ char MTKFB_STR_HELP[] =
 	"        m6_ovl_bounds_profile:[0|1]\n"
 	"             Meizu M6 isolation profile for OVL end-prefetch/M4U boundary triage\n"
 	"\n"
+	"        m6_ovl_stale_cpu_clear:[0|1]\n"
+	"             Meizu M6 isolation switch for CPU mirroring stale disabled-layer clears\n"
+	"\n"
 	"        cabc:[ui|mov|still]\n"
 	"             cabc mode, UI/Moving picture/Still picture\n"
 	"\n"
@@ -847,6 +850,21 @@ void mtkfb_process_dbg_opt(const char *opt)
 		primary_display_manual_unlock();
 		DISPERR("M6 OVL bounds profile command: profile=%u ret=%d\n",
 			profile, ret);
+		return;
+	} else if (0 == strncmp(opt, "m6_ovl_stale_cpu_clear:", 23)) {
+		char *p = (char *)opt + 23;
+		unsigned int enable;
+
+		ret = kstrtouint(p, 0, &enable);
+		if (ret) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		primary_display_manual_lock();
+		ret = ovl_m6_set_stale_cpu_clear(enable);
+		primary_display_manual_unlock();
+		DISPERR("M6 OVL stale cpu clear command: enable=%u ret=%d\n",
+			!!enable, ret);
 		return;
 	} else if (0 == strncmp(opt, "ata", 3)) {
 		mtkfb_fm_auto_test();

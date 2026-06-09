@@ -103,6 +103,7 @@ void ovl_get_info(DISP_MODULE_ENUM module, void *data);
 unsigned int ddp_ovl_get_cur_addr(bool rdma_mode, int layerid);
 int ovl_m6_set_greq_profile(unsigned int profile);
 int ovl_m6_set_bounds_profile(unsigned int profile);
+int ovl_m6_set_stale_cpu_clear(unsigned int enable);
 int ovl_m6_get_last_config_snapshot(struct m6_ovl_config_snapshot *out);
 
 #endif
