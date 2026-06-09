@@ -1,5 +1,123 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #74 force first DSI config / RDMA start trace
+
+PATCH HISTORY, **DIAGNOSTIC/ISOLATION**, 2026-06-09: replay the first Linux
+DSI PHY/TXRX/timing/VM programming path once when LK left MIPITX enabled and
+`PMaster_enable == 0`, and add bounded RDMA0 config/start markers that sample
+route, mutex, RDMA counters, and direct-link state. This patch does not seed or
+fake RDMA EOF, does not skip waits/fences, does not alter OVL/PQ/HWC content,
+does not change panel init tables, and does not reset the panel. The behavior
+change is limited to the first DSI host reprogramming pass that #73 skipped.
+
+Hypothesis: FACT: #73 boot image
+`e842ab565cb9cfbceea02ced6fc2621ce1771b36d96748a7441a1210bfcfc24f` is
+flashed and running as kernel `3.18.140 #73`, reaches
+`sys.boot_completed=1`, and keeps charging status `6 Charging`. FACT: the #73
+second-reboot capture preserves early handoff breadcrumbs at `2.286s-3.285s`:
+`M6D01..M6D10` stay in DSI video mode with `H=0/124`, LCM init is skipped
+because `force=0 inited=1`, and the framebuffer white/const markers run at
+`3.251s-3.285s`. FACT: the first retained video timeout has
+`rdma_eof=0`, `mutex_eof=1`, route `VALID=0x0 READY=0x4000937a`, RDMA0
+`GLOBAL=0x101` but `IN=0/0 OUT=0/0`, DSI `STATE7=Video data period`, DSI
+`word=546 line=0`, and live `DSI_HSA_WC=0x0` while the source formula for
+HSA=20 RGB888 expects `0x38`. INFERENCE: `ddp_dsi_config()` can skip
+`DSI_PHY_clk_setting()`, `DSI_Config_VDO_Timing()`, and `DSI_Set_VM_CMD()`
+when `MIPITX_IsEnabled()` returns true during the first Linux takeover, so
+the kernel may inherit an LK video state without committing Linux's host timing
+or VM command setup before the physical bootlogo disappears. HYPOTHESIS:
+forcing exactly one Linux DSI reprogramming pass at that boundary will either
+make `HSA=0x38`/line counters/physical output move, or will falsify the DSI
+timing-skip branch and leave RDMA direct-link counters/route markers as the
+next proven frontier.
+
+Evidence:
+- #74 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0427-m6-dsi-force-first-rdma-trace-bootonly`.
+- #74 boot image sha256:
+  `c5e890821a5862d71b087e2b3120613628c4e2525d38c8b08fc1866a9f31e029`.
+- #74 `Image.gz-dtb` sha256:
+  `454ecafe06d7bb4dbceddefbc1a75cb6c9b9f0eb3036cd0ebf20e3e86de45dc1`.
+- #74 `System.map` sha256:
+  `f832ed76a6544a261a3b3173f5fd0b8ae29b8bbba890a79cf6fead0ce30a5587`.
+- #74 `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- #74 kernel string:
+  `3.18.140 #74 SMP PREEMPT Tue Jun 9 04:26:09 CDT 2026`.
+- Artifact verification: `sha256sum -c SHA256SUMS` passed, `abootimg -x`
+  unpacked successfully, `cmp Image.gz-dtb verify-unpack/zImage` passed,
+  `cmp initrd.img verify-unpack/initrd.img` passed, and gzip-expanded marker
+  strings include `config-force-first`, `timing-before-enqueue`,
+  `timing-after-enqueue`, `M6 RDMA diag`, and `M6 RDMA cfg_input`.
+- #73 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0332-m6-pstore-retention-flood-cap-bootonly`.
+- #73 boot image sha256:
+  `e842ab565cb9cfbceea02ced6fc2621ce1771b36d96748a7441a1210bfcfc24f`.
+- #73 `System.map` sha256:
+  `db5ba3640bd231a8a6e7eb0cc6300d3b02f0c93dbed38dedc05bf1ded474fd2d`.
+- #73 capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0349-m6-pstore-retention-flood-cap-after-second-reboot`.
+- `identity-status.txt` reports kernel `3.18.140 #73`, boot hash
+  `e842ab565cb9cfbceea02ced6fc2621ce1771b36d96748a7441a1210bfcfc24f`,
+  `sys.boot_completed=1`, `bootanim=stopped`, battery `6`, and `Charging`.
+- `proc-last_kmsg-after-second-reboot.txt` lines around the compact marker
+  tail show `M6D01..M6D10` with `H=0/124`, `M6L01 enter`, `M6L02 skip-power`,
+  `M6L03 skip-init`, and `M6F fill/trig/const`.
+- `proc-last_kmsg-after-second-reboot.txt` first timeout shows
+  `rdma_eof=0 mutex_eof=1`, RDMA0 `IN=0/0 OUT=0/0`, `route VALID=0x0
+  READY=0x4000937a`, live DSI `HSA/HBP/HFP=0x0/0x124/0x120`, and
+  `word=546 line=0`.
+- Source audit: `DSI_Config_VDO_Timing()` computes HSA bytes as
+  `horizontal_sync_active * bpp - 4`, so the M6 panel's `20 * 3 - 4` should
+  become aligned `0x38`. `ddp_dsi_config()` skips the force-config block when
+  `mipitx_enabled && PMaster_enable == 0 && !dsi_force_config`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds the
+  one-shot first-takeover DSI replay when LK-enabled MIPITX would skip Linux
+  timing/VM setup, plus compact SRAM timing breadcrumbs.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_rdma.c`: adds bounded
+  read-only RDMA0 config/start markers with route, mutex, RDMA counters, size,
+  FIFO, direct-link selectors, and clock-gate state.
+- `BRINGUP_STATE.md`: records this patch category, evidence, expected markers,
+  rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the exact first-takeover branch that
+the #73 compact markers entered with `HSA=0`; the one-shot replay tests that
+branch without panel reset or broad subsystem disable. `ddp_rdma.c` owns the
+direct-link engine whose first timeout has `GLOBAL=0x101` but zero IN/OUT
+counters; its markers are placed before/after real config and start calls so
+the next capture can distinguish an uncommitted RDMA config from DSI
+backpressure or route readiness failure.
+
+Expected next marker: the next verified boot should show
+`M6 DSI mipitx-decision[config-force-first]`, `M6D timing-before-enqueue`,
+`M6D timing-after-enqueue`, and `M6 RDMA diag[config-*]` /
+`M6 RDMA diag[start-*]` before the first `FRAME_DONE` timeout. If the DSI skip
+branch was the culprit, live DSI HSA should become `0x38`, `STATE9` line
+should advance from `0`, DSI IRQ/VM_DONE behavior should change, and the
+physical panel should show bootlogo or at least flicker. If not, RDMA markers
+should say whether RDMA was configured as direct-link before start and whether
+route ready/counters changed before the first timeout.
+
+Rollback condition: revert if the first DSI replay regresses ADB,
+`sys.boot_completed=1`, charging status, bootlogo timing, DSI BIST latch, DCS
+stock-page reads, or if the next capture shows `HSA=0x38` committed with no
+physical/counter/IRQ delta, proving the force path only adds risk without
+moving the frontier.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A shell 'uname -a; getprop sys.boot_completed; sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot'
+$A shell 'cat /proc/last_kmsg | grep -E "M6 DSI mipitx-decision\\[config-force-first\\]|M6D|M6 RDMA diag|M6 DPMGR event flow|M6 DDP timeout|HSA/HBP|word=|line=" | head -260'
+$A shell 'dmesg | grep -E "M6 DSI mipitx-decision\\[config-force-first\\]|M6D|M6 RDMA diag|M6 DPMGR event flow|M6 DDP timeout|HSA/HBP|word=|line=" | head -260'
+$A shell 'cat /proc/interrupts | grep -E "dsi0|rdma0|mutex|ovl"'
+$A shell 'cat /d/mtkfb | head -120'
+```
+
 ## 2026-06-09 #72 pstore retention / display flood cap
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: reduce late M6 display diagnostic

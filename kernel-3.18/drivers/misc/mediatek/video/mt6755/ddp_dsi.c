@@ -210,6 +210,11 @@ t_dsi_context _dsi_context[DSI_INTERFACE_NUM];
  * isolation skip leaves DSI in CMD mode after any stop/restart sequence.
  */
 #define M6_LK_HANDOFF_SKIP_FIRST_DSI_CONFIG 0
+/*
+ * ISOLATION: #73 proves the first Linux takeover can skip the DSI timing/VM
+ * programming path when LK left MIPITX enabled. Replay it once, with markers.
+ */
+#define M6_FORCE_FIRST_DSI_CONFIG_ON_LK_MIPITX 1
 
 PDSI_REGS DSI_REG[2] = {0};
 PDSI_PHY_REGS DSI_PHY_REG[2] = {0};
@@ -904,6 +909,7 @@ static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void 
 static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM module,
 					 void *cmdq, unsigned int *count,
 					 unsigned int limit);
+static void dsi_m6_sram_snapshot(const char *tag, DISP_MODULE_ENUM module);
 
 DSI_STATUS DSI_BIST_Pattern_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bool enable,
 				 unsigned int color)
@@ -1224,6 +1230,7 @@ void DSI_Config_VDO_Timing(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_
 			INREG32(DDP_REG_BASE_DSI0 + 0x058),
 			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
 			INREG32(DDP_REG_BASE_DSI0 + 0x064));
+		dsi_m6_sram_snapshot("timing-before-enqueue", module);
 
 		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_HSA_WC,
 			     ALIGN_TO((horizontal_sync_active_byte), 4));
@@ -1239,6 +1246,7 @@ void DSI_Config_VDO_Timing(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_
 			INREG32(DDP_REG_BASE_DSI0 + 0x058),
 			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
 			INREG32(DDP_REG_BASE_DSI0 + 0x064));
+		dsi_m6_sram_snapshot("timing-after-enqueue", module);
 	}
 }
 
@@ -4418,6 +4426,7 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 	int i = 0;
 	LCM_DSI_PARAMS *dsi_config = &(config->dispif_config.dsi);
 	static unsigned int dump_count;
+	static unsigned int m6_force_first_lk_mipitx_config_done;
 #ifndef CONFIG_FPGA_EARLY_PORTING
 	int mipitx_enabled = 0;
 #endif
@@ -4470,7 +4479,24 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 	}
 	if ((mipitx_enabled) && (atomic_read(&PMaster_enable) == 0)) {
 		DISPDBG("mipitx is already init\n");
-		if (dsi_force_config)
+		if (M6_FORCE_FIRST_DSI_CONFIG_ON_LK_MIPITX &&
+		    !m6_force_first_lk_mipitx_config_done &&
+		    !dsi_force_config) {
+			m6_force_first_lk_mipitx_config_done = 1;
+			DISPERR("M6 DSI mipitx-decision[config-force-first]: enabled=%d PMaster=%d replay_phy=1 cmdq=%p\n",
+				mipitx_enabled, atomic_read(&PMaster_enable),
+				cmdq);
+			dsi_m6_sram_snapshot("config-force-first", module);
+			dsi_m6_dump_snapshot_limited("config-force-before",
+						     module, cmdq,
+						     &dump_count, 4);
+			DSI_PHY_clk_setting(module, NULL, dsi_config);
+			dsi_m6_dump_rt_cal("config-force-after-phy-clk-setting");
+			dsi_m6_dump_snapshot_limited("config-force-after-phy",
+						     module, cmdq,
+						     &dump_count, 6);
+			goto force_config;
+		} else if (dsi_force_config)
 			goto force_config;
 		else
 			goto done;
