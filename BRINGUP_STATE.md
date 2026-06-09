@@ -1,5 +1,103 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #77 retained DSI video/PHY window
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add bounded retained `M6V/M6W`
+DSI host and MIPITX snapshots around the first VM command setup, DSI takeover,
+`DSI_Start()`, and the delayed 1-vsync / 500ms video-state probes. Reduce the
+previous retained `M6D/M6R/M6G/M6X` limits so early SRAM is not overwritten by
+late DPMGR/RDMA churn. This patch does not change DSI timing, VM command
+payloads, MIPITX/PHY programming, panel init/reset, PQ, OVL/RDMA behavior,
+HWC, backlight, charging, ramdisk, or boot cmdline.
+
+Hypothesis: FACT: #75 boot image
+`f3cf4406fbe2a9d454d22b14e754327100a4a1618cf9ec620ec703766844a8ea` was
+verified flashed/running and reached `sys.boot_completed=1`. FACT: #75 second
+reboot retained markers show RDMA0 counters moving through a full frame at the
+physical-black frontier (`M6G07` has RDMA OUT line `1280`) while the same
+retained window reports DSI `START=1` and `STATE9=0`. FACT: user observation
+after #75 reports the panel is still lit black, possibly becoming black
+slightly later than before. INFERENCE: route, mutex, and RDMA startup are not
+the earliest remaining blocker; the frontier is now DSI video-start / MIPITX
+PHY / panel HS-video acceptance. HYPOTHESIS: retained `M6V/M6W` values before
+and after VM setup, `DSI_START`, and the delayed video samples will identify
+whether DSI never leaves the initial video FSM state, loses VM payload/state,
+or has a live host but bad MIPITX lane/PLL state.
+
+Evidence:
+- #77 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0542-m6-dsi-retained-video-window-r2-bootonly`.
+- #77 boot image sha256:
+  `5eafeb82fbaae920688db1ea4e8508775dc411915c1499c55496fae1255d3684`.
+- #77 `Image.gz-dtb` sha256:
+  `fbf0d1770699ba5530d9f044c7aefed83f9f4735441bc544e5d8a89c054dafc7`.
+- #77 `System.map` sha256:
+  `132259ad0d26b2b637189ad15e86ed4a682e2947ab74ebdeb1ad4969513a07dc`.
+- #77 `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- #77 kernel string:
+  `3.18.140 #77 SMP PREEMPT Tue Jun 9 05:40:03 CDT 2026`.
+- Artifact verification: `sha256sum -c SHA256SUMS` passed, `abootimg -x`
+  unpacked successfully, `cmp Image.gz-dtb verify-unpack/zImage` passed,
+  `cmp initrd.img verify-unpack/initrd.img` passed, and gzip-expanded marker
+  strings include `M6V`, `M6W`, `M6D`, `M6R`, and `M6G`.
+- #75 capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0520-m6-ddp-rdma-sram-trace-after-second-reboot`.
+- #75 retained lines: `proc-last_kmsg.txt` shows `M6R01..M6R11`,
+  `M6G01..M6G08`, and `M6F fill/trig/const` before the first timeout. The key
+  frontier line is `M6G07 cfg-begin ... R=101 716/1278 0/1280 D=1/0`.
+- #75 runtime dump: `debugfs-mtkfb.txt` reports `PathMode:DIRECT_LINK`,
+  `video mode + CMDQ Enabled`, and `RDMA0 Transfer 3748` at about 62 fps.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds retained
+  `M6V/M6W` snapshots with DSI `START/STA/INTSTA/MODE/TXRX/PS`, H timing, VM
+  command/payload, state6-9, and MIPITX lane/top/PLL/power/debug registers.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_rdma.c`: lowers retained
+  `M6R` count after #75 proved the early RDMA path.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c`: lowers
+  retained `M6G` count after #75 proved the early DPMGR/RDMA path.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_path.c`: lowers retained
+  `M6X` count after #75 proved initial path/mutex programming.
+- `BRINGUP_STATE.md`: records the #75 verdict, #77 diagnostic patch, expected
+  markers, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the DSI host and MIPITX state that
+remains ambiguous after #75. `ddp_rdma.c`, `ddp_manager.c`, and `ddp_path.c`
+already answered their #75 question and now only need enough early markers to
+preserve correlation with the new DSI window. No behavior-changing writes are
+introduced.
+
+Expected next marker: the next verified #77 capture should show `M6V/M6W`
+around `vm-set-entry`, `vm-set-after`, `config-before-vmcmd-enqueue`,
+`config-after-vmcmd-enqueue`, `start-before`, `start-after`, `after-1vsync`,
+and `after-500ms`, with `M6F` still present. If RDMA again reaches a full
+frame while `M6V` state9 remains zero and MIPITX lane/PLL state is stable,
+the next patch should target DSI video-start edge / HS acceptance. If MIPITX
+PLL/lane/debug state changes or drops between `start-after` and delayed
+samples, debug the PHY/lane handoff first. If VM command/payload differs
+before and after CMDQ flush, debug VM command sequencing.
+
+Rollback condition: revert or reduce #77 if ADB, `sys.boot_completed=1`,
+charging, pstore/last_kmsg retention, or physical bootlogo timing regresses,
+or if retained SRAM still overflows before `M6V/M6W` answer the DSI/PHY
+question.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A shell 'uname -a; getprop sys.boot_completed; getprop init.svc.bootanim; dumpsys battery | grep -E "status|level"; sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot'
+$A shell 'cat /proc/last_kmsg | grep -E "M6V|M6W|M6D|M6R|M6G|M6X|M6F|M6 DDP timeout|HSA/HBP|word=|line=" | head -360'
+$A shell 'dmesg | grep -E "M6V|M6W|M6D|M6R|M6G|M6X|M6F|M6 DDP timeout|HSA/HBP|word=|line=" | head -360'
+$A shell 'cat /d/mtkfb | head -180'
+$A reboot
+$A wait-for-device
+$A root
+$A shell 'cat /proc/last_kmsg | grep -E "M6V|M6W|M6D|M6R|M6G|M6X|M6F|M6 DDP timeout|HSA/HBP|word=|line=" | head -420'
+```
+
 ## 2026-06-09 #75 retained DDP/RDMA/mutex startup markers
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add bounded retained SRAM markers

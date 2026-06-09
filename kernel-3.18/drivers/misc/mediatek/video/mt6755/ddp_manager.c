@@ -1141,7 +1141,7 @@ static void dpmgr_m6_sram_state(const char *tag, ddp_path_handle handle,
 	unsigned int mutex_id;
 
 	if (handle == NULL || handle->scenario != DDP_SCENARIO_PRIMARY_DISP ||
-	    count >= 96)
+	    count >= 24)
 		return;
 
 	count++;

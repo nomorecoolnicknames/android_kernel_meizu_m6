@@ -72,7 +72,7 @@ static void rdma_m6_dump_state(const char *tag, DISP_MODULE_ENUM module, void *h
 	unsigned int idx = rdma_index(module);
 	unsigned int base;
 
-	if (module != DISP_MODULE_RDMA0 || count >= 64)
+	if (module != DISP_MODULE_RDMA0 || count >= 18)
 		return;
 
 	count++;

@@ -441,7 +441,7 @@ static void ddp_m6_sram_path(const char *tag, int *module_list, int mutex_id, vo
 	static unsigned int count;
 	unsigned int module_num;
 
-	if (module_list == NULL || count >= 96)
+	if (module_list == NULL || count >= 8)
 		return;
 
 	module_num = ddp_get_module_num_l(module_list);
