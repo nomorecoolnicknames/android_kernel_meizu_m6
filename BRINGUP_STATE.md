@@ -1,5 +1,74 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #91 rescue helper boot-partition autodetect
+
+PATCH HISTORY, **PROPER-FIX / STATE-TOOLING**, 2026-06-09: fix the M6 rescue
+flash helper so it does not hard-code the obsolete boot by-name path and does
+not rely on an unbounded `adb wait-for-device` after `adb root` over the TCP
+reverse tunnel.
+
+Hypothesis: FACT: the 2026-06-09 manual rescue attempt in
+`/srv/forge/android/meizu_m6/captures/20260609-115447-m6-rescue-boot86-711HEBSR277K5/manual-rescue`
+did not actually write #86 because recovery reported
+`/dev/block/platform/mtk-msdc.0/by-name/boot: No such file or directory`.
+FACT: the live Android runtime exposes the boot partition at
+`/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot`, and reading it
+as root returns the #87 boot hash
+`e33258ca0a09af4695fad223b3ed2c81fe68d08be1b1b45648da0f46e63968e4`. FACT:
+the helper also hung for several minutes at the second `adb wait-for-device`
+even while direct `adb get-state` and shell commands worked. HYPOTHESIS: future
+bootloop recovery will be reliable if the helper first resolves the actual
+boot by-name symlink and replaces the fragile wait with bounded `get-state`
+polling.
+
+Evidence:
+- Failed manual rescue capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-115447-m6-rescue-boot86-711HEBSR277K5/manual-rescue`.
+- Failed flash line:
+  `dd: can't open '/dev/block/platform/mtk-msdc.0/by-name/boot': No such file or directory`.
+- Failed readback line:
+  `sha256sum: can't open '/dev/block/platform/mtk-msdc.0/by-name/boot': No such file or directory`.
+- Live boot path after Android #87 returned:
+  `/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot`.
+- Current boot partition sha256:
+  `e33258ca0a09af4695fad223b3ed2c81fe68d08be1b1b45648da0f46e63968e4`.
+- Verification: `bash -n tools/m6-rescue-flash.sh` passed and `git diff --check`
+  passed.
+
+Files changed:
+- `tools/m6-rescue-flash.sh`: adds bounded `adb_ready()` polling via
+  `adb get-state`, detects the boot partition from known by-name glob paths,
+  records it to `boot-partition.txt`, uses it for pre-flash identity, `dd`, and
+  readback verification.
+- `BRINGUP_STATE.md`: records the helper failure mode and corrected rescue
+  behavior.
+
+Why each file changed: the helper owns the automated recovery path for risky
+display boot images. Without boot-partition autodetect, it can produce false
+rescue success and leave a bad image in place. Without bounded polling, the TCP
+ADB tunnel can leave the helper stuck even while the device is reachable.
+
+Expected next marker: the next `tools/m6-rescue-flash.sh` run should create
+`boot-partition.txt` containing the real by-name path, write the requested boot
+image there, and make `device-boot-readback-sha256.txt` contain the expected
+image hash.
+
+Rollback condition: revert this helper fix only if a future recovery image
+cannot expand the globbed boot path but the old hard-coded path exists and
+verified readback succeeds. Do not revert it for a display regression; it does
+not change the boot image or kernel behavior.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+bash -n tools/m6-rescue-flash.sh
+git diff --check
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A shell 'for p in /dev/block/platform/*/*/by-name/boot /dev/block/platform/*/by-name/boot /dev/block/by-name/boot; do [ -e "$p" ] && echo "$p" && sha256sum "$p" && exit 0; done; exit 1'
+```
+
 ## 2026-06-09 #90 DSI HS edge retained SRAM window
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded retained DSI HS-video

@@ -16,6 +16,20 @@ CAP="$CAP_ROOT/${STAMP}-m6-${TAG}-${SERIAL}"
 
 mkdir -p "$CAP"
 
+adb_ready() {
+	local wait_deadline state
+
+	wait_deadline=$((SECONDS + ${1:-60}))
+	while (( SECONDS <= wait_deadline )); do
+		state="$("${A[@]}" get-state 2>/dev/null || true)"
+		if [[ "$state" == "device" || "$state" == "recovery" ]]; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
 if [[ ! -f "$BOOT_IMG" ]]; then
 	echo "missing boot image: $BOOT_IMG" >&2
 	exit 2
@@ -42,12 +56,19 @@ if [[ -z "${line:-}" ]]; then
 	exit 4
 fi
 
-"${A[@]}" wait-for-device
+adb_ready 60
 "${A[@]}" root > "$CAP/adb-root.txt" 2>&1 || true
 sleep 2
-"${A[@]}" wait-for-device
+adb_ready 60
 
-"${A[@]}" shell 'id; uname -a; getprop sys.boot_completed; getprop ro.bootmode; getprop ro.boot.bootreason; cat /sys/class/power_supply/battery/capacity 2>/dev/null; cat /sys/class/power_supply/battery/status 2>/dev/null; sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot 2>/dev/null' > "$CAP/pre-flash-identity.txt" 2>&1 || true
+boot_part="$("${A[@]}" shell 'for p in /dev/block/platform/*/*/by-name/boot /dev/block/platform/*/by-name/boot /dev/block/by-name/boot; do [ -e "$p" ] && echo "$p" && exit 0; done' | tr -d '\r' | head -n1)"
+printf '%s\n' "$boot_part" > "$CAP/boot-partition.txt"
+if [[ -z "$boot_part" ]]; then
+	echo "could not find boot by-name partition" >&2
+	exit 5
+fi
+
+"${A[@]}" shell "id; uname -a; getprop sys.boot_completed; getprop ro.bootmode; getprop ro.boot.bootreason; cat /sys/class/power_supply/battery/capacity 2>/dev/null; cat /sys/class/power_supply/battery/status 2>/dev/null; sha256sum $boot_part 2>/dev/null" > "$CAP/pre-flash-identity.txt" 2>&1 || true
 "${A[@]}" shell 'cat /proc/aed/reboot-reason 2>/dev/null || true' > "$CAP/proc-aed-reboot-reason.txt" 2>&1 || true
 "${A[@]}" shell 'cat /proc/last_kmsg 2>/dev/null || true' > "$CAP/proc-last_kmsg.txt" 2>&1 || true
 "${A[@]}" shell 'dmesg 2>/dev/null || true' > "$CAP/dmesg-before-rescue-flash.txt" 2>&1 || true
@@ -63,8 +84,8 @@ fi
 "${A[@]}" shell "sha256sum $remote" > "$CAP/device-remote-boot-sha256.txt" 2>&1
 grep -q "$EXPECTED_SHA" "$CAP/device-remote-boot-sha256.txt"
 
-"${A[@]}" shell "dd if=$remote of=/dev/block/platform/mtk-msdc.0/by-name/boot bs=1048576; sync" > "$CAP/device-dd-flash.txt" 2>&1
-"${A[@]}" shell 'sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot' > "$CAP/device-boot-readback-sha256.txt" 2>&1
+"${A[@]}" shell "dd if=$remote of=$boot_part bs=1048576; sync" > "$CAP/device-dd-flash.txt" 2>&1
+"${A[@]}" shell "sha256sum $boot_part" > "$CAP/device-boot-readback-sha256.txt" 2>&1
 grep -q "$EXPECTED_SHA" "$CAP/device-boot-readback-sha256.txt"
 
 printf 'rescue flash readback matches %s\n' "$EXPECTED_SHA" > "$CAP/device-boot-readback-verified.txt"
