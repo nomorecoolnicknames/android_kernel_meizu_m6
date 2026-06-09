@@ -1,5 +1,111 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #85 result / #86 C2V MUTEX0_EN release isolation
+
+PATCH HISTORY, **ISOLATION**, 2026-06-09: for the M6-only debugfs
+`m6_dsi_c2v_switch` CPU-direct path, skip exactly the next proven reset
+boundary: the C2V `MUTEX0_EN` release write at `0xF4020020` after
+`DSI_Start`. The normal path keeps its existing `MUTEX0_EN` write. This patch
+does not change boot-time display sequencing, panel init tables, LCM reset,
+DDP route construction, OVL/RDMA programming, PQ/HWC, clocks, or normal CMDQ
+scanout. It only lets the debugfs C2V probe continue past the second
+DDP-mutex write so the next lower DSI/panel state can be captured.
+
+Hypothesis: FACT: #85 boot image
+`47f2ddb91b6c994403e4b0b3d4a3d7e41d737a488404d38bf665e3efa0f9ec65` was
+readback-verified on `/dev/block/platform/mtk-msdc.0/by-name/boot` after
+flashing from artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260609-0950-m6-dsi-c2v-skip-mutex-video-isolation-bootonly`.
+FACT: runtime capture
+`/srv/forge/android/meizu_m6/captures/20260609-0958-m6-dsi-c2v-skip-mutex-video-isolation-root-c2v`
+booted as `Linux localhost 3.18.140 #85`, reached `sys.boot_completed=1`, and
+matched the #85 boot hash before the root C2V run. FACT: after the root
+`m6_dsi_c2v_switch:0x03:1500` command, the device rebooted with WDT status
+`2`, fiq step `32`, exception type `2`, and still matched the #85 boot hash
+after reboot. FACT: fresh `proc-last_kmsg.txt` and `pstore.txt` now show
+`M6K01 c2v-skip-mutex-video`, `c2v-after-pkt0`, `c2v-after-pkt1`,
+`c2v-after-vmstart-reg`, and `c2v-after-dsi-start`, then no
+`c2v-after-mutex-release`. FACT: `0xF4020020` is
+`DISP_REG_CONFIG_MUTEX0_EN` in the current source. INFERENCE: #85 proved the
+previous `MUTEX0_SOF` write was a real boundary but not the only DDP-mutex
+danger; the probe now reaches DSI packet programming, VM start, and
+`DSI_Start`. HYPOTHESIS: skipping only the debugfs CPU-direct `MUTEX0_EN`
+release write will show whether the second WDT is caused by releasing
+`MUTEX0` in this C2V state, or whether the command can complete and reveal a
+later DSI host / MIPITX / panel electrical failure.
+
+Evidence:
+- #85 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0950-m6-dsi-c2v-skip-mutex-video-isolation-bootonly`.
+- #85 boot sha256:
+  `47f2ddb91b6c994403e4b0b3d4a3d7e41d737a488404d38bf665e3efa0f9ec65`.
+- #85 `Image.gz-dtb` sha256:
+  `cbb70a57d69d8676b73bb60130f0bace11e7e3ba6aa77d64651eedc5c917eea8`.
+- #85 `System.map` sha256:
+  `ebd016f8879eadf04952d5d5b0f30926e4b4ebe5b77b0455b924b46cbf4fc6dc`.
+- #86 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1030-m6-dsi-c2v-skip-mutex-release-isolation-bootonly`.
+- #86 boot sha256:
+  `1071cafdaf3e0c5c43266946f18ca0f8b4496f95e5f5ed3a6110034084187857`.
+- #86 `Image.gz-dtb` sha256:
+  `a175e47003bebbf6fd89081fd5ac38f2f400540ad7c7d986c8b8880c3ccc2c80`.
+- #86 `System.map` sha256:
+  `97bc288f554ae759f767714c856291f77bf6e1bd021b0b3e6d1930b0b6522bf1`.
+- #86 packaging verification: `abootimg --create`, `abootimg -i`,
+  `sha256sum -c`, unpacked `zImage` compare, unpacked `initrd.img` compare,
+  and marker-string check passed. `gzip` reported only expected trailing DTB
+  garbage after a successful decompression.
+- Runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0958-m6-dsi-c2v-skip-mutex-video-isolation-root-c2v`.
+- Post-reboot evidence:
+  `/srv/forge/android/meizu_m6/captures/20260609-0958-m6-dsi-c2v-skip-mutex-video-isolation-root-c2v/post-valid-c2v-reboot-evidence`.
+- #85 last markers:
+  `M6K01 c2v-skip-mutex-video E=1 O=5f280 F=41 S=10001 M=80003 I=780`,
+  `M6K01 c2v-after-pkt0`, `M6K01 c2v-after-pkt1`,
+  `M6K01 c2v-after-vmstart-reg`, and
+  `M6K01 c2v-after-dsi-start S=10001 M=80003 I=80000780`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: keeps the
+  existing `MUTEX0_EN` release write for non-null `cmdq_handle`, skips that
+  single write only in the M6 debugfs CPU-direct C2V probe, and logs
+  `MUTEX0_{EN,MOD,SOF}` plus DSI start/mode/int state.
+- `BRINGUP_STATE.md`: records the #85 result, the new reset boundary, and the
+  expected #86 marker.
+
+Why each file changed: `ddp_dsi.c` owns the now-proven post-`DSI_Start`
+reset instruction group. The state file keeps future work from treating
+`MUTEX0_SOF`, DSI packets, or `DSI_Start` as still untested.
+
+Expected next marker: after flashing #86 and rerunning
+`m6_dsi_c2v_switch:0x03:1500` as root, logs should include
+`M6Kxx c2v-skip-mutex-release`, `switch-dsi-after-c2v-start`,
+`M6 DSI switch_mode C2V: cpu-direct path skip cmdq flush/reset/wait`,
+`switch-dsi-exit`, `c2v-switch-after-dsi`, and `c2v-switch-hold-end`. If the
+device still resets before `c2v-skip-mutex-release`, the `MUTEX0_EN` read/base
+access itself is suspect. If it resets after that marker, the next missing
+marker names the lower boundary after the second DDP mutex write is removed.
+
+Rollback condition: revert this isolation if verified #86 regresses normal
+boot before the debugfs command, still resets before the new skip marker, or
+skipping both debugfs mutex writes produces no new lower-layer evidence. Do
+not present this as a display fix unless later evidence proves stable normal
+scanout and a visible panel.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'id; sha256sum /dev/block/platform/mtk-msdc.0/by-name/boot'
+$A shell 'dmesg -C'
+$A shell 'echo m6_dsi_c2v_switch:0x03:1500 > /d/mtkfb; echo run_rc=$?'
+$A wait-for-device
+$A root
+$A shell 'cat /proc/last_kmsg' | grep -E 'M6I|M6J|M6K|MUTEX0|WDT|BUG|Oops'
+```
+
 ## 2026-06-09 #84 result / #85 C2V MUTEX0_SOF isolation
 
 PATCH HISTORY, **ISOLATION**, 2026-06-09: for the M6-only debugfs
