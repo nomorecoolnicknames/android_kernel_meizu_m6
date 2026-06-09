@@ -4826,7 +4826,22 @@ int ddp_dsi_ioctl(DISP_MODULE_ENUM module, void *cmdq_handle, DDP_IOCTL_NAME ioc
 	int ret = 0;
 	/* DISPFUNC(); */
 	DDP_IOCTL_NAME ioctl = (DDP_IOCTL_NAME) ioctl_cmd;
+	static unsigned int m6_ioctl_count;
 	/* DISPMSG("[ddp_dsi_ioctl] index = %d\n", ioctl); */
+	if ((ioctl == DDP_SWITCH_DSI_MODE || ioctl == DDP_SWITCH_LCM_MODE) &&
+	    m6_ioctl_count < 32) {
+		m6_ioctl_count++;
+		aee_sram_printk("M6J%02u enter mod=%d cmd=%d q=%p p=%p S=%x M=%x I=%x\n",
+			m6_ioctl_count, module, ioctl, cmdq_handle, params,
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x014),
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x00c));
+		DISPERR("M6 DSI ioctl enter #%u module=%d cmd=%d cmdq=%p params=%p start=0x%x mode=0x%x intsta=0x%x\n",
+			m6_ioctl_count, module, ioctl, cmdq_handle, params,
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x014),
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x00c));
+	}
 	switch (ioctl) {
 	case DDP_STOP_VIDEO_MODE:
 		{
@@ -4851,12 +4866,34 @@ int ddp_dsi_ioctl(DISP_MODULE_ENUM module, void *cmdq_handle, DDP_IOCTL_NAME ioc
 
 	case DDP_SWITCH_DSI_MODE:
 		{
+			if (m6_ioctl_count < 32) {
+				aee_sram_printk("M6J%02u before-switch-dsi mod=%d cmd=%d q=%p\n",
+					m6_ioctl_count, module, ioctl, cmdq_handle);
+				DISPERR("M6 DSI ioctl before switch_dsi module=%d cmdq=%p params=%p\n",
+					module, cmdq_handle, params);
+			}
 			ret = ddp_dsi_switch_mode(module, cmdq_handle, params);
+			if (m6_ioctl_count < 32) {
+				aee_sram_printk("M6J%02u after-switch-dsi ret=%d\n",
+					m6_ioctl_count, ret);
+				DISPERR("M6 DSI ioctl after switch_dsi ret=%d\n", ret);
+			}
 			break;
 		}
 	case DDP_SWITCH_LCM_MODE:
 		{
+			if (m6_ioctl_count < 32) {
+				aee_sram_printk("M6J%02u before-switch-lcm mod=%d cmd=%d q=%p\n",
+					m6_ioctl_count, module, ioctl, cmdq_handle);
+				DISPERR("M6 DSI ioctl before switch_lcm module=%d cmdq=%p params=%p\n",
+					module, cmdq_handle, params);
+			}
 			ret = ddp_dsi_switch_lcm_mode(module, params);
+			if (m6_ioctl_count < 32) {
+				aee_sram_printk("M6J%02u after-switch-lcm ret=%d\n",
+					m6_ioctl_count, ret);
+				DISPERR("M6 DSI ioctl after switch_lcm ret=%d\n", ret);
+			}
 			break;
 		}
 	case DDP_BACK_LIGHT:

@@ -1002,6 +1002,46 @@ int dpmgr_path_stop(disp_path_handle dp_handle, int encmdq)
 	return 0;
 }
 
+static void dpmgr_m6_ioctl_marker(const char *tag, ddp_path_handle handle,
+				  int ioctl_cmd, int idx, int module,
+				  void *cmdq_handle, void *params, int ret)
+{
+	static unsigned int count;
+	unsigned int mutex_id;
+	const char *module_name;
+
+	if (handle == NULL || handle->scenario != DDP_SCENARIO_PRIMARY_DISP)
+		return;
+	if (ioctl_cmd != DDP_SWITCH_DSI_MODE && ioctl_cmd != DDP_SWITCH_LCM_MODE)
+		return;
+	if (count >= 96)
+		return;
+
+	count++;
+	mutex_id = handle->hwmutexid;
+	module_name = module >= 0 ? ddp_get_module_name((DISP_MODULE_ENUM)module) : "none";
+	aee_sram_printk("M6I%02u %s cmd=%d i=%d mod=%d q=%p p=%p r=%d V=%x/%x M=%x/%x/%x D=%x/%x\n",
+		count, tag ? tag : "null", ioctl_cmd, idx, module, cmdq_handle,
+		params, ret,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(mutex_id)),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x16c));
+	DISPERR("M6 DPMGR ioctl[%s]#%u scenario=%s cmd=%d idx=%d module=%s(%d) cmdq=%p params=%p ret=%d valid=0x%x ready=0x%x mutex=0x%x/0x%x/0x%x dsi=0x%x/0x%x\n",
+		tag ? tag : "null", count, ddp_get_scenario_name(handle->scenario),
+		ioctl_cmd, idx, module_name, module, cmdq_handle, params, ret,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(mutex_id)),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x16c));
+}
+
 int dpmgr_path_ioctl(disp_path_handle dp_handle, void *cmdq_handle, DDP_IOCTL_NAME ioctl_cmd,
 		     void *params)
 {
@@ -1018,16 +1058,28 @@ int dpmgr_path_ioctl(disp_path_handle dp_handle, void *cmdq_handle, DDP_IOCTL_NA
 	module_num = ddp_get_module_num(handle->scenario);
 
 	DISPDBG("path IOCTL on scenario %s\n", ddp_get_scenario_name(handle->scenario));
+	dpmgr_m6_ioctl_marker("enter", handle, ioctl_cmd, -1, -1, cmdq_handle,
+			      params, 0);
 	for (i = module_num - 1; i >= 0; i--) {
 		module_name = modules[i];
 		if (ddp_modules_driver[module_name] != 0) {
 			if (ddp_modules_driver[module_name]->ioctl != 0) {
-				ret +=
+				int one_ret;
+
+				dpmgr_m6_ioctl_marker("before", handle, ioctl_cmd, i,
+						      module_name, cmdq_handle, params, ret);
+				one_ret =
 				    ddp_modules_driver[module_name]->ioctl(module_name, cmdq_handle,
 									   ioctl_cmd, params);
+				ret += one_ret;
+				dpmgr_m6_ioctl_marker("after", handle, ioctl_cmd, i,
+						      module_name, cmdq_handle, params,
+						      one_ret);
 			}
 		}
 	}
+	dpmgr_m6_ioctl_marker("exit", handle, ioctl_cmd, -1, -1, cmdq_handle,
+			      params, ret);
 	return ret;
 }
 

@@ -1,5 +1,92 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #82 DPMGR/DSI ioctl dispatch breadcrumbs
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add bounded persistent
+`M6Ixx` breadcrumbs around `dpmgr_path_ioctl()` per-module dispatch and
+`M6Jxx` breadcrumbs around `ddp_dsi_ioctl()` switch-mode dispatch. This patch
+does not change DSI registers, CMDQ behavior, C2V/V2C logic, panel commands,
+route, clocks, PQ/HWC/OVL/RDMA behavior, or boot-time display sequencing. It
+only marks the newly proven silent-reset gap between the primary-display
+`switch_dsi_mode begin cpu-direct` marker and the missing
+`ddp_dsi_switch_mode()` entry marker.
+
+Hypothesis: FACT: #82 boot image
+`2277b29c25d791442d1713a4710afd9bb227c218b01d05b6d4c2af0cfa0fe956` was
+verified on `/dev/block/platform/mtk-msdc.0/by-name/boot` after flashing from
+artifact
+`/srv/forge/android/export/meizu_m6_artifacts/20260609-0824-m6-dsi-c2v-cpudirect-isolation-bootonly`.
+FACT: #82 reached `sys.boot_completed=1` as
+`Linux localhost 3.18.140 #82 SMP PREEMPT Tue Jun 9 08:23:20 CDT 2026`.
+FACT: runtime capture
+`/srv/forge/android/meizu_m6/captures/20260609-0832-m6-dsi-c2v-cpudirect-isolation-postflash`
+shows the C2V command returned `run_rc=0`, then ADB disappeared and the device
+rebooted. FACT: post-reboot `last_kmsg` reaches
+`M6 DSI c2v_switch: switch_dsi_mode begin cpu-direct` at 136.708059 and then
+contains no `M6 DSI switch_mode enter`, no `switch-dsi-enter`, and no kernel
+oops; the log is cut by a silent reset/WDT-like reboot. INFERENCE: #82 proved
+the previous `disp_addr_convert()` oops is bypassed, but the next frontier is
+now the DPMGR/DSI ioctl dispatch boundary before the existing DSI switch entry
+marker. HYPOTHESIS: per-module DPMGR breadcrumbs plus DSI ioctl breadcrumbs
+will show whether the reset occurs before DSI0 dispatch, inside
+`ddp_dsi_ioctl()`, or inside the first instructions of `ddp_dsi_switch_mode()`.
+
+Evidence:
+- #82 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0824-m6-dsi-c2v-cpudirect-isolation-bootonly`.
+- #82 boot sha256:
+  `2277b29c25d791442d1713a4710afd9bb227c218b01d05b6d4c2af0cfa0fe956`.
+- #82 `Image.gz-dtb` sha256:
+  `c667c0a9ef55ec8119e8ef63522324689e313201602d143d30007ed5115f30d3`.
+- #82 `System.map` sha256:
+  `0efcc32818b0dcb418c37239d3fbfdb95e01749269eeb79a56551a03d01d4717`.
+- #82 runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0832-m6-dsi-c2v-cpudirect-isolation-postflash`.
+- #82 post-reboot evidence:
+  `/srv/forge/android/meizu_m6/captures/20260609-0832-m6-dsi-c2v-cpudirect-isolation-postflash/post-c2v-reboot-evidence`.
+- `identity-after-reboot.txt`: root ADB, `sys.boot_completed=1`, #82 kernel,
+  boot partition hash matches #82, battery 6% charging.
+- `proc-last_kmsg.txt`: reaches `switch_dsi_mode begin cpu-direct` and stops
+  before any DSI switch-mode entry marker or oops.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_manager.c`: adds
+  bounded `M6Ixx` SRAM/printk breadcrumbs around DPMGR ioctl enter,
+  per-module before/after, and exit for `DDP_SWITCH_DSI_MODE` /
+  `DDP_SWITCH_LCM_MODE`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds bounded
+  `M6Jxx` SRAM/printk breadcrumbs at DSI ioctl entry and before/after
+  switch-LCM / switch-DSI dispatch.
+- `BRINGUP_STATE.md`: records the #82 result and the expected next markers.
+
+Why each file changed: `ddp_manager.c` owns the dispatch loop that is now the
+earliest unmarked boundary. `ddp_dsi.c` owns the DSI ioctl switch that should
+be reached first for the primary DSI route. The state file keeps the CPU-direct
+patch from being mistaken for a failed DSI electrical test.
+
+Expected next marker: rerun `m6_dsi_c2v_switch:0x03:1500` after flashing this
+diagnostic boot image. If `M6I enter` and `M6I before module=DSI0` appear but
+no `M6J enter` appears, the DSI module ioctl pointer/dispatch is suspect. If
+`M6J before-switch-dsi` appears but no `M6 DSI switch_mode enter` appears, the
+fault is inside the first edge of `ddp_dsi_switch_mode()`. If
+`switch-dsi-enter` appears, interpret the following C2V CPU-direct markers or
+the next crash boundary.
+
+Rollback condition: revert if the extra breadcrumbs prevent normal boot,
+change non-debugfs display behavior, or flood logs enough to hide the reset
+boundary. Keep the patch if it only makes the reset boundary more precise.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'dmesg -C'
+$A shell 'echo m6_dsi_c2v_switch:0x03:1500 > /d/mtkfb; sleep 1; echo m6_display_truth_window:after-c2v-switch > /d/mtkfb'
+$A shell 'dmesg | grep -E "M6I|M6J|M6 DPMGR ioctl|M6 DSI ioctl|M6 DSI c2v_switch|switch-dsi|switch_lcm|switch_dsi|BUG|Unable to handle" | tail -600'
+```
+
 ## 2026-06-09 #81 DSI C2V CMDQ-address isolation
 
 PATCH HISTORY, **ISOLATION**, 2026-06-09: route the M6-only
