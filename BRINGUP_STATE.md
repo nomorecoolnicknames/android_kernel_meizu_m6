@@ -1,5 +1,117 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #98 suppress resume-time LCM DCS trace reads
+
+PATCH HISTORY, **DIAGNOSTIC / ISOLATION**, 2026-06-09: suppress the
+`page5_2a_trace` diagnostic DCS readbacks while `lcm_resume()` is replaying the
+ILI9881P init table. This patch does not change the init table, DSI timing,
+panel reset/bias sequence, CMDQ waits, route, backlight, or any DCS command
+that belongs to the stock panel sequence. It only prevents the local diagnostic
+helper from doing `read_reg_v2(0x2A)` during resume.
+
+Hypothesis: FACT: #96 moved the old Linux off/wake cycle past the
+`CMDQ_EVENT_DISP_RDMA0_EOF` wedge and into the LCM suspend/resume callbacks.
+FACT from the human observer: when wake was issued, the glass physically went
+dark/off, proving Linux now reaches a panel/backlight-affecting boundary that
+the older "nothing changed" cycle did not reach. FACT: #97 removed the
+self-inflicted hardcoded-GPIO `dump_stack()` flood; the fresh #97 pstore has no
+`GPIOxx HARDCODE warning` / `mt_gpio_pin_decrypt` flood. FACT: the remaining
+#97 WDT occurs inside resume after `M6 LCM init seq=1 push init table start`,
+after table index 69 `cmd=0x29`, and immediately after diagnostic marker
+`M6 DSI wrapper read begin #4 cmd=0x2a size=1`; there is no matching read-end
+marker before WDT. FACT: symbol decode against the exact #97 `System.map`
+places the blocked task in `DSI_dcs_read_lcm_reg_v2` at `ddp_dsi.c:3785`,
+called from `lcm_m6_trace_page5_2a`, `push_table`, `lcm_init`, and
+`lcm_resume`. HYPOTHESIS: the current resume WDT is caused by the diagnostic
+DCS readback issued after display-on during resume, not by the stock panel init
+command itself. Suppressing resume-time diagnostic reads should allow the next
+capture to prove whether the real LCM resume sequence reaches
+`resume-after-callback` / `resume-exit` or exposes the next blocker.
+
+Evidence:
+- Pre-patch #97 runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1605-m6-lcm-gpio-dumpstack-quiesce-offwake-711HEBSR277K5/`.
+- #97 verified boot image:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1548-m6-lcm-gpio-dumpstack-quiesce-bootonly/boot-m6-lcm-gpio-dumpstack-quiesce-20260609.img`,
+  sha256 `bc952829782432faecbb004d572860356c2dba7c774be8f1772b90f31634ba45`.
+- #97 postboot/readback identity: capture `identity-postboot.txt` and
+  `identity-after-reappear.txt` both show boot partition sha256
+  `bc952829782432faecbb004d572860356c2dba7c774be8f1772b90f31634ba45`.
+- #97 pstore/last_kmsg:
+  `last_kmsg-after-reappear.txt` shows `M6 LCM resume start`, init table
+  replay, index 69 display-on, `M6 DSI wrapper read begin #4 cmd=0x2a size=1`,
+  then WDT without a read-end marker.
+- #97 symbol decode, using exact #97 `vmlinux` / `System.map`:
+  `ffffffc00055cd08` = `DSI_dcs_read_lcm_reg_v2` at `ddp_dsi.c:3785`;
+  stack tail includes `lcm_m6_trace_page5_2a`, `push_table`, `lcm_init`,
+  `lcm_resume`, `disp_lcm_resume`, and `primary_display_resume`.
+- #98 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1624-m6-lcm-resume-dcs-read-suppress-bootonly/boot-m6-lcm-resume-dcs-read-suppress-20260609.img`.
+- #98 boot image sha256:
+  `dffab7ca96060ee78baea3d902c9b6439467a6ba5537be10658a37c5af86413b`.
+- #98 `Image.gz-dtb` sha256:
+  `d3145b5bf594028c80a6225b9de260bc4fff592ab19f10282e2f14a413a1bb82`.
+- #98 `System.map` sha256:
+  `4c5a3e41e0869b695a466d224cc225ba16cb596a00019993fdc91d4ffaf61603`.
+- #98 `vmlinux` sha256:
+  `2106d9452c08deb526221b6889d570d27016ee553c5c722e63b800c9d05dde88`.
+- Build/packaging verification: `git diff --check` passed, `make
+  Image.gz-dtb` completed, `abootimg -i` reports unchanged 16 MiB boot
+  geometry/cmdline, unpacked `zImage` and `initrd.img` compare with packaged
+  inputs, `sha256sum -c SHA256SUMS` passed, and marker string search finds the
+  new `page5_2a_trace[%s] suppressed during resume` marker plus the retained
+  #96/#97 marker strings.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`:
+  adds a small resume-depth guard around diagnostic page5 `0x2a` readbacks and
+  logs `M6 LCM page5_2a_trace[init] suppressed during resume depth=...` when
+  the guard is active.
+- `BRINGUP_STATE.md`: records the diagnostic/isolation category, evidence,
+  expected marker, rollback condition, artifact identity, and verification
+  commands.
+
+Why each file changed: the ILI9881P LCM driver owns both the stock init table
+and the local `lcm_m6_trace_page5_2a()` diagnostic helper that caused the #97
+resume-time DCS read. Patching the DSI read core would affect all panel reads
+and make the next result ambiguous; guarding only the local diagnostic read
+keeps the behavior change scoped to the proven failing helper. The state file
+is the durable M6 bring-up record required for this patch.
+
+Expected next marker: after flashing #98 and issuing a brightness-pinned wake
+from `Display Power: OFF` / dozing state, the fresh log should contain
+`M6 LCM page5_2a_trace[init] suppressed during resume`, no
+`M6 DSI wrapper read begin ... cmd=0x2a` from the resume init table, and then
+either `M6 LCM init seq=... push init table end`, `M6 LCM resume end`,
+`M6 LCM pm[resume-after-callback]`, `M6 LCM pm[resume-exit]`, or a new
+earlier failing marker. If another WDT occurs, decode it against #98
+`System.map` / `vmlinux` from the artifact above.
+
+Rollback condition: revert this patch if a fresh #98 capture proves that
+suppressing resume-time diagnostic DCS reads prevents the panel init sequence
+from running, hides all needed panel identity evidence, or causes a new
+regression before `lcm_resume()` reaches the guarded read. Do not revert only
+because the physical panel remains black; that result would move the frontier
+past this diagnostic DCS read.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+export PATH=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin:$PATH
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-1624-m6-lcm-resume-dcs-read-suppress-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+cmp "$ART/Image.gz-dtb" "$ART/verify-unpack.tmp/zImage"
+cmp "$ART/initrd.img" "$ART/verify-unpack.tmp/initrd.img"
+abootimg -i "$ART/boot-m6-lcm-resume-dcs-read-suppress-20260609.img"
+grep -E 'page5_2a_trace|M6 LCM pm|M6 CMDQ video eof isolation|raw mt_get_gpio reads suppressed' "$ART/marker-strings.txt"
+```
+
 ## 2026-06-09 #97 LCM pinctrl GPIO dump_stack flood quiesce
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: suppress the raw `mt_get_gpio_*`

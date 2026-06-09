@@ -639,6 +639,9 @@ static unsigned int lcm_m6_init_count;
 static unsigned int lcm_m6_backlight_log_this_call;
 static unsigned int lcm_m6_backlight_log_count;
 static unsigned int lcm_m6_backlight_last_level = 0xffffffff;
+#ifndef BUILD_LK
+static unsigned int lcm_m6_resume_init_trace_suppressed;
+#endif
 
 static const char *lcm_m6_table_name(struct LCM_setting_table *table)
 {
@@ -708,7 +711,9 @@ static void push_table(void *cmdq, struct LCM_setting_table *table,
 	const char *tag = lcm_m6_table_name(table);
 #ifndef BUILD_LK
 	unsigned char m6_current_page = 0xFF;
-	unsigned int m6_trace_init = (table == init_setting);
+	unsigned int m6_resume_trace_suppressed =
+		(table == init_setting && lcm_m6_resume_init_trace_suppressed);
+	unsigned int m6_trace_init = (table == init_setting && !m6_resume_trace_suppressed);
 #endif
 
 	if (table == bl_level)
@@ -717,6 +722,11 @@ static void push_table(void *cmdq, struct LCM_setting_table *table,
 	if (log_table)
 		LCM_LOGI("M6 LCM push_table start tag=%s count=%u force=%u cmdq=%p\n",
 			tag, count, force_update, cmdq);
+#ifndef BUILD_LK
+	if (m6_resume_trace_suppressed)
+		LCM_LOGI("M6 LCM page5_2a_trace[%s] suppressed during resume depth=%u\n",
+			tag, lcm_m6_resume_init_trace_suppressed);
+#endif
 	for (i = 0; i < count; i++) {
 		unsigned long start_jiffies = jiffies;
 
@@ -1054,7 +1064,14 @@ static void lcm_suspend(void)
 static void lcm_resume(void)
 {
 	LCM_LOGI("M6 LCM resume start mode=%d\n", lcm_dsi_mode);
+#ifndef BUILD_LK
+	lcm_m6_resume_init_trace_suppressed++;
+#endif
 	lcm_init();
+#ifndef BUILD_LK
+	if (lcm_m6_resume_init_trace_suppressed)
+		lcm_m6_resume_init_trace_suppressed--;
+#endif
 	LCM_LOGI("M6 LCM resume end mode=%d\n", lcm_dsi_mode);
 }
 
