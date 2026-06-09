@@ -1241,6 +1241,46 @@ void lcm_m6_diag_page5_2a_probe(unsigned int value, unsigned int hold_ms)
 		write_value);
 }
 
+void lcm_m6_diag_mode_ctrl_probe(unsigned int value, unsigned int hold_ms)
+{
+	unsigned int bounded = hold_ms;
+	unsigned char write_value = value & 0xff;
+	unsigned char read_buf[4];
+	unsigned int read_count;
+
+	if (bounded > 10000)
+		bounded = 10000;
+
+	LCM_LOGI("M6 LCM mode_ctrl_probe begin write=%02x hold_ms=%u\n",
+		write_value, bounded);
+	lcm_m6_diag_select_stock_page(0);
+	memset(read_buf, 0xA5, sizeof(read_buf));
+	read_count = read_reg_v2(0xBB, read_buf, 1);
+	LCM_LOGI("M6 LCM mode_ctrl_probe before cmd=0xbb read=%02x %02x %02x %02x read_count=%u\n",
+		read_buf[0], read_buf[1], read_buf[2], read_buf[3],
+		read_count);
+
+	dsi_set_cmdq_V2(0xBB, 1, &write_value, 1);
+	MDELAY(2);
+	memset(read_buf, 0xA5, sizeof(read_buf));
+	read_count = read_reg_v2(0xBB, read_buf, 1);
+	LCM_LOGI("M6 LCM mode_ctrl_probe after_write write=%02x read=%02x %02x %02x %02x read_count=%u\n",
+		write_value, read_buf[0], read_buf[1], read_buf[2],
+		read_buf[3], read_count);
+
+	if (bounded)
+		MDELAY(bounded);
+
+	memset(read_buf, 0xA5, sizeof(read_buf));
+	read_count = read_reg_v2(0xBB, read_buf, 1);
+	LCM_LOGI("M6 LCM mode_ctrl_probe hold_end write=%02x read=%02x %02x %02x %02x read_count=%u\n",
+		write_value, read_buf[0], read_buf[1], read_buf[2],
+		read_buf[3], read_count);
+	lcm_m6_diag_select_stock_page(0);
+	LCM_LOGI("M6 LCM mode_ctrl_probe end write=%02x reset_page=0\n",
+		write_value);
+}
+
 void lcm_m6_diag_read_stock_pages(void)
 {
 	static const struct m6_lcm_stock_page_diag_read reads[] = {

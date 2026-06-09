@@ -94,6 +94,7 @@
 
 extern void lcm_m6_diag_read_stock_pages(void);
 extern void lcm_m6_diag_page5_2a_probe(unsigned int value, unsigned int hold_ms);
+extern void lcm_m6_diag_mode_ctrl_probe(unsigned int value, unsigned int hold_ms);
 extern void m6_led_dump_backlight_truth(const char *tag);
 
 #define FRM_UPDATE_SEQ_CACHE_NUM (DISP_INTERNAL_BUFFER_COUNT+1)
@@ -6146,6 +6147,46 @@ int primary_display_m6_lcm_page5_2a(unsigned int value, unsigned int hold_ms)
 	if (primary_display_is_video_mode())
 		dpmgr_path_trigger(pgc->dpmgr_handle, NULL, CMDQ_DISABLE);
 	dsi_m6_dump_live("page5-2a-restart-after-write");
+
+done:
+	disp_irq_esd_cust_bycmdq(1);
+	_primary_path_unlock(__func__);
+	primary_display_esd_check_enable(1);
+	return ret;
+}
+
+int primary_display_m6_lcm_mode_ctrl(unsigned int value, unsigned int hold_ms)
+{
+	DISP_STATUS ret = DISP_STATUS_OK;
+
+	DISPFUNC();
+	primary_display_esd_check_enable(0);
+	_primary_path_lock(__func__);
+	disp_irq_esd_cust_bycmdq(0);
+	if (pgc->state == 0) {
+		DISPMSG("M6 LCM mode_ctrl, primary display path is already sleep, skip\n");
+		goto done;
+	}
+
+	dsi_m6_dump_live("mode-ctrl-before-stop");
+	DISPERR("M6 LCM mode_ctrl: stop video path begin value=0x%x hold=%u\n",
+		value, hold_ms);
+	if (primary_display_is_video_mode())
+		dpmgr_path_ioctl(pgc->dpmgr_handle, NULL, DDP_STOP_VIDEO_MODE, NULL);
+
+	dsi_m6_dump_live("mode-ctrl-stop-video-write");
+	DISPERR("M6 LCM mode_ctrl: probe begin value=0x%x hold=%u\n",
+		value, hold_ms);
+	lcm_m6_diag_mode_ctrl_probe(value, hold_ms);
+	DISPERR("M6 LCM mode_ctrl: probe end\n");
+	dsi_m6_dump_live("mode-ctrl-after-probe");
+
+	dpmgr_path_start(pgc->dpmgr_handle, CMDQ_DISABLE);
+	if (primary_display_is_video_mode())
+		dpmgr_path_trigger(pgc->dpmgr_handle, NULL, CMDQ_DISABLE);
+	msleep(80);
+	dsi_m6_dump_live("mode-ctrl-restart-after-write");
+	m6_led_dump_backlight_truth("mode-ctrl-restart-after-write");
 
 done:
 	disp_irq_esd_cust_bycmdq(1);

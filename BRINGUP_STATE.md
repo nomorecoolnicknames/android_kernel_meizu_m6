@@ -1,5 +1,106 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #78 ILI9881P mode-control C2V probe
+
+PATCH HISTORY, **ISOLATION / DIAGNOSTIC**, 2026-06-09: add a bounded M6-only
+debugfs probe for the ILI9881P `0xBB` mode-control register. The probe stops
+the DSI video path, selects page 0, reads `0xBB`, writes a requested value
+(`0x03` is the C2V/video value already encoded by this LCM driver's
+`lcm_switch_mode()`), reads it back before and after a bounded hold, restarts
+the video path, and dumps DSI/MIPITX/backlight truth around each boundary. It
+does not enable global dynamic mode switching, does not change boot-time DSI
+timing, does not touch PQ/HWC/OVL/RDMA routing, and does not fake readiness.
+
+Hypothesis: FACT: #77 verified boot image
+`5eafeb82fbaae920688db1ea4e8508775dc411915c1499c55496fae1255d3684` reaches
+`sys.boot_completed=1`, backlight 255, nonblack screencap, SurfaceFlinger ON,
+and RDMA0 transfer near 61 fps while the physical LCD stays lit black. FACT:
+#77 retained DSI markers show MIPITX lane/PLL state stable and DSI host started,
+but delayed video samples still show `line=0`. FACT: the current LCM driver
+already defines `0xBB=0x03` as the command-to-video value in `lcm_switch_mode()`,
+but normal bring-up has `switch_mode_enable=0`, so that C2V command is not sent
+through the generic switch path. HYPOTHESIS: the panel may be left in an
+ILI9881P command/GRAM-side state after LK/Linux handoff or after Linux DCS
+windows; a controlled `0xBB=0x03` write before restarting video should prove
+whether panel HS-video acceptance changes before moving lower into PHY/lane
+electrical state.
+
+Evidence:
+- #78 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0638-m6-lcm-mode-ctrl-c2v-probe-bootonly`.
+- #78 boot image sha256:
+  `693e0b0029741c2f83b1a8d50f1f3ebb2f3a78a34a528f9f59b05258876d0263`.
+- #78 `Image.gz-dtb` sha256:
+  `3dec3305277181edbbc69f3fbf15421a050b65b2b66e1edeec251264ce096cdd`.
+- #78 `System.map` sha256:
+  `d743d414fff1abd070a02207091be5ac3450983f72b7eee28b74083a9fbe936e`.
+- #78 `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- #78 artifact verification: `sha256sum -c SHA256SUMS` passed,
+  `abootimg -x` unpacked successfully, `cmp Image.gz-dtb verify-unpack/zImage`
+  passed, `cmp initrd.img verify-unpack/initrd.img` passed, and gzip-expanded
+  marker strings include `m6_lcm_mode_ctrl`, `M6 LCM mode_ctrl`,
+  `mode_ctrl_probe`, `mode-ctrl-*`, `M6V`, and `M6W`.
+- #77 postflash capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0600-m6-dsi-retained-video-window-r2-postflash`.
+- #77 second-reboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0600-m6-dsi-retained-video-window-r2-after-second-reboot`.
+- #77 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0542-m6-dsi-retained-video-window-r2-bootonly`.
+- #77 runtime facts: `sys.boot_completed=1`, `mActualBacklight=255`, 720x1280
+  screencap nonblack, SurfaceFlinger built-in display ON with flips, and
+  `debugfs-mtkfb.txt` reports `PathMode:DIRECT_LINK` with RDMA0 transferring.
+- #77 retained DSI facts: `M6V/M6W` keep MIPITX lane/top/PLL state stable,
+  `HSA=0x38` after CMDQ flush/start, `after-1vsync` and `after-500ms` decode
+  still report `word=0 line=0`, and the first later timeout shows nonzero word
+  state with `line=0`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`:
+  adds `lcm_m6_diag_mode_ctrl_probe()` to select page 0 and read/write/read
+  DCS `0xBB`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`: adds
+  `primary_display_m6_lcm_mode_ctrl()` wrapper using the existing safe
+  stop-video / LP-DCS / restart-video pattern plus DSI/MIPITX/backlight dumps.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.h`: exposes
+  the M6 debug wrapper to debugfs.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  `m6_lcm_mode_ctrl:<value>[:hold_ms]` debugfs command.
+- `BRINGUP_STATE.md`: records the probe purpose, evidence, expected markers,
+  rollback condition, and verification commands.
+
+Why each file changed: the LCM driver owns panel-private DCS writes/reads; the
+primary-display wrapper owns safe DSI video stop/restart sequencing; debugfs is
+the existing runtime injection surface; this state file preserves the exact
+question so later agents do not re-open PQ/HWC/OVL/RDMA after #77.
+
+Expected next marker: after flashing #78, run `m6_lcm_mode_ctrl:0x03:1500`
+while the panel is lit black. Dmesg should show `M6 LCM mode_ctrl_probe` before
+and after write readbacks, `mode-ctrl-before-stop`, `mode-ctrl-stop-video-write`,
+`mode-ctrl-after-probe`, and `mode-ctrl-restart-after-write` DSI snapshots. If
+`0xBB=0x03` latches but DSI `line` remains zero and the physical LCD remains
+black, close this branch and move below panel mode-control into MIPITX lane
+polarity/swap/drive/settle or stock LK hidden PHY side effects. If `0xBB`
+does not latch or video line state changes, keep the branch open and make the
+next patch target that exact earliest failure.
+
+Rollback condition: revert this checkpoint if the debugfs command destabilizes
+ADB/SurfaceFlinger/RDMA/backlight, fails before logging the read/write/read
+sequence, or if stop/restart behavior introduces new DSI/CMDQ timeouts that
+prevent comparison with #77.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'svc power stayon true; settings put system screen_off_timeout 2147483647; input keyevent 224; settings put system screen_brightness 255; echo 255 > /sys/class/leds/lcd-backlight/brightness'
+$A shell 'echo m6_lcm_mode_ctrl:0x03:1500 > /d/mtkfb; sleep 1; echo m6_display_truth_window:after-bb03 > /d/mtkfb'
+$A shell 'dmesg | grep -E "M6 LCM mode_ctrl|mode_ctrl_probe|mode-ctrl-|M6V|M6W|M6 DSI state_decode|word=|line=|MIPITX|backlight" | tail -260'
+$A shell 'cat /d/mtkfb | head -180'
+```
+
 ## 2026-06-09 #77 retained DSI video/PHY window
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add bounded retained `M6V/M6W`

@@ -137,6 +137,8 @@ char MTKFB_STR_HELP[] =
 	"             Meizu M6 manual DSI BIST profile sweep; auto-disables\n"
 	"        m6_lcm_page5_2a:<value>[:hold_ms]\n"
 	"             Meizu M6 isolation write/read probe for ILI9881P page5 cmd 0x2A\n"
+	"        m6_lcm_mode_ctrl:<value>[:hold_ms]\n"
+	"             Meizu M6 isolation write/read probe for ILI9881P cmd 0xBB mode control\n"
 	"\n"
 	"\n"
 	"        m6_display_truth_window[:tag]\n"
@@ -724,6 +726,22 @@ void mtkfb_process_dbg_opt(const char *opt)
 		DISPERR("M6 LCM page5_2a command: value=0x%x hold=%u\n",
 			value, hold_ms);
 		primary_display_m6_lcm_page5_2a(value, hold_ms);
+		return;
+	} else if (0 == strncmp(opt, "m6_lcm_mode_ctrl:", 17)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+
+		ret = sscanf(opt, "m6_lcm_mode_ctrl:%i:%u\n",
+			     &value_arg, &hold_ms);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		DISPERR("M6 LCM mode_ctrl command: value=0x%x hold=%u\n",
+			value, hold_ms);
+		primary_display_m6_lcm_mode_ctrl(value, hold_ms);
 		return;
 	} else if (0 == strncmp(opt, "m6_display_truth_window", 23)) {
 		const char *tag = "manual";
