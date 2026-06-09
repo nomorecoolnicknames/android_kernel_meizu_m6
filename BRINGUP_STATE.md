@@ -1,5 +1,100 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 HS-window parser diagnostic follow-up
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: replace the `/d/mtkfb`
+`m6_dsi_hs_window:<tag>[:hold_ms]` parser with explicit `tag[:hold_ms]`
+splitting. This patch does not change display timing, DSI/MIPITX registers,
+panel commands, BIST behavior, DDP routing, PQ, OVL, RDMA, HWC, fences, or wait
+behavior. It only makes the already-added bounded HS-window sampler callable on
+this kernel.
+
+Hypothesis: FACT: boot image
+`82c75e72903b20dbee3447487050d8d034b9e60df07196bf32a661b5fedb558a` was flashed
+and read back from `/dev/block/platform/mtk-msdc.0/by-name/boot` with the same
+sha256. FACT: the user still reports the physical bootlogo disappears at 3-4 s
+and the lit panel remains black. FACT: root capture proves Android is booted,
+SurfaceFlinger has nonblack `720x1280` content, DSI full-BIST latches
+`BIST_CON=0x200446 self_pat=1 bist_en=1 lane=4`, and DSI/PHY/MIPITX snapshots
+remain powered. FACT: the same capture also proves both `m6_dsi_hs_window`
+commands failed with `error to parse cmd ...`, so the new HS-window sampler did
+not run. HYPOTHESIS: the `%[^:]` `sscanf()` scanset used by this kernel parser is
+not reliable here; a manual parser is needed before drawing conclusions about
+HS-window state evolution.
+
+Evidence:
+- Fresh postflash capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0048-m6-dsi-irq-hs-window-after-flash`.
+- Root follow-up capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-0054-m6-dsi-hs-window-root`.
+- Capture identity: `identity-status-root.txt` reports kernel
+  `3.18.140 #68 SMP PREEMPT Tue Jun 9 00:20:35 CDT 2026`, root ADB,
+  `sys.boot_completed=1`, `bootanim=stopped`, battery `6`, `Charging`, USB online.
+- Artifact/readback identity: `device-boot-partition-sha256-root.txt` and
+  `flashed_boot_sha256.txt` both report
+  `82c75e72903b20dbee3447487050d8d034b9e60df07196bf32a661b5fedb558a`.
+- `display-baseline-root.txt`: `mutex`, `ovl0`, and `rdma0` IRQ counters
+  advance while `dsi0` is `0`.
+- `dumpsys-SurfaceFlinger-root-after.txt`: built-in screen is ON, HWC present,
+  flips advance, and framebuffer layers are `720x1280`.
+- `screencap-root-after.png`: valid nonblack `720x1280` PNG.
+- `dmesg-root-after.txt`: `m6_dsi_bist_full:0x00ff00` latches
+  `BIST_PATTERN=0xff00`, `BIST_CON=0x200446`, `self_pat=1`, `bist_en=1`, and
+  after disable returns `BIST_CON=0x0`.
+- `dmesg-root-after.txt`: `error to parse cmd m6_dsi_hs_window:ui_root:5000`
+  and `error to parse cmd m6_dsi_hs_window:bist_green_root:5000`.
+- New parser-only build log:
+  `/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-hs-window-parser-diag-20260609.log`.
+- New parser-only artifact directory:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-0103-m6-hs-window-parser-diag-bootonly`.
+- Built boot image sha256:
+  `019281e6fd9688c3868ff75397185a91871157f5da2580f26ee7ab3148d5c782`.
+- Built `Image.gz-dtb` sha256:
+  `e63a65e68813d31b7ca0da1fe19bfc7be17547c5e52d7a8c7ff207c2fd949e34`.
+- Built `System.map` sha256:
+  `9f2d6d60c569672b9a236785cb886d7c0b49cd46d153067091456038e67dc35a`.
+- Built `kernel.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Artifact verification: `sha256sum -c SHA256SUMS`, boot unpack, kernel
+  `cmp`, and ramdisk `cmp` passed.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: manually parse
+  `m6_dsi_hs_window` arguments so the bounded sampler can run from `/d/mtkfb`.
+- `BRINGUP_STATE.md`: records the verified root capture, the parser failure, and
+  the expected follow-up markers.
+
+Why each file changed: `disp_debug.c` owns the `/d/mtkfb` command path that
+failed in the fresh root capture; changing only this parser preserves the exact
+DSI/PHY/BIST behavior under test. The state file records why this is a
+diagnostic patch and prevents misreading the missing `hs_window` markers as a
+DSI/PHY result.
+
+Expected next marker: after flashing the next boot-only artifact, root
+`printf "m6_dsi_hs_window:ui_root:5000\n" > /d/mtkfb` should print
+`M6 DSI hs_window[ui_root]` plus `M6 DSI snapshot[hs-window-ui_root-...]`.
+During a latched `m6_dsi_bist_full:0x00ff00` window, the same sampler should show
+whether DSI `INTSTA`, `STATE7/8/9`, `VM_CMD`, and MIPITX lane state evolve while
+physical output remains black.
+
+Rollback condition: revert this parser-only diagnostic patch if `/d/mtkfb`
+command handling regresses, if `m6_dsi_bist_full` stops latching/clearing, if
+boot no longer reaches `sys.boot_completed=1`, or if the patch produces log
+flooding beyond the bounded sampler.
+
+Verification commands:
+
+```bash
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A shell 'printf "m6_dsi_hs_window:ui_root:5000\n" > /d/mtkfb'
+$A shell 'printf "m6_dsi_bist_full:0x00ff00\n" > /d/mtkfb'
+$A shell 'printf "m6_dsi_hs_window:bist_green_root:5000\n" > /d/mtkfb'
+$A shell 'printf "m6_dsi_bist_full:0\n" > /d/mtkfb'
+$A shell 'dmesg | grep -E "M6 DSI hs_window|M6 DSI snapshot\\[hs-window|BIST_CON|error to parse cmd m6_dsi_hs_window|M6 DSI irq_decode" | tail -260'
+$A shell 'cat /proc/interrupts | grep -E "dsi|rdma|ovl|mutex"'
+```
+
 ## 2026-06-09 DSI IRQ/HS-video window diagnostic
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add read-only decode markers for

@@ -598,14 +598,29 @@ void mtkfb_process_dbg_opt(const char *opt)
 		DISPMSG("m6 dsi bist profile: profile=%u pattern=0x%08x hold=%u\n",
 			profile, pattern, hold_ms);
 	} else if (0 == strncmp(opt, "m6_dsi_hs_window:", 17)) {
+		const char *arg = opt + 17;
+		const char *sep;
 		char tag[32] = {0};
 		unsigned int hold_ms = 1000;
+		size_t tag_len;
 
-		ret = sscanf(opt, "m6_dsi_hs_window:%31[^:]:%u\n",
-			     tag, &hold_ms);
-		if (ret < 1) {
+		sep = strchr(arg, ':');
+		tag_len = sep ? (size_t)(sep - arg) : strnlen(arg, sizeof(tag) - 1);
+		if (tag_len == 0) {
 			pr_err("error to parse cmd %s\n", opt);
 			return;
+		}
+		if (tag_len >= sizeof(tag))
+			tag_len = sizeof(tag) - 1;
+		memcpy(tag, arg, tag_len);
+		tag[tag_len] = '\0';
+		if (sep && sep[1] != '\0') {
+			ret = kstrtouint(sep + 1, 0, &hold_ms);
+			if (ret) {
+				pr_err("error to parse cmd %s ret=%d\n",
+				       opt, ret);
+				return;
+			}
 		}
 		primary_display_manual_lock();
 		dsi_m6_dump_hs_window(tag, hold_ms);
