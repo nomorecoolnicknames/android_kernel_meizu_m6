@@ -1950,13 +1950,74 @@ static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM modul
 
 static void dsi_m6_dump_hs_video_marker(const char *tag, DISP_MODULE_ENUM module,
 					 void *cmdq);
+static void dsi_m6_dump_hs_video_edge_marker(const char *tag,
+					     DISP_MODULE_ENUM module,
+					     void *cmdq);
 static void dsi_m6_hs_video_after_1vsync_work(struct work_struct *work);
 static void dsi_m6_hs_video_after_500ms_work(struct work_struct *work);
+static void dsi_m6_hs_video_edge_window_work(struct work_struct *work);
 
 static DECLARE_DELAYED_WORK(dsi_m6_hs_video_after_1vsync_work_item,
 			    dsi_m6_hs_video_after_1vsync_work);
 static DECLARE_DELAYED_WORK(dsi_m6_hs_video_after_500ms_work_item,
 			    dsi_m6_hs_video_after_500ms_work);
+static DECLARE_DELAYED_WORK(dsi_m6_hs_video_edge_window_work_item,
+			    dsi_m6_hs_video_edge_window_work);
+
+static void dsi_m6_sram_scanout_edge(const char *tag, DISP_MODULE_ENUM module)
+{
+	static unsigned int count;
+	const char *safe_tag = tag ? tag : "null";
+	unsigned int n;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL || count >= 32)
+		return;
+
+	n = ++count;
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	aee_sram_printk("M6X%02u %s V=%x/%x M=%x/%x/%x R=%x %u/%u %u/%u D=%x/%x/%x/%x VM=%x/%x L=%x/%x P=%x/%x\n",
+		n, safe_tag,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x134),
+		INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008),
+		INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x058));
+#else
+	aee_sram_printk("M6X%02u %s V=%x/%x M=%x/%x/%x R=%x %u/%u %u/%u D=%x/%x/%x/%x VM=%x/%x\n",
+		n, safe_tag,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x134));
+#endif
+}
 
 static void dsi_m6_dump_hs_video_marker(const char *tag, DISP_MODULE_ENUM module,
 					 void *cmdq)
@@ -1984,6 +2045,37 @@ static void dsi_m6_dump_hs_video_marker(const char *tag, DISP_MODULE_ENUM module
 	dsi_m6_dump_snapshot(tag, module, cmdq);
 }
 
+static void dsi_m6_dump_hs_video_edge_marker(const char *tag,
+					     DISP_MODULE_ENUM module,
+					     void *cmdq)
+{
+	const char *safe_tag = tag ? tag : "edge";
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL)
+		return;
+
+	dsi_m6_sram_video_snapshot(safe_tag, module);
+	dsi_m6_sram_scanout_edge(safe_tag, module);
+	DISPERR("M6 DSI HS edge[%s]: cmdq=%p route=0x%x/0x%x mutex=0x%x/0x%x/0x%x rdma=0x%x in=%u/%u out=%u/%u dsi=0x%x/0x%x state=0x%x/0x%x vm=0x%x/0x%x\n",
+		safe_tag, cmdq,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x134));
+}
+
 static void dsi_m6_dump_hs_video_limited(const char *tag, DISP_MODULE_ENUM module,
 					 void *cmdq, unsigned int *count,
 					 unsigned int limit)
@@ -2005,6 +2097,22 @@ static void dsi_m6_hs_video_after_500ms_work(struct work_struct *work)
 	dsi_m6_dump_hs_video_marker("after-500ms", DISP_MODULE_DSI0, NULL);
 }
 
+static void dsi_m6_hs_video_edge_window_work(struct work_struct *work)
+{
+	msleep(1);
+	dsi_m6_dump_hs_video_edge_marker("edge-1ms", DISP_MODULE_DSI0, NULL);
+	msleep(1);
+	dsi_m6_dump_hs_video_edge_marker("edge-2ms", DISP_MODULE_DSI0, NULL);
+	msleep(2);
+	dsi_m6_dump_hs_video_edge_marker("edge-4ms", DISP_MODULE_DSI0, NULL);
+	msleep(4);
+	dsi_m6_dump_hs_video_edge_marker("edge-8ms", DISP_MODULE_DSI0, NULL);
+	msleep(8);
+	dsi_m6_dump_hs_video_edge_marker("edge-16ms", DISP_MODULE_DSI0, NULL);
+	msleep(17);
+	dsi_m6_dump_hs_video_edge_marker("edge-33ms", DISP_MODULE_DSI0, NULL);
+}
+
 static void dsi_m6_schedule_hs_video_delayed(void)
 {
 	static unsigned int schedule_count;
@@ -2013,6 +2121,12 @@ static void dsi_m6_schedule_hs_video_delayed(void)
 		return;
 
 	schedule_count++;
+	if (schedule_count <= 2) {
+		dsi_m6_dump_hs_video_edge_marker("edge-0ms", DISP_MODULE_DSI0,
+						 NULL);
+		schedule_delayed_work(&dsi_m6_hs_video_edge_window_work_item,
+				      0);
+	}
 	schedule_delayed_work(&dsi_m6_hs_video_after_1vsync_work_item,
 			      msecs_to_jiffies(17));
 	schedule_delayed_work(&dsi_m6_hs_video_after_500ms_work_item,

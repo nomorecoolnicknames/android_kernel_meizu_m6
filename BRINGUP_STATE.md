@@ -1,5 +1,100 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #90 DSI HS edge retained SRAM window
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded retained DSI HS-video
+edge sampler around the first `DSI_Start()` windows. The patch does not change
+DSI/PHY/panel/DDP behavior and does not write any display register beyond the
+existing `DSI_Start()` path. It only records compact `M6X` SRAM lines plus
+`M6 DSI HS edge[...]` dmesg lines at `edge-0ms`, `edge-1ms`, `edge-2ms`,
+`edge-4ms`, `edge-8ms`, `edge-16ms`, and `edge-33ms` for the first two start
+windows.
+
+Hypothesis: FACT: the device is currently able to boot #87 to Android with
+`sys.boot_completed=1`, and the boot partition hash is
+`e33258ca0a09af4695fad223b3ed2c81fe68d08be1b1b45648da0f46e63968e4`. FACT:
+the user-visible failure happens during the LK-to-kernel display takeover
+window around 3-4 seconds, before normal ADB/manual `/d/mtkfb` interaction is
+available. FACT: prior captures and subagent audits keep HWC/PQ/OVL/RDMA/DCS
+BIST/backlight/panel-reset from being the first frontier. HYPOTHESIS: the
+remaining evidence gap is the short DSI HS-video acceptance edge: whether DSI
+state/line counters, RDMA IN/OUT counters, VM_CMD payload, route/mutex, and
+MIPITX lane/PLL state progress during the first milliseconds after Linux
+asserts `DSI_START`.
+
+Evidence:
+- Current pre-flash runtime, 2026-06-09 12:02 local: Android ADB is present on
+  serial `711HEBSR277K5`, `sys.boot_completed=1`, battery is 6% and Charging,
+  and boot partition path is
+  `/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot`.
+- Current boot partition sha256:
+  `e33258ca0a09af4695fad223b3ed2c81fe68d08be1b1b45648da0f46e63968e4`.
+- #90 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1215-m6-dsi-hs-edge-sram-window-bootonly`.
+- #90 boot sha256:
+  `0b63b87d5f939234fc22e034910df4d870ca14d4a4fff2473893a97e7cc710d1`.
+- #90 `Image.gz-dtb` sha256:
+  `c62bde06b9ff9b596927f9b531c19bc4bbab02ec2bed876c99fdd1afae1af11b`.
+- #90 `System.map` sha256:
+  `ce1b0a1e614b9daff863566adbdf4794f79d43806c2dc12b4750ce4a01099982`.
+- Build/package verification: `make ... Image.gz-dtb` completed; `abootimg`
+  create/info, `sha256sum -c`, unpacked `zImage` compare, unpacked
+  `initrd.img` compare, and gzip-expanded marker-string check passed. Marker
+  strings include `M6X`, `M6 DSI HS edge`, `edge-0ms`, `edge-33ms`,
+  `m6_dsi_phy_truth`, and `M6 DSI phy_truth`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds the
+  retained `M6X` route/mutex/RDMA/DSI/VM/MIPITX edge sampler and schedules a
+  bounded 0/1/2/4/8/16/33 ms window after `DSI_Start()`.
+- `BRINGUP_STATE.md`: records the diagnostic purpose, artifact identity, and
+  next marker expectations.
+
+Why each file changed: `ddp_dsi.c` owns `DSI_Start()` and already contains the
+M6 retained DSI sampler. Extending it there ties the first HS-video edge to
+RDMA/route/mutex and MIPITX state without reopening userspace, PQ, HWC, or
+manual debugfs hypotheses. The state file keeps the early-edge test tied to
+the exact boot artifact and prevents interpreting stale #87/#90 logs against
+the wrong `System.map`.
+
+Expected next marker: after flashing #90, the next boot or recovery pstore
+should include retained `M6V`, `M6W`, and new `M6X` lines tagged `edge-0ms`
+through `edge-33ms`. Dmesg should include `M6 DSI HS edge[edge-*]`. If RDMA
+IN/OUT and DSI `STATE9` line counters move during the edge but the panel stays
+black, move below Linux host registers to MIPITX/panel HS acceptance or hidden
+LK side effects. If RDMA counters stay flat at the first edge, reopen
+OVL/route/mutex trigger order before DSI electrical hypotheses.
+
+Rollback condition: revert this diagnostic if #90 regresses boot/ADB compared
+with #87, floods SRAM enough to lose earlier `M6D/M6G/M6R` markers, causes
+new display wait timeouts before the previous #87 frontier, or makes the first
+two `DSI_Start()` windows materially slower. Do not revert solely because the
+physical panel remains black.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+export ARCH=arm64
+export CROSS_COMPILE=aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+export PATH=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin:$PATH
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+cd /srv/forge/android/export/meizu_m6_artifacts/20260609-1215-m6-dsi-hs-edge-sram-window-bootonly
+sha256sum -c SHA256SUMS
+grep -E 'M6X|M6 DSI HS edge|edge-0ms|edge-33ms|m6_dsi_phy_truth|M6 DSI phy_truth' marker-strings.txt
+
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+BOOT=/srv/forge/android/export/meizu_m6_artifacts/20260609-1215-m6-dsi-hs-edge-sram-window-bootonly/boot-m6-dsi-hs-edge-sram-window-20260609.img
+BOOT_PART=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot
+$A root
+$A push "$BOOT" /cache/boot-m6-dsi-hs-edge-sram-window-20260609.img
+$A shell 'sha256sum /cache/boot-m6-dsi-hs-edge-sram-window-20260609.img'
+$A shell "dd if=/cache/boot-m6-dsi-hs-edge-sram-window-20260609.img of=$BOOT_PART bs=1048576; sync"
+$A shell "sha256sum $BOOT_PART"
+$A reboot
+```
+
 ## 2026-06-09 #89 DSI/MIPITX PHY truth marker
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a manual read-only
