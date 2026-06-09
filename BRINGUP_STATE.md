@@ -1,5 +1,122 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #93 DSI DEBUG_SEL edge mux sweep
+
+PATCH HISTORY, **ISOLATION**, 2026-06-09: add a bounded DSI debug mux sweep
+at the already-captured first HS-video edge. This is not a route, wait, fence,
+panel, timing, or PHY behavior fix. It temporarily writes only
+`DSI_DEBUG_SEL.DEBUG_OUT_SEL` selections `0..31` at `ddp-edge-0ms`,
+`edge-8ms`, and `edge-33ms`, delays 1 us per selection, records
+`STATE6..STATE9` / checksum / INTSTA / VM_CMD, then restores the original
+`DSI_DEBUG_SEL` value.
+
+Hypothesis: FACT: #92 postboot identity proves the flashed boot partition is
+`b6c9c128ce83f5f48b773c074925dd4da9bc28a79ee85a4e38e2b39af73d2b2c` and the
+fresh current bootdiag kernel is `#91 SMP PREEMPT Tue Jun 9 12:41:36 CDT
+2026`. FACT: fresh #92 bootdiag shows SurfaceFlinger/HWC/BootAnimation live,
+RDMA counters moving through the first edge window, DSI START and INTSTA
+active, but the fixed `STATE9` / decoded line field stays `0` from
+`ddp-edge-0ms` through `edge-33ms`. HYPOTHESIS: either the selected debug mux
+view is not the real video line counter on this SoC state, or DSI HS video is
+not progressing/accepted below RDMA. Sweeping `DEBUG_OUT_SEL` at the same edge
+will distinguish a hidden line-progress view from a true no-line-progress
+frontier before any DSI timing, MIPITX, or stock-LK side-effect patch.
+
+Evidence:
+- #92 postboot capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1251-m6-ddp-edge-postboot-711HEBSR277K5`.
+- Fresh #92 bootdiag run:
+  `/srv/forge/android/meizu_m6/captures/20260609-1251-m6-ddp-edge-postboot-711HEBSR277K5/cache-bootdiag/run-20260610-034749-321`.
+- #92 identity line: `Linux version 3.18.140 ... #91 SMP PREEMPT Tue Jun 9
+  12:41:36 CDT 2026`.
+- #92 boot partition sha256:
+  `b6c9c128ce83f5f48b773c074925dd4da9bc28a79ee85a4e38e2b39af73d2b2c`.
+- #92 start-after-hs proof:
+  `M6D10 start-after-hs S=1 M=3 I=80000790 H=0/124 V=2010 B=200000 L=603/601`.
+- #92 fixed debug view proof:
+  `M6 DSI state_decode[start-after-hs] ... vm=0x40 ... word=78 line=0`.
+- #92 edge proof: `M6 DSI HS edge[ddp-edge-0ms] ... rdma=0x101
+  in=662/670 out=68/667 dsi=0x1/0x80000790 state=0x2010/0x0 vm=0x21/0x0`.
+- #92 delayed edge proof: `edge-1ms`, `edge-2ms`, `edge-4ms`, `edge-8ms`,
+  `edge-16ms`, and `edge-33ms` all show RDMA IN/OUT changing while the second
+  state word remains `0x0`.
+- #93 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1332-m6-dsi-debug-mux-edge-sweep-bootonly`.
+- #93 boot sha256:
+  `c412fbe497588f30ea67762d24ece539a601da94beb747da57d393ae8b86cf69`.
+- #93 `Image.gz-dtb` sha256:
+  `e7a4f5a439a2034d4652820174c01cacc561553d6303ab643067b4461bc0ec45`.
+- #93 `System.map` sha256:
+  `cb32f841f4cec5458f7fa75327e18f67dc649bfd59efea050b0912e2f0b9dde6`.
+- #93 embedded kernel identity:
+  `#92 SMP PREEMPT Tue Jun 9 13:17:19 CDT 2026`.
+- #93 verification: `sha256sum -c SHA256SUMS`, abootimg info, unpacked
+  `zImage`/`initrd.img` compare, `git diff --check`, and gzip-expanded marker
+  string search passed. Marker strings include `M6 DSI dbg_mux`,
+  `ddp-edge-0ms`, `edge-8ms`, `edge-33ms`, `M6 DSI HS edge`, and `M6X`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  `dsi_m6_dump_debug_mux_sweep()` and calls it from the existing HS edge
+  marker path only for `ddp-edge-0ms`, `edge-8ms`, and `edge-33ms`.
+- `BRINGUP_STATE.md`: records the #92 line-counter evidence, #93 artifact
+  identity, expected next observation, and rollback condition.
+
+Why each file changed: `ddp_dsi.c` owns the DSI debug registers and already
+emits the bounded HS edge sampler. The fixed #92 `STATE9` read cannot prove
+whether the line counter is truly stalled or whether the chosen debug view is
+wrong. Sweeping only the DSI debug mux at three already-sampled edge points
+closes that evidence gap without touching higher display routing, userspace,
+panel commands, or DSI timing. The state file keeps the temporary debug-mux
+write classified as isolation instead of read-only diagnostic.
+
+Expected next marker: after flashing #93, the fresh `/cache/bootdiag` run with
+kernel `#92 SMP PREEMPT Tue Jun 9 13:17:19 CDT 2026` and boot hash
+`c412fbe497588f30ea67762d24ece539a601da94beb747da57d393ae8b86cf69` should
+contain `M6 DSI dbg_mux[ddp-edge-0ms]#1 sel=0x0..0x1f`,
+`M6 DSI dbg_mux[edge-8ms]#2 sel=0x0..0x1f`, and
+`M6 DSI dbg_mux[edge-33ms]#3 sel=0x0..0x1f`, each followed by a restore line.
+If any mux selection shows a moving line/word field while physical output is
+black, use that selection for the next low-level DSI/PHY parity snapshot. If
+all selections show line `0` while RDMA counters still move, move below host
+debug mux to DSI video packet generation, MIPITX/PHY electrical state, panel
+HS-video acceptance, or unmirrored stock-LK side effects.
+
+Rollback condition: revert this isolation if #93 regresses boot, ADB,
+`sys.boot_completed`, charging, HWC/scrcpy framebuffer, or the existing
+`M6 DSI HS edge[...]` markers compared with #92; if restore lines show
+`now != orig`; or if the sweep changes INTSTA/STATE behavior outside the three
+bounded sampling points. Do not revert merely because the physical panel
+remains black; this patch is an evidence probe.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260609-1332-m6-dsi-debug-mux-edge-sweep-bootonly
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack.tmp/zImage
+cmp initrd.img verify-unpack.tmp/initrd.img
+abootimg -i boot-m6-dsi-debug-mux-edge-sweep-20260609.img
+grep -E 'M6 DSI dbg_mux|ddp-edge-0ms|edge-8ms|edge-33ms|M6 DSI HS edge|M6X' marker-strings.txt
+
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+BOOT=/srv/forge/android/export/meizu_m6_artifacts/20260609-1332-m6-dsi-debug-mux-edge-sweep-bootonly/boot-m6-dsi-debug-mux-edge-sweep-20260609.img
+BOOT_PART=/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot
+$A root
+$A push "$BOOT" /cache/boot-m6-dsi-debug-mux-edge-sweep-20260609.img
+$A shell 'sha256sum /cache/boot-m6-dsi-debug-mux-edge-sweep-20260609.img'
+$A shell "dd if=/cache/boot-m6-dsi-debug-mux-edge-sweep-20260609.img of=$BOOT_PART bs=1048576; sync"
+$A shell "sha256sum $BOOT_PART"
+$A reboot
+
+CAP=/srv/forge/android/meizu_m6/captures/$(date +%Y%m%d-%H%M%S)-m6-dsi-debug-mux-postboot-711HEBSR277K5
+mkdir -p "$CAP"
+$A wait-for-device
+$A shell 'cat /proc/version; getprop sys.boot_completed; sha256sum /dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot' > "$CAP/identity.txt" 2>&1
+$A pull /cache/bootdiag "$CAP/cache-bootdiag" > "$CAP/cache-bootdiag-pull.txt" 2>&1
+grep -RInE 'Linux version|M6 DSI dbg_mux|restore|ddp-edge|edge-8ms|edge-33ms|STATE9|state_decode|M6 DSI HS edge' "$CAP/cache-bootdiag"
+```
+
 ## 2026-06-09 #92 DDP-start HS edge sampler relocation
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: move the short retained HS-video

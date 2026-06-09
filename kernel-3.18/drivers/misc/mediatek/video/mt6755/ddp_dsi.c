@@ -2019,6 +2019,60 @@ static void dsi_m6_sram_scanout_edge(const char *tag, DISP_MODULE_ENUM module)
 #endif
 }
 
+static bool dsi_m6_should_dump_debug_mux(const char *tag)
+{
+	if (!tag)
+		return false;
+
+	return !strcmp(tag, "ddp-edge-0ms") ||
+	       !strcmp(tag, "edge-8ms") ||
+	       !strcmp(tag, "edge-33ms");
+}
+
+static void dsi_m6_dump_debug_mux_sweep(const char *tag,
+					DISP_MODULE_ENUM module)
+{
+	static unsigned int sweep_count;
+	uint32_t orig;
+	uint32_t restored;
+	unsigned int sel;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL ||
+	    !dsi_m6_should_dump_debug_mux(tag) || sweep_count >= 3)
+		return;
+
+	sweep_count++;
+	orig = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
+	for (sel = 0; sel < 32; sel++) {
+		uint32_t debug_sel = (orig & ~0x1f) | sel;
+		uint32_t state6;
+		uint32_t state7;
+		uint32_t state8;
+		uint32_t state9;
+
+		DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_DEBUG_SEL, debug_sel);
+		udelay(1);
+		state6 = INREG32(DDP_REG_BASE_DSI0 + 0x160);
+		state7 = INREG32(DDP_REG_BASE_DSI0 + 0x164);
+		state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+		state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+		DISPERR("M6 DSI dbg_mux[%s]#%u sel=0x%x orig=0x%x now=0x%x st=0x%x/0x%x/0x%x/0x%x cksm=0x%x int=0x%x vm=0x%x word=%u line=%u\n",
+			tag, sweep_count, sel, orig,
+			INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+			state6, state7, state8, state9,
+			INREG32(DDP_REG_BASE_DSI0 + 0x144),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			dsi_m6_field(state8, 0, 14),
+			dsi_m6_field(state9, 0, 22));
+	}
+
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_DEBUG_SEL, orig);
+	restored = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
+	DISPERR("M6 DSI dbg_mux[%s]#%u restore orig=0x%x now=0x%x\n",
+		tag, sweep_count, orig, restored);
+}
+
 static void dsi_m6_dump_hs_video_marker(const char *tag, DISP_MODULE_ENUM module,
 					 void *cmdq)
 {
@@ -2074,6 +2128,7 @@ static void dsi_m6_dump_hs_video_edge_marker(const char *tag,
 		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
 		INREG32(DDP_REG_BASE_DSI0 + 0x130),
 		INREG32(DDP_REG_BASE_DSI0 + 0x134));
+	dsi_m6_dump_debug_mux_sweep(safe_tag, module);
 }
 
 static void dsi_m6_dump_hs_video_limited(const char *tag, DISP_MODULE_ENUM module,
