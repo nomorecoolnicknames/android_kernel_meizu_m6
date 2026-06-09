@@ -1,5 +1,96 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #95 LK-golden DSI/MIPITX register snapshot diff
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded, read-only
+LK-golden snapshot net around the first Linux display takeover. This patch
+prints DSI0 0x000..0x1b0, MIPITX 0x000..0x104, and MMSYS route/clock words at
+`pre-init`, repeats the same raw dump at `post-config` and `post-start`, then
+prints `M6 lkgold[diff]` lines only for words that differ from the pre-init
+LK state. It does not write DSI, MIPITX, MMSYS, panel, brightness, or timing
+registers.
+
+Hypothesis: FACT: the external display audit
+`/srv/forge/android/meizu_m6/docs/run_reports/2026-06-09_m6_display_closed_layers_external_audit_result.md`
+closed the active LCM parameter block and the active 72-entry init table
+against stock LK byte-for-byte. FACT: the only decoded LK-vs-Linux parameter
+delta was `CLK_HS_POST=36` versus the earlier Linux value, and a correctly
+ordered live `CLK_HS_POST=36` red-BIST test with brightness pinned left the
+glass black; #94 already boots with TIMCON3 `0x00082403`. FACT: stock LK uses
+`BURST_VDO_MODE (3)`, so the old-tree SYNC_PULSE candidate is donor noise.
+HYPOTHESIS: if the boot logo is lost at the first Linux display touch, the
+remaining software frontier is either an LK-only DSI/MIPITX/MMSYS register
+side effect not represented in the LCM struct/table, or a destructive Linux
+write sequence whose end state may still look plausible. Capturing the LK
+state before Linux writes and diffing after the first config/start should
+convert hidden side effects into exact register candidates; if no meaningful
+diff exists, the next branch should trace write order/timing rather than
+single values.
+
+Evidence:
+- External audit result:
+  `/srv/forge/android/meizu_m6/docs/run_reports/2026-06-09_m6_display_closed_layers_external_audit_result.md`.
+- #94 state-only result above: boot hash
+  `7145b580e06ce030918f0ad16059bec12da173e772d25acf1e85c524d822d8dc`,
+  kernel `#93 SMP PREEMPT Tue Jun 9 13:45:14 CDT 2026`, userspace display
+  stack alive, active DSI/MIPITX/RDMA state present, physical glass still
+  black.
+- External audit FACTs to preserve: future visual tests must pin brightness
+  (`screen_brightness_mode 0`, `screen_brightness 255`, backlight sysfs 255)
+  and verify high `dcs51` inside the test window; `m6_lcm_reinit` overwrites
+  manual TIMCON pokes; DSI debug mux `line=0` is not a reliable frontier.
+- #95 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1426-m6-lkgold-diff-diag-bootonly`.
+- #95 boot image sha256:
+  `82b838e2d208fc477c7096c385fb55e39d5d8af160f8dc2e76a3312d3d11c1d3`.
+- #95 `Image.gz-dtb` sha256:
+  `b6b797fa7166a89d34ac703f414752da6f89ac98728d2adcbbbece72b26ff4ad`.
+- #95 `System.map` sha256:
+  `f4609241f7e13e3b379e9e5982357e3d00c974eddfc975c3f2e1d7fa5aa0f5d3`.
+- #95 build/packaging verification: `git diff --check` passed, `make
+  Image.gz-dtb` completed, `abootimg -i` reports a 16 MiB boot image with the
+  unchanged cmdline/layout, unpacked `zImage` and `initrd.img` compare with
+  the packaged inputs, `sha256sum -c SHA256SUMS` passed, and gzip-expanded
+  string search found 7 `M6 lkgold` marker strings.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds the
+  one-shot `M6 lkgold[pre-init|post-config|post-start]` raw register dumps
+  and `M6 lkgold[diff]` compare lines; hooks them before first Linux DSI/MIPITX
+  decision, at config completion, and immediately after HS start.
+- `BRINGUP_STATE.md`: records the diagnostic category, evidence, expected
+  markers, rollback condition, and verification commands for #95.
+
+Why each file changed: `ddp_dsi.c` owns the first Linux DSI/MIPITX touch and
+is the earliest point where the still-visible LK logo state can be sampled
+before Linux display writes. The state file is the device-local durable
+journal required for M6 kernel bring-up.
+
+Expected next marker: a fresh #95 capture should show exactly one raw dump for
+each of `M6 lkgold[pre-init]`, `M6 lkgold[post-config]`, and
+`M6 lkgold[post-start]`, plus `M6 lkgold[diff] stage=post-config` and/or
+`stage=post-start` lines for changed words. Any non-noise diff in DSI0,
+MIPITX, or MMSYS route/CG words becomes a stock-proven parity candidate. If
+diff output is empty or only expected status/counter fields move, the next
+display branch is write-order/timing trace for the first 3 seconds, not more
+single-field guesses.
+
+Rollback condition: revert #95 if the raw dump floods logs beyond the one-shot
+budget, delays display init enough to affect boot/ADB, regresses boot/charging
+or userspace display service startup, or makes the capture unreadable.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+export PATH=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin:/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin:$PATH
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+grep -R "M6 lkgold" /srv/forge/work/m6-source-kernel-manual-20260520/out -n
+```
+
 ## 2026-06-09 #94 postflash result: TIMCON3 already stock, MIPITX active
 
 Patch category: **STATE-ONLY / DIAGNOSTIC RESULT**, 2026-06-09. This entry

@@ -205,6 +205,10 @@ t_dsi_context _dsi_context[DSI_INTERFACE_NUM];
 #define M6_LK_PHY_BG_SETTLE_MS 30
 #define M6_LK_PHY_PLL_EN_SETTLE_MS 20
 #define M6_LK_PHY_PCW_PAD_SETTLE_MS 200
+#define M6_LKGOLD_DSI_LAST 0x1b0
+#define M6_LKGOLD_DSI_WORDS ((M6_LKGOLD_DSI_LAST / 4) + 1)
+#define M6_LKGOLD_MIPITX_LAST 0x104
+#define M6_LKGOLD_MIPITX_WORDS ((M6_LKGOLD_MIPITX_LAST / 4) + 1)
 /*
  * PROPER-FIX: keep Linux-owned DSI config/start enabled. The old M6
  * isolation skip leaves DSI in CMD mode after any stop/restart sequence.
@@ -1609,6 +1613,137 @@ static void dsi_m6_dump_mipitx_block(const char *tag)
 		INREG32(MIPITX_BASE + 0x0cc), INREG32(MIPITX_BASE + 0x0d0),
 		INREG32(MIPITX_BASE + 0x0d4), INREG32(MIPITX_BASE + 0x0d8),
 		INREG32(MIPITX_BASE + 0x0dc));
+}
+
+struct m6_lkgold_snapshot {
+	bool valid;
+	uint32_t dsi[M6_LKGOLD_DSI_WORDS];
+	uint32_t mipitx[M6_LKGOLD_MIPITX_WORDS];
+	uint32_t mmsys[6];
+};
+
+static const unsigned short m6_lkgold_mmsys_offsets[] = {
+	0x06c, 0x070, 0x074, 0x07c, 0x100, 0x110,
+};
+
+static struct m6_lkgold_snapshot m6_lkgold_pre_snapshot;
+static bool m6_lkgold_dumped_pre;
+static bool m6_lkgold_dumped_post_config;
+static bool m6_lkgold_dumped_post_start;
+
+static void dsi_m6_lkgold_capture(struct m6_lkgold_snapshot *snap)
+{
+	unsigned int idx;
+
+	memset(snap, 0, sizeof(*snap));
+	if (DSI_REG[0] == NULL)
+		return;
+
+	snap->valid = true;
+	for (idx = 0; idx < ARRAY_SIZE(snap->dsi); idx++)
+		snap->dsi[idx] = INREG32(DDP_REG_BASE_DSI0 + (idx * 4));
+
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	for (idx = 0; idx < ARRAY_SIZE(snap->mipitx); idx++)
+		snap->mipitx[idx] = INREG32(MIPITX_BASE + (idx * 4));
+#endif
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->mmsys); idx++)
+		snap->mmsys[idx] =
+			INREG32(DDP_REG_BASE_MMSYS_CONFIG +
+				m6_lkgold_mmsys_offsets[idx]);
+}
+
+static void dsi_m6_lkgold_dump_raw(const char *tag,
+				   const struct m6_lkgold_snapshot *snap)
+{
+	unsigned int idx;
+
+	if (!snap->valid)
+		return;
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->dsi); idx++)
+		DISPERR("M6 lkgold[%s] blk=dsi off=0x%03x val=0x%08x\n",
+			tag, idx * 4, snap->dsi[idx]);
+
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	for (idx = 0; idx < ARRAY_SIZE(snap->mipitx); idx++)
+		DISPERR("M6 lkgold[%s] blk=mipitx off=0x%03x val=0x%08x\n",
+			tag, idx * 4, snap->mipitx[idx]);
+#endif
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->mmsys); idx++)
+		DISPERR("M6 lkgold[%s] blk=mmsys off=0x%03x val=0x%08x\n",
+			tag, m6_lkgold_mmsys_offsets[idx], snap->mmsys[idx]);
+}
+
+static void dsi_m6_lkgold_dump_diff(const char *stage,
+				    const struct m6_lkgold_snapshot *snap)
+{
+	unsigned int idx;
+
+	if (!m6_lkgold_pre_snapshot.valid || !snap->valid)
+		return;
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->dsi); idx++) {
+		if (m6_lkgold_pre_snapshot.dsi[idx] == snap->dsi[idx])
+			continue;
+		DISPERR("M6 lkgold[diff] stage=%s blk=dsi off=0x%03x lk=0x%08x lin=0x%08x\n",
+			stage, idx * 4, m6_lkgold_pre_snapshot.dsi[idx],
+			snap->dsi[idx]);
+	}
+
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	for (idx = 0; idx < ARRAY_SIZE(snap->mipitx); idx++) {
+		if (m6_lkgold_pre_snapshot.mipitx[idx] == snap->mipitx[idx])
+			continue;
+		DISPERR("M6 lkgold[diff] stage=%s blk=mipitx off=0x%03x lk=0x%08x lin=0x%08x\n",
+			stage, idx * 4, m6_lkgold_pre_snapshot.mipitx[idx],
+			snap->mipitx[idx]);
+	}
+#endif
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->mmsys); idx++) {
+		if (m6_lkgold_pre_snapshot.mmsys[idx] == snap->mmsys[idx])
+			continue;
+		DISPERR("M6 lkgold[diff] stage=%s blk=mmsys off=0x%03x lk=0x%08x lin=0x%08x\n",
+			stage, m6_lkgold_mmsys_offsets[idx],
+			m6_lkgold_pre_snapshot.mmsys[idx], snap->mmsys[idx]);
+	}
+}
+
+static void dsi_m6_lkgold_snapshot_once(const char *tag)
+{
+	struct m6_lkgold_snapshot snap;
+	bool *done;
+
+	if (!tag)
+		return;
+	if (!strcmp(tag, "pre-init"))
+		done = &m6_lkgold_dumped_pre;
+	else if (!strcmp(tag, "post-config"))
+		done = &m6_lkgold_dumped_post_config;
+	else if (!strcmp(tag, "post-start"))
+		done = &m6_lkgold_dumped_post_start;
+	else
+		return;
+
+	if (*done)
+		return;
+
+	*done = true;
+	dsi_m6_lkgold_capture(&snap);
+	if (!snap.valid) {
+		DISPERR("M6 lkgold[%s] invalid: DSI_REG0 is null\n", tag);
+		return;
+	}
+
+	if (!strcmp(tag, "pre-init"))
+		m6_lkgold_pre_snapshot = snap;
+
+	dsi_m6_lkgold_dump_raw(tag, &snap);
+	if (strcmp(tag, "pre-init"))
+		dsi_m6_lkgold_dump_diff(tag, &snap);
 }
 
 static void dsi_m6_phy_lk_delay(const char *tag, unsigned int delay_ms)
@@ -4579,6 +4714,7 @@ int ddp_dsi_init(DISP_MODULE_ENUM module, void *cmdq)
 		DISPMSG("dsi%d initializing\n", i);
 	}
 
+	dsi_m6_lkgold_snapshot_once("pre-init");
 	disp_register_module_irq_callback(DISP_MODULE_DSI0, _DSI_INTERNAL_IRQ_Handler);
 
 #ifndef CONFIG_FPGA_EARLY_PORTING
@@ -4935,6 +5071,7 @@ force_config:
 
 done:
 	dsi_m6_sram_snapshot("config-done", module);
+	dsi_m6_lkgold_snapshot_once("post-config");
 	dsi_m6_dump_hs_video_limited("config-done", module, cmdq,
 				     &dump_count, 4);
 #ifndef CONFIG_FPGA_EARLY_PORTING
@@ -4967,6 +5104,7 @@ int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq)
 		DSI_SetMode(module, cmdq, _dsi_context[i].dsi_params.mode);
 		DSI_clk_HS_mode(module, cmdq, true);
 		dsi_m6_sram_snapshot("start-after-hs", module);
+		dsi_m6_lkgold_snapshot_once("post-start");
 		dsi_m6_dump_snapshot_limited("start-after-hs", module, cmdq, &dump_count, 4);
 		dsi_m6_schedule_ddp_hs_video_edge(module, cmdq);
 #ifndef CONFIG_FPGA_EARLY_PORTING
