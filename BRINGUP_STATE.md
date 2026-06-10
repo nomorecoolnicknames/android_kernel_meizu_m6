@@ -134,6 +134,35 @@ Runtime result, **FACT**, 2026-06-09:
   `larb0+0xfc0`; do not read `MMU_SMI=0x0` or the `0xa0..0xac` vio line as
   "M4U disabled" in #113.
 
+Post-checkpoint live scans, **FACT**, 2026-06-09:
+- Digital scan capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-2250-m6-113-postcheckpoint-digital-scan-711HEBSR277K5/`.
+  Capture `sha256sum -c SHA256SUMS` passed. Boot readback still matched
+  #113 `83113ecc9fee58be1635b1ab822ba33ffc34314d7b19086fcb30a3c7ae1afa99`.
+  The dmesg window contained no `DEVAPC`, `RDMA0_EOF`, `wait VSYNC`,
+  `abnormal SOF`, `L1 not complete`, or `M6 OVL irq diag` signature.
+  Display IRQs continued to tick during capture (`mutex 6230->6365`,
+  `ovl0 3219->3287`, `rdma0 6130->6271`). SMI/LARB0 still had
+  `MMU_M4U=0x7ff`, nonzero OSTD ports, and zero vio fields. One truth sample
+  caught OVL0 in `wait_SOF` with route `READY=0x0`, but the same
+  `scanout-delta` moved (`in=400/590->502/592`, `out=552/586->656/588`,
+  `dsi_eof=1`, `dsi_sof=1`, `te=1`), so this was a phase sample, not the #98
+  hard wedge.
+- Existing low-layer probe capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-2258-m6-113-lowlayer-existing-probes-711HEBSR277K5/`.
+  Capture `sha256sum -c SHA256SUMS` passed. `m6_dsi_phy_truth`,
+  `m6_dsi_hs_window`, and `m6_dsi_debug_mux_stats` kept the same visible
+  DSI/MIPITX class: `MODE=0x3`, `TXRX=0x1003c`, `PHY_LCCON=0x1`,
+  lane words `0x603/0x601/0x601/0x601/0x601`, lane map `0/1/2/3/4/0`, PLL
+  `0x9/0x46c4ec4e/0x101`, and restored debug selectors. The final truth
+  again had brightness 255, OVL0 `eng_act`, moving RDMA/DSI counters, and
+  `dsi0_eof=1` while CMDQ `rdma_eof=0`.
+- FACT: `m6_dsi_dcs_status_force:p113_lowlayer` did not perform panel reads
+  in the current video-mode state. It skipped every requested DCS command with
+  `video-mode=3 START=0x10001 STA=0x440 INTSTA=0x80000790`. Do not count this
+  command as new LP-read proof; prior LP/panel reads were from dedicated
+  stopped-video/LCM diagnostic windows.
+
 INFERENCE: after #113, the highest-value optical frontier is below the
 software-visible DSI/MIPITX register and mux classes: PHY electrical
 acceptance, hidden lane polarity/map, board lane routing, or panel HS-video
