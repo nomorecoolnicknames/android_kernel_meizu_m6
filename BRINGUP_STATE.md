@@ -169,6 +169,46 @@ acceptance, hidden lane polarity/map, board lane routing, or panel HS-video
 acceptance. The CMDQ `RDMA0_EOF`/resume path should still be repaired, but it
 does not explain black glass in the #113 active scanout truth window.
 
+Stopped-video LP command window, **FACT / ISOLATION**, 2026-06-09:
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-2312-m6-113-page5-2a-samevalue-lp-window-711HEBSR277K5/`.
+- Capture-local analysis:
+  `/srv/forge/android/meizu_m6/captures/20260609-2312-m6-113-page5-2a-samevalue-lp-window-711HEBSR277K5/analysis.md`.
+- Capture `sha256sum -c SHA256SUMS` passed. Local boot image, device boot
+  readback, and runtime identity all match #113
+  `83113ecc9fee58be1635b1ab822ba33ffc34314d7b19086fcb30a3c7ae1afa99`.
+- Runtime command:
+  `echo m6_lcm_page5_2a:24:0 > /d/mtkfb`.
+  `24` decimal is `0x18`, the previously observed stock value for page5
+  register `0x2a`; this was a same-value isolation probe, not a behavioral
+  display fix.
+- FACT: the stopped-video LCM command window began, the panel responded over
+  LP transport, and page5 `0x2a` read back correctly before, after, and at the
+  end of the same-value write:
+  `18 a5 a5 a5 read_count=1`.
+- FACT: video restarted after the LP window. Immediate truth
+  `p113_page5_2a_final` had route `VALID=0x4000937a READY=0x300`, OVL0
+  `fsm=0x20/eng_act`, SMI/LARB0 `MMU_M4U=0x7ff` with zero vio fields, DSI0
+  `MODE=0x3 TXRX=0x1003c PHY_LCCON=0x1`, moving scanout
+  (`in=662/538->611/540`, `out=68/535->44/537`), `dsi0_eof=1`, and
+  brightness `bl=255`.
+- FACT: settle truth `p113_page5_2a_settle` still reported DSI0 `START=0x1`,
+  but also `STATE6=0x10001/idle`, live HS/video state decode, moving scanout
+  (`in=363/649->134/652`, `out=520/645->288/648`), `dsi0_eof=1`,
+  `dsi0_sof=1`, `te=1`, and `bl=255`.
+- FACT: no current `RDMA0_EOF`, `wait VSYNC`, `abnormal SOF`,
+  `L1 not complete`, `M6 OVL irq diag`, or `DEVAPC` signatures were present
+  in the post-probe dmesg windows.
+
+INFERENCE: #113 now closes the generic "panel cannot accept DCS/LP commands"
+branch. The panel accepts page select/read/write/read over LP in a controlled
+stopped-video LCM window. The remaining optical frontier is HS-video
+electrical/panel acceptance: hidden lane polarity/map, board routing,
+LP-to-HS transition, drive/termination, or another panel-side HS-video
+requirement not exposed by current register/mux probes. The post-probe
+`START=0x1` state is a side effect to track, but not a proven blocker while
+`STATE6`, DSI EOF/SOF, and scanout remain live.
+
 ## 2026-06-09 #110 MIPITX pad/top/lane probes
 
 PATCH HISTORY, **DIAGNOSTIC / ISOLATION**, 2026-06-09: add bounded manual
