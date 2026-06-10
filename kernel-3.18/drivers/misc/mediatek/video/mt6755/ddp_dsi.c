@@ -1788,6 +1788,56 @@ static void dsi_m6_dump_mipitx_block(const char *tag)
 		INREG32(MIPITX_BASE + 0x0cc), INREG32(MIPITX_BASE + 0x0d0),
 		INREG32(MIPITX_BASE + 0x0d4), INREG32(MIPITX_BASE + 0x0d8),
 		INREG32(MIPITX_BASE + 0x0dc));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 0e0=0x%x 0e4=0x%x 0e8=0x%x 0ec=0x%x 0f0=0x%x 0f4=0x%x 0f8=0x%x 0fc=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x0e0),
+		INREG32(MIPITX_BASE + 0x0e4), INREG32(MIPITX_BASE + 0x0e8),
+		INREG32(MIPITX_BASE + 0x0ec), INREG32(MIPITX_BASE + 0x0f0),
+		INREG32(MIPITX_BASE + 0x0f4), INREG32(MIPITX_BASE + 0x0f8),
+		INREG32(MIPITX_BASE + 0x0fc));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 100=0x%x 104=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x100),
+		INREG32(MIPITX_BASE + 0x104));
+}
+
+static void dsi_m6_dump_dsi_block(const char *tag)
+{
+	static unsigned int count;
+	const char *safe_tag = tag ? tag : "unknown";
+	unsigned int off;
+
+	if (count >= 40)
+		return;
+
+	count++;
+
+	for (off = 0; off <= M6_LKGOLD_DSI_LAST; off += 0x20) {
+		if (off + 0x1c <= M6_LKGOLD_DSI_LAST) {
+			DISPERR("M6 DSI raw_block[%s]#%u: %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x\n",
+				safe_tag, count, off,
+				INREG32(DDP_REG_BASE_DSI0 + off),
+				off + 0x04,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x04),
+				off + 0x08,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x08),
+				off + 0x0c,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x0c),
+				off + 0x10,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x10),
+				off + 0x14,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x14),
+				off + 0x18,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x18),
+				off + 0x1c,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x1c));
+		} else {
+			unsigned int tail;
+
+			for (tail = off; tail <= M6_LKGOLD_DSI_LAST; tail += 4)
+				DISPERR("M6 DSI raw_block[%s]#%u: %03x=0x%x\n",
+					safe_tag, count, tail,
+					INREG32(DDP_REG_BASE_DSI0 + tail));
+		}
+	}
 }
 
 struct m6_lkgold_snapshot {
@@ -3136,6 +3186,7 @@ void dsi_m6_dump_phy_truth(const char *tag)
 		p->ext_te_edge, p->eint_disable, p->ufoe_enable,
 		p->dsc_enable);
 	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_dsi_block(safe_tag);
 #ifndef CONFIG_FPGA_EARLY_PORTING
 	dsi_m6_dump_mipitx_block(safe_tag);
 #endif

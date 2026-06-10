@@ -15507,28 +15507,29 @@ grep -E 'M6 DSI plltop_probe|PLL_TOP|pll_top|preserve7|preserve8|hs_window' "$CA
 test ! -s "$CAP/regression-grep.txt"
 ```
 
-## Latest pointer: #117 PLL_TOP preserve probes
+## Latest display pointer: #126 DSI raw-block diagnostic
 
-The latest validated M6 display boot/capture is #117:
+The latest validated M6 display boot/capture is #126:
 
 - artifact:
-  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0410-m6-dsi-plltop-probe-bootonly/`;
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0936-m6-dsi-rawblock-diag-bootonly/`;
 - capture:
-  `/srv/forge/android/meizu_m6/captures/20260610-0420-m6-117-plltop-probes-711HEBSR277K5/`;
+  `/srv/forge/android/meizu_m6/captures/20260610-0939-m6-126-dsi-rawblock-diag-711HEBSR277K5/`;
 - boot image sha256:
-  `55ccf169fe0015b965ea9b20b4edb37d7434f397db820fc500fa813ccbcfe993`;
+  `8da1e9fd6efe990136c5a3f38ab91a9aaaf70f25091100c1404a831b80b63f61`;
 - runtime:
-  `Linux localhost 3.18.140 #117 SMP PREEMPT Wed Jun 10 03:34:40 CDT 2026 aarch64`;
+  `Linux version 3.18.140 ... #126 SMP PREEMPT Wed Jun 10 09:35:08 CDT 2026`;
 - final state:
-  `PLL_TOP=0x20`, `TXRX=0x1003c`, `PHY_LCCON=0x1`, lane words
-  `0x603/0x601/0x601/0x601/0x601`, and `bl=255`.
+  `MODE=0x3`, `TXRX=0x1003c`, `PS=0x30870`, `PHY_LCCON=0x1`,
+  `VM_CMD=0xff511521`, lane words `0x603/0x601/0x601/0x601/0x601`,
+  MIPITX tail `0xe0..0x104 = 0`, and `bl=255`.
 
 Current display interpretation: visible decoded MIPITX fields have now been
 covered as full-image candidates: `PHY_SEL`, all-lane `RT_CODE`/`LPTX`/`LPCD`,
-top `imp_en`/`imp`, and `PLL_TOP preserve` shift 8/shift 7. With scrcpy
-showing a valid Android picture while the physical glass lacks a known full
-image, the next useful display work is hidden PHY/electrical evidence,
-stock-LK-only side effects outside the decoded register set, or external
+top `imp_en`/`imp`, `PLL_TOP preserve` shift 8/shift 7, and the live MIPITX
+MMIO tail through `0x104`. With scrcpy showing a valid Android picture while
+the physical glass lacks a known full image, the next useful display work is
+indirect MIPITX/PHY side-effect evidence from stock LK or external electrical
 measurement. Do not return to RDMA EOF, LCM init, `CLK_HS_POST`, lane maps, or
 these visible MIPITX fields without new contradictory evidence.
 
@@ -15638,6 +15639,100 @@ grep -E 'M6 CMB .*wifi_irq=270 valid=1|M6 MMC2 attach_sdio CMD5 probe|HIF-SDIO.*
 grep -E 'found <0x278|constructCustStaticMetadata|unknown HAL status code -32|getInfo2' "$CAP/logcat-boot.txt"
 grep -E 'MD_BOOT_HS2_FAIL|cc_irq.c|MD exception|RADIO_NOT_AVAILABLE' "$CAP/dmesg-boot.txt" "$CAP/logcat-boot.txt"
 grep -E 'M6 FG impossible|healthd: battery|bq2415x_.*charge|bq2415x_charging' "$CAP/dmesg-boot.txt" "$CAP/logcat-boot.txt"
+```
+
+## Patch history: #126 M6 DSI raw-block diagnostic
+
+Patch category: **DIAGNOSTIC**. This patch is read-only at runtime: it does
+not change DSI timing, MIPITX programming, DDP routing, panel commands,
+backlight, power, GPIO, pinctrl, or userspace behavior. It only extends the M6
+display debug output.
+
+Hypothesis: the visible DSI/MIPITX fields had already been exhausted as
+full-image candidates, but the manual `m6_dsi_phy_truth` path still omitted
+two useful raw ranges: DSI0 `0x000..0x1b0` as one live block and the MIPITX
+tail `0x0e0..0x104`. If a hidden LK-only MMIO-tail state existed there, the
+next capture should expose it without writing speculative PHY values.
+
+Evidence:
+- Pre-patch live #125 capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0924-m6-125-live-bl255-digital-scanout-711HEBSR277K5/`.
+- Pre-patch #125 showed physical display debugging was not blocked by the old
+  brightness trap: direct `/sys/class/leds/lcd-backlight/brightness=255`
+  produced `request=255 dcs51=0xff` and `bl=255`, while DSI/MIPITX remained in
+  the already-audited video state.
+- Artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0936-m6-dsi-rawblock-diag-bootonly/`.
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0939-m6-126-dsi-rawblock-diag-711HEBSR277K5/`.
+- #126 boot image sha256:
+  `8da1e9fd6efe990136c5a3f38ab91a9aaaf70f25091100c1404a831b80b63f61`.
+- Runtime identity:
+  `Linux version 3.18.140 ... #126 SMP PREEMPT Wed Jun 10 09:35:08 CDT 2026`.
+- Boot partition readback matched the local boot image hash.
+- `m6_dsi_phy_truth:raw126` produced `M6 DSI raw_block[raw126]` for DSI0
+  `0x000..0x1b0`.
+- `m6_dsi_phy_truth:raw126` produced the previously omitted MIPITX tail:
+  `0xe0..0xfc = 0`, `0x100 = 0`, `0x104 = 0`.
+- In the same #126 window, direct backlight was proven:
+  `request=255 dcs51=0xff` and `M6 DISPLAY truth[raw126][backlight] ... bl=255`.
+- `mtkfb` in the same capture reported `LCM Driver=[ili9881p_hd_dsi_txd]`,
+  `State=Alive`, `PathMode:DIRECT_LINK`,
+  `Current display driver status=video mode + CMDQ Enabled`, and
+  `RDMA0 Transfer 7517` at about `62.64 fps`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: extends
+  `dsi_m6_dump_mipitx_block()` to print `0x0e0..0x104`, adds the bounded
+  `dsi_m6_dump_dsi_block()` helper for DSI0 `0x000..0x1b0`, and calls it from
+  `dsi_m6_dump_phy_truth()`.
+- `BRINGUP_STATE.md`: records the diagnostic patch, artifact, capture, and
+  next display frontier.
+
+Why each file changed: `ddp_dsi.c` owns the M6 DSI/MIPITX debugfs diagnostics
+and already has the lkgold raw register boundaries. The new output uses those
+same ranges in a manual live command so future agents can compare one capture
+without guessing at missing tail registers. The state file preserves the exact
+artifact/capture identity required to decode any marker against the matching
+`System.map`.
+
+Result:
+- FACT: #126 boots and the diagnostic marker works.
+- FACT: no non-zero hidden MIPITX tail was found in the live MMIO window;
+  `0x0e0..0x104` reads all zero.
+- FACT: current visible DSI/MIPITX state remains the already-audited video
+  state: `MODE=0x3`, `TXRX=0x1003c`, `PS=0x30870`, `PHY_LCCON=0x1`,
+  `VM_CMD=0xff511521`, MIPITX lanes `0x603/0x601/0x601/0x601/0x601`,
+  `pll_top=0x20`, `pwr=0x101`.
+- INFERENCE: the remaining physical-display frontier is not a simple visible
+  MIPITX MMIO-tail mismatch. Continue with indirect MIPITX/PHY side-effect
+  evidence from stock LK or electrical HS/clock-lane measurement.
+
+Expected next marker:
+- A stock-LK indirect PHY audit should prove whether the `MIPITX_Write60384`
+  path or another non-MMIO-visible mechanism programs state that survives into
+  Linux.
+- If no indirect LK side effect exists, the next useful evidence is external
+  electrical confirmation of clock/data HS activity at the panel connector, or
+  a panel-side acceptance marker that changes when HS traffic is intentionally
+  broken.
+
+Rollback condition: revert this diagnostic patch if it causes boot regression,
+loss of root ADB, dmesg flooding that prevents useful captures, or a DSI/MIPITX
+read fault. Do not revert it merely because the physical display remains black;
+the patch is not intended as a display fix.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-0936-m6-dsi-rawblock-diag-bootonly
+sha256sum -c SHA256SUMS
+
+CAP=/srv/forge/android/meizu_m6/captures/20260610-0939-m6-126-dsi-rawblock-diag-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/proc_version.txt" "$CAP/bootblock.sha256.txt"
+grep -E 'M6 DSI raw_block\[raw126\]|M6 DSI mipitx_block\[raw126\].*(0e0|100=)|M6 DISPLAY truth\[raw126\]\[backlight\]|M6 LCM backlight.*request=255' "$CAP/dmesg_raw126_extract.txt"
+grep -E 'LCM Driver|State=Alive|PathMode|Current display driver status|RDMA0 Transfer' "$CAP/mtkfb.txt"
 ```
 
 ## Latest multi-subsystem pointer: #125
