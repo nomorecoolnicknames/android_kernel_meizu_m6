@@ -2581,6 +2581,97 @@ void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms)
 		INREG32(DDP_REG_BASE_DSI0 + 0x064));
 }
 
+static unsigned int dsi_m6_bound_hold_ms(unsigned int hold_ms)
+{
+	if (hold_ms == 0)
+		return 1000;
+	if (hold_ms > 10000)
+		return 10000;
+	return hold_ms;
+}
+
+void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
+			   unsigned int restore)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old;
+
+	if (!DSI_REG[0])
+		return;
+
+	old = PanelMaster_get_CC(PM_DSI0);
+	DISPERR("M6 DSI cc_probe: begin enable=%u old=%u restore=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, bounded,
+		INREG32(DDP_REG_BASE_DSI0 + 0x010),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	dsi_m6_dump_snapshot("cc-probe-before", DISP_MODULE_DSI0, NULL);
+
+	PanelMaster_set_CC(PM_DSI0, enable ? 1 : 0);
+	DISPERR("M6 DSI cc_probe: after-set enable=%u now=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0, PanelMaster_get_CC(PM_DSI0),
+		INREG32(DDP_REG_BASE_DSI0 + 0x010),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	dsi_m6_dump_snapshot("cc-probe-after-set", DISP_MODULE_DSI0, NULL);
+
+	snprintf(tag, sizeof(tag), "cc-probe-%u-hold", enable ? 1 : 0);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		PanelMaster_set_CC(PM_DSI0, old ? 1 : 0);
+		DISPERR("M6 DSI cc_probe: after-restore old=%u now=%u txrx=0x%x lccon=0x%x\n",
+			old, PanelMaster_get_CC(PM_DSI0),
+			INREG32(DDP_REG_BASE_DSI0 + 0x010),
+			INREG32(DDP_REG_BASE_DSI0 + 0x104));
+		dsi_m6_dump_snapshot("cc-probe-after-restore", DISP_MODULE_DSI0, NULL);
+	}
+
+	DISPERR("M6 DSI cc_probe: end enable=%u old=%u restore=%u final=%u\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, PanelMaster_get_CC(PM_DSI0));
+}
+
+void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
+			      unsigned int restore)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old;
+
+	if (!DSI_REG[0])
+		return;
+
+	old = DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0;
+	DISPERR("M6 DSI lc_hs_probe: begin enable=%u old=%u restore=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, bounded,
+		INREG32(DDP_REG_BASE_DSI0 + 0x010),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	dsi_m6_dump_snapshot("lc-hs-probe-before", DISP_MODULE_DSI0, NULL);
+
+	DSI_clk_HS_mode(DISP_MODULE_DSI0, NULL, enable ? true : false);
+	DISPERR("M6 DSI lc_hs_probe: after-set enable=%u now=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0,
+		DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0,
+		INREG32(DDP_REG_BASE_DSI0 + 0x010),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	dsi_m6_dump_snapshot("lc-hs-probe-after-set", DISP_MODULE_DSI0, NULL);
+
+	snprintf(tag, sizeof(tag), "lc-hs-probe-%u-hold", enable ? 1 : 0);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		DSI_clk_HS_mode(DISP_MODULE_DSI0, NULL, old ? true : false);
+		DISPERR("M6 DSI lc_hs_probe: after-restore old=%u now=%u txrx=0x%x lccon=0x%x\n",
+			old, DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0,
+			INREG32(DDP_REG_BASE_DSI0 + 0x010),
+			INREG32(DDP_REG_BASE_DSI0 + 0x104));
+		dsi_m6_dump_snapshot("lc-hs-probe-after-restore", DISP_MODULE_DSI0, NULL);
+	}
+
+	DISPERR("M6 DSI lc_hs_probe: end enable=%u old=%u restore=%u final=%u\n",
+		enable ? 1 : 0, old, restore ? 1 : 0,
+		DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0);
+}
+
 static uint32_t dsi_m6_dcs_read_noreset(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)
 {
 	uint32_t recv_data_cnt = 0;
@@ -2701,21 +2792,36 @@ static uint32_t dsi_m6_dcs_read_noreset(uint8_t cmd, uint8_t *buffer, uint8_t bu
 	return recv_data_cnt;
 }
 
-void dsi_m6_dump_dcs_status(const char *tag)
+static void dsi_m6_dump_dcs_status_inner(const char *tag, bool force)
 {
 	static int dump_count;
 	uint8_t buffer[4];
 	uint8_t cmds[] = {0x0A, 0x0B, 0x0C, 0x0D, 0xDA, 0xDB, 0xDC};
 	int i;
 
-	if (dump_count >= 2)
+	if (!force && dump_count >= 2) {
+		DISPERR("M6 DCS status[%s]: skip dump_count=%d force=0\n",
+			tag ? tag : "null", dump_count);
 		return;
-	dump_count++;
+	}
+	if (!force)
+		dump_count++;
 
-	DISPERR("M6 DCS status[%s]: begin\n", tag ? tag : "null");
+	DISPERR("M6 DCS status[%s]: begin force=%u count=%d\n",
+		tag ? tag : "null", force ? 1 : 0, dump_count);
 	for (i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++)
 		dsi_m6_dcs_read_noreset(cmds[i], buffer, sizeof(buffer));
 	dsi_m6_dump_snapshot("dcs-status-after", DISP_MODULE_DSI0, NULL);
+}
+
+void dsi_m6_dump_dcs_status(const char *tag)
+{
+	dsi_m6_dump_dcs_status_inner(tag, false);
+}
+
+void dsi_m6_dump_dcs_status_force(const char *tag)
+{
+	dsi_m6_dump_dcs_status_inner(tag, true);
 }
 
 unsigned int dsi_phy_get_clk(DISP_MODULE_ENUM module)

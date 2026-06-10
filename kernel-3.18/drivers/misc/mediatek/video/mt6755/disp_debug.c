@@ -129,10 +129,16 @@ char MTKFB_STR_HELP[] =
 	"\n"
 	"        m6_dsi_dcs_status[:stock_pages]\n"
 	"             Meizu M6 diagnostic DSI/ILI9881P DCS status dump\n"
+	"        m6_dsi_dcs_status_force[:tag]\n"
+	"             Meizu M6 force one manual DCS status dump even after boot limits\n"
 	"        m6_dsi_hs_window:<tag>[:hold_ms]\n"
 	"             Meizu M6 bounded DSI HS-video IRQ/VM/window sampler\n"
 	"        m6_dsi_phy_truth[:tag]\n"
 	"             Meizu M6 read-only DSI/MIPITX/LCM lane and PHY truth dump\n"
+	"        m6_dsi_cc_probe:<0|1>[:hold_ms[:restore]]\n"
+	"             Meizu M6 isolation toggle for TXRX HSTX_CKLP_EN with snapshots\n"
+	"        m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore]]\n"
+	"             Meizu M6 isolation toggle for PHY LC_HS_TX_EN with snapshots\n"
 	"        m6_dsi_hsa_wc:<value>[:hold_ms]\n"
 	"             Meizu M6 isolation override for DSI_HSA_WC with snapshots\n"
 	"        m6_dsi_bist_profile:<profile>:<rgb>[:hold_ms]\n"
@@ -216,6 +222,31 @@ static char LP_CUST_STR_HELP[] =
 	"ACTION:\n"
 	"       low_power_mode:Mode\n"
 	"		Mode:0(LP_CUST_DISABLE)|1(LOW_POWER_MODE)|2(JUST_MAKE_MODE)|3(PERFORMANC_MODE)\n";
+
+static void disp_m6_copy_tag(char *dst, size_t dst_size, const char *tag)
+{
+	const char *src = tag ? tag : "manual";
+	const char fallback[] = "manual";
+	size_t i = 0;
+
+	if (!dst_size)
+		return;
+
+	while (i + 1 < dst_size && src[i] &&
+	       src[i] != '\n' && src[i] != '\r' &&
+	       src[i] != ' ' && src[i] != '\t') {
+		dst[i] = src[i];
+		i++;
+	}
+	dst[i] = '\0';
+
+	if (dst[0])
+		return;
+
+	for (i = 0; i + 1 < dst_size && fallback[i]; i++)
+		dst[i] = fallback[i];
+	dst[i] = '\0';
+}
 
 /* --------------------------------------------------------------------------- */
 /* DDP and MTKFB Command Processor */
@@ -641,13 +672,51 @@ void mtkfb_process_dbg_opt(const char *opt)
 		DISPMSG("m6 dsi hs window: tag=%s hold=%u\n", tag, hold_ms);
 	} else if (0 == strncmp(opt, "m6_dsi_phy_truth", 16)) {
 		const char *tag = "manual";
+		char safe_tag[32];
 
 		if (opt[16] == ':')
 			tag = opt + 17;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
 		primary_display_manual_lock();
-		dsi_m6_dump_phy_truth(tag);
+		dsi_m6_dump_phy_truth(safe_tag);
 		primary_display_manual_unlock();
-		DISPMSG("m6 dsi phy truth: tag=%s\n", tag);
+		DISPMSG("m6 dsi phy truth: tag=%s\n", safe_tag);
+	} else if (0 == strncmp(opt, "m6_dsi_cc_probe:", sizeof("m6_dsi_cc_probe:") - 1)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+
+		ret = sscanf(opt, "m6_dsi_cc_probe:%i:%u:%u\n",
+			     &value_arg, &hold_ms, &restore);
+		if (ret < 1 || value_arg < 0 || value_arg > 1) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_force_cc_probe(value, hold_ms, restore);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI cc_probe command: value=%u hold=%u restore=%u\n",
+			value, hold_ms, restore ? 1 : 0);
+	} else if (0 == strncmp(opt, "m6_dsi_lc_hs_probe:", sizeof("m6_dsi_lc_hs_probe:") - 1)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+
+		ret = sscanf(opt, "m6_dsi_lc_hs_probe:%i:%u:%u\n",
+			     &value_arg, &hold_ms, &restore);
+		if (ret < 1 || value_arg < 0 || value_arg > 1) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_force_lc_hs_probe(value, hold_ms, restore);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI lc_hs_probe command: value=%u hold=%u restore=%u\n",
+			value, hold_ms, restore ? 1 : 0);
 	} else if (0 == strncmp(opt, "m6_dsi_hsa_wc:", 14)) {
 		int value_arg = 0;
 		unsigned int value = 0;
@@ -806,8 +875,23 @@ void mtkfb_process_dbg_opt(const char *opt)
 			tag, action);
 		primary_display_m6_route_probe(tag, action);
 		return;
+	} else if (0 == strncmp(opt, "m6_dsi_dcs_status_force",
+				sizeof("m6_dsi_dcs_status_force") - 1)) {
+		const unsigned int prefix = sizeof("m6_dsi_dcs_status_force") - 1;
+		const char *tag = "force";
+		char safe_tag[32];
+
+		if (opt[prefix] == ':')
+			tag = opt + prefix + 1;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+		DISPERR("M6 DSI DCS status force command: tag=%s\n", safe_tag);
+		primary_display_manual_lock();
+		dsi_m6_dump_dcs_status_force(safe_tag);
+		primary_display_manual_unlock();
+		return;
 	} else if (0 == strncmp(opt, "m6_dsi_dcs_status", 17)) {
 		const char *tag = "public";
+		char safe_tag[32];
 
 		if (opt[17] == ':')
 			tag = opt + 18;
@@ -815,9 +899,10 @@ void mtkfb_process_dbg_opt(const char *opt)
 			DISPERR("M6 DSI DCS status command: stock_pages\n");
 			primary_display_m6_lcm_stock_pages();
 		} else {
-			DISPERR("M6 DSI DCS status command: tag=%s\n", tag);
+			disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+			DISPERR("M6 DSI DCS status command: tag=%s\n", safe_tag);
 			primary_display_manual_lock();
-			dsi_m6_dump_dcs_status(tag);
+			dsi_m6_dump_dcs_status(safe_tag);
 			primary_display_manual_unlock();
 		}
 		return;

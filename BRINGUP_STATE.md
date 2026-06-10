@@ -1,5 +1,144 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #102 DSI clock-lane / DCS-force diagnostic probes
+
+PATCH HISTORY, **DIAGNOSTIC / ISOLATION**, 2026-06-09: add manual debugfs
+probes for the remaining optical DSI/PHY frontier after #101 closed the
+OVL/RDMA digital wedge. This patch is inert during normal boot. It adds:
+
+- `m6_dsi_dcs_status_force[:tag]` to bypass the old two-shot diagnostic DCS
+  status limit;
+- `m6_dsi_cc_probe:<0|1>[:hold_ms[:restore]]` to toggle
+  `DSI_TXRX_CTRL.HSTX_CKLP_EN`;
+- `m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore]]` to toggle
+  `PHY_LCCON.LC_HS_TX_EN`;
+- tag sanitising for manual DSI PHY/DCS commands so newline-polluted debugfs
+  writes do not corrupt marker names.
+
+Hypothesis: FACT from #101: the Linux display pipe now boots, suspends, and
+resumes without the old OVL/RDMA wedge, while the glass remains black. FACT
+from the post-#101 `stock_pages` capture: LP command/readback works when the
+video path is stopped, and the panel ID/init pages still match the ILI9881P
+table. FACT from the earlier red BIST run: a DSI-generated pattern stayed
+invisible even with proven backlight. HYPOTHESIS: the remaining frontier is
+HS-video electrical/PHY/panel acceptance, especially clock-lane behavior and
+manual DCS visibility in active video mode. Manual restore-bounded probes can
+isolate these controls without changing boot behavior.
+
+Evidence:
+- #101 digital-close captures:
+  `/srv/forge/android/meizu_m6/captures/20260609-1837-m6-101-ovl-stale-cpu-clear-isolation-root-711HEBSR277K5/`,
+  `/srv/forge/android/meizu_m6/captures/20260609-1840-m6-101-powerkey-cycle-711HEBSR277K5/`.
+- #101 LP stock-pages capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1858-m6-101-stockpages-lp-dcs-711HEBSR277K5/`.
+- #102 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1858-m6-dsi-cc-lchs-probes-bootonly/boot-m6-dsi-cc-lchs-probes-20260609.img`.
+- #102 boot image sha256:
+  `56c9ce2185772be0e8cd4c29cbf0624735676c006804c3f896fba70bf82ae5bb`.
+- #102 `Image.gz-dtb` sha256:
+  `294aeda3b02abd7c308e2f596795d06a996a288ecb8bb134c5f8fe2fa996ae94`.
+- #102 `System.map` sha256:
+  `c9af15f1c738f8e76a9ad5d404db24aff21cc29cae7b0331740a44f3ef8cb328`.
+- #102 `vmlinux` sha256:
+  `ea3035e356df8afca33bf22b28d4814b86ede19466d32ea0164aec3013ff3242`.
+- Build/packaging verification: `git diff --check` passed, `make
+  Image.gz-dtb` completed, artifact `sha256sum -c SHA256SUMS` passed,
+  unpacked `zImage` / `initrd.img` match packaged inputs, and
+  `marker-strings.txt` contains `m6_dsi_cc_probe`, `m6_dsi_lc_hs_probe`, and
+  force-DCS markers.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds bounded
+  restore-capable probes around `PanelMaster_set_CC()` and
+  `DSI_clk_HS_mode()`, and splits DCS status dumping into normal limited and
+  force modes.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exposes the new
+  probe and force-DCS helpers to the debugfs command parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds debugfs
+  commands, command help, parser defaults, and marker tag sanitising.
+- `BRINGUP_STATE.md`: records category, evidence, expected marker, rollback
+  condition, artifact identity, runtime result, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the DSI TXRX/clock-lane state and DCS
+read helper, so the isolation must live next to the register programming being
+tested. `ddp_dsi.h` is required for the existing debugfs parser to call those
+owner-local helpers. `disp_debug.c` is the only manual control surface used in
+the current M6 captures; adding bounded commands there avoids a boot-path
+behavior change. The state file is the durable M6 bring-up record required for
+this diagnostic/isolation patch.
+
+Expected next marker: `m6_dsi_dcs_status_force:<tag>` should log
+`M6 DCS status[<tag>]: begin force=1` even after the old two-shot limit is
+exhausted. In active video mode it is expected to log `skip cmd=... video-mode=3`
+rather than perform unsafe no-reset DCS reads. `m6_dsi_cc_probe:0:<hold>:1`
+should show DSI snapshots with `TXRX=0x3c` during the hold and `TXRX=0x1003c`
+after restore. `m6_dsi_lc_hs_probe:0:<hold>:1` should show `PHY_LCCON=0x0`
+during the hold and `PHY_LCCON=0x1` after restore. If a human observes a
+visible change during either hold while the digital pipe remains alive, the
+frontier narrows to that clock-lane control. If no visible change is observed,
+continue below MIPITX/pad/lane-map/electrical or panel HS-acceptance.
+
+Rollback condition: revert this patch if it changes boot/resume behavior before
+manual debugfs use, if any probe fails to restore its old register state, if a
+probe leaves DSI in suspend/ULPS or reintroduces `M6 OVL irq diag`,
+`L1 not complete until EOF`, `abnormal SOF`, `wait VSYNC timeout`, or an
+RDMA0_EOF wait storm. Reboot or flash #101 if a manual `restore=0` experiment
+or a failed manual run leaves the panel path in a bad state.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-1858-m6-dsi-cc-lchs-probes-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-1916-m6-102-dsi-cc-lchs-probes-live-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+rg -n 'M6 DCS status\\[p102_video\\]|skip cmd=|M6 DSI cc_probe|M6 DSI lc_hs_probe|TXRX=0x3c|PHY_LCCON=0x0|M6 OVL irq diag|abnormal SOF|wait VSYNC timeout|RDMA0_EOF' "$CAP"/dmesg-after-*.txt "$CAP"/final-health.txt
+```
+
+Runtime result, **FACT**, 2026-06-09:
+- #102 was flashed through the reverse ADB tunnel to device `711HEBSR277K5`.
+  Preflash boot partition hash was #101
+  `c975c665c5590293284609056a56d84e07de8459524601bffa31c789b304d3cd`;
+  post-write readback matched #102
+  `56c9ce2185772be0e8cd4c29cbf0624735676c006804c3f896fba70bf82ae5bb`.
+- Live capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1916-m6-102-dsi-cc-lchs-probes-live-711HEBSR277K5/`.
+- FACT: the capture passes `sha256sum -c SHA256SUMS`. Final health reports
+  `sys.boot_completed=1`, bootanim stopped, `mWakefulness=Awake`,
+  `mDisplayReady=true`, brightness setting `255`, and #102 boot hash.
+- FACT: baseline truth has proven backlight `bl=255`, active video mode
+  `MODE=0x3`, DSI start `0x10001`, `TXRX=0x1003c`, `PHY_LCCON=0x1`, moving
+  RDMA/DSI counters, and no OVL/RDMA wedge signatures.
+- FACT: `m6_dsi_dcs_status_force:p102_video` logs
+  `M6 DCS status[p102_video]: begin force=1 count=2` and then skips every
+  status command because the host is in video mode (`video-mode=3`). This
+  closes the diagnostic bug where the old static dump limit hid later manual
+  DCS attempts; it does not prove panel readback in active video mode.
+- FACT: `m6_dsi_cc_probe:0:8000:1` changes snapshots from `TXRX=0x1003c` to
+  `TXRX=0x3c` for the hold window, then restores to `TXRX=0x1003c`.
+- FACT: `m6_dsi_lc_hs_probe:0:8000:1` changes snapshots from
+  `PHY_LCCON=0x1` to `PHY_LCCON=0x0` for the hold window, then restores to
+  `PHY_LCCON=0x1`.
+- FACT: after both probes, truth windows still show active DSI video state,
+  moving RDMA counters, `bl=255`, and no `M6 OVL irq diag`,
+  `L1 not complete until EOF`, `abnormal SOF`, `wait VSYNC timeout`, or
+  `RDMA0_EOF` wedge signature in the captured kernel windows.
+
+INFERENCE: #102 proves the manual clock-lane controls are live and
+restore-bounded, and it preserves #101's digital fix. It does not by itself
+prove the panel saw or did not see HS traffic because the capture has no
+machine-visible optical sensor. The next optical isolation should combine
+these controls with human observation or a panel-side/electrical measurement,
+then move toward MIPITX pad/lane/electrical state and panel HS acceptance if
+the visible glass remains unchanged.
+
 ## 2026-06-09 #101 OVL stale disabled-layer CPU-clear isolation
 
 PATCH HISTORY, **ISOLATION / DIAGNOSTIC**, 2026-06-09: stop mirroring the
