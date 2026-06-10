@@ -133,7 +133,7 @@
 /*================================================ */
 /*Configure value option part*/
 /*================================================*/
-#define AP_PLATFORM_INFO    "MT6755E1"
+#define AP_PLATFORM_INFO    "MT6750_S00"
 #define CCCI_MTU            (3584-128)
 #define CCCI_NET_MTU        (1500)
 #define SKB_POOL_SIZE_4K    (256)	/*2*MD */

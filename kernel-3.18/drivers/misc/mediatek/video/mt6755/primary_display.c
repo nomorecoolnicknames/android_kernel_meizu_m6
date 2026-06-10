@@ -6399,6 +6399,92 @@ static void primary_display_m6_dump_cmdq_truth(const char *tag)
 		cmdqCoreGetEvent(CMDQ_SYNC_TOKEN_CABC_EOF));
 }
 
+static void primary_display_m6_dump_pq_progress(const char *tag,
+	unsigned int hold_ms)
+{
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int color_p0;
+	unsigned int color_l0;
+	unsigned int ccorr_in0;
+	unsigned int ccorr_out0;
+	unsigned int aal_in0;
+	unsigned int aal_out0;
+	unsigned int gamma_in0;
+	unsigned int gamma_out0;
+	unsigned int dither_in0;
+	unsigned int dither_out0;
+
+	if (hold_ms > 50)
+		hold_ms = 50;
+
+	color_p0 = DISP_REG_GET(DISP_COLOR_PXL_CNT_MAIN);
+	color_l0 = DISP_REG_GET(DISP_COLOR_LINE_CNT_MAIN);
+	ccorr_in0 = DISP_REG_GET(DISP_REG_CCORR_IN_CNT);
+	ccorr_out0 = DISP_REG_GET(DISP_REG_CCORR_OUT_CNT);
+	aal_in0 = DISP_REG_GET(DISP_AAL_IN_CNT);
+	aal_out0 = DISP_REG_GET(DISP_AAL_OUT_CNT);
+	gamma_in0 = DISP_REG_GET(DISP_REG_GAMMA_INPUT_COUNT);
+	gamma_out0 = DISP_REG_GET(DISP_REG_GAMMA_OUTPUT_COUNT);
+	dither_in0 = DISP_REG_GET(DISP_REG_DITHER_IN_CNT);
+	dither_out0 = DISP_REG_GET(DISP_REG_DITHER_OUT_CNT);
+
+	if (hold_ms)
+		msleep(hold_ms);
+
+	DISPERR("M6 DISPLAY truth[%s][pq-delta]: hold=%ums route=0x%x/0x%x mutex=0x%x/0x%x/0x%x mmsys=0x%x/%x color start=0x%x cfg=0x%x ck=0x%x ip=%ux%u cnt=0x%x/0x%x->0x%x/0x%x\n",
+		safe_tag, hold_ms,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1),
+		DISP_REG_GET(DISP_COLOR_START),
+		DISP_REG_GET(DISP_COLOR_CFG_MAIN),
+		DISP_REG_GET(DISP_COLOR_CK_ON),
+		DISP_REG_GET(DISP_COLOR_INTERNAL_IP_WIDTH),
+		DISP_REG_GET(DISP_COLOR_INTERNAL_IP_HEIGHT),
+		color_p0, color_l0,
+		DISP_REG_GET(DISP_COLOR_PXL_CNT_MAIN),
+		DISP_REG_GET(DISP_COLOR_LINE_CNT_MAIN));
+	DISPERR("M6 DISPLAY truth[%s][pq-delta]: ccorr en/cfg/int/size=0x%x/0x%x/0x%x/0x%x inout=0x%x/0x%x->0x%x/0x%x aal en/cfg/int/size=0x%x/0x%x/0x%x/0x%x inout=0x%x/0x%x->0x%x/0x%x\n",
+		safe_tag,
+		DISP_REG_GET(DISP_REG_CCORR_EN),
+		DISP_REG_GET(DISP_REG_CCORR_CFG),
+		DISP_REG_GET(DISP_REG_CCORR_INTSTA),
+		DISP_REG_GET(DISP_REG_CCORR_SIZE),
+		ccorr_in0, ccorr_out0,
+		DISP_REG_GET(DISP_REG_CCORR_IN_CNT),
+		DISP_REG_GET(DISP_REG_CCORR_OUT_CNT),
+		DISP_REG_GET(DISP_AAL_EN),
+		DISP_REG_GET(DISP_AAL_CFG),
+		DISP_REG_GET(DISP_AAL_INTSTA),
+		DISP_REG_GET(DISP_AAL_SIZE),
+		aal_in0, aal_out0,
+		DISP_REG_GET(DISP_AAL_IN_CNT),
+		DISP_REG_GET(DISP_AAL_OUT_CNT));
+	DISPERR("M6 DISPLAY truth[%s][pq-delta]: gamma en/cfg/int/status/size=0x%x/0x%x/0x%x/0x%x/0x%x inout=0x%x/0x%x->0x%x/0x%x dither en/cfg/int/status/size/d0=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x inout=0x%x/0x%x->0x%x/0x%x\n",
+		safe_tag,
+		DISP_REG_GET(DISP_REG_GAMMA_EN),
+		DISP_REG_GET(DISP_REG_GAMMA_CFG),
+		DISP_REG_GET(DISP_REG_GAMMA_INTSTA),
+		DISP_REG_GET(DISP_REG_GAMMA_STATUS),
+		DISP_REG_GET(DISP_REG_GAMMA_SIZE),
+		gamma_in0, gamma_out0,
+		DISP_REG_GET(DISP_REG_GAMMA_INPUT_COUNT),
+		DISP_REG_GET(DISP_REG_GAMMA_OUTPUT_COUNT),
+		DISP_REG_GET(DISP_REG_DITHER_EN),
+		DISP_REG_GET(DISP_REG_DITHER_CFG),
+		DISP_REG_GET(DISP_REG_DITHER_INTSTA),
+		DISP_REG_GET(DISP_REG_DITHER_STATUS),
+		DISP_REG_GET(DISP_REG_DITHER_SIZE),
+		DISP_REG_GET(DISP_REG_DITHER_0),
+		dither_in0, dither_out0,
+		DISP_REG_GET(DISP_REG_DITHER_IN_CNT),
+		DISP_REG_GET(DISP_REG_DITHER_OUT_CNT));
+}
+
 static void primary_display_m6_dump_scanout_progress(const char *tag,
 	unsigned int hold_ms)
 {
@@ -6481,6 +6567,7 @@ int primary_display_m6_truth_window(const char *tag)
 	primary_display_m6_dump_ovl_request_truth(safe_tag);
 	dpmgr_m6_dump_primary_video_truth(safe_tag);
 	dsi_m6_dump_live(safe_tag);
+	primary_display_m6_dump_pq_progress(safe_tag, 20);
 	primary_display_m6_dump_cmdq_truth(safe_tag);
 	primary_display_m6_dump_scanout_progress(safe_tag, 0);
 	m6_led_dump_backlight_truth(safe_tag);

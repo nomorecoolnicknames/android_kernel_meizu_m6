@@ -271,6 +271,44 @@ signed int g_tracking_point = CUST_TRACKING_POINT;
 signed int g_rtc_fg_soc = 0;
 signed int g_I_SENSE_offset = 0;
 
+#define M6_FG_LOW_SOC_MAX 10
+#define M6_FG_HIGH_VOLTAGE_MV 4300
+#define M6_FG_HIGH_VOLTAGE_UI_FLOOR 50
+
+static kal_bool m6_fg_low_soc_on_high_voltage(signed int soc, const char *tag)
+{
+	signed int vbat = BMT_status.bat_vol;
+	signed int zcv = gFG_voltage;
+	kal_bool charger = KAL_FALSE;
+
+	if (soc < 0 || soc > M6_FG_LOW_SOC_MAX)
+		return KAL_FALSE;
+
+	if (bat_is_charger_exist() == KAL_TRUE ||
+	    BMT_status.charger_exist == KAL_TRUE ||
+	    gFG_coulomb_is_charging != 0)
+		charger = KAL_TRUE;
+
+	if (charger != KAL_TRUE)
+		return KAL_FALSE;
+
+	if (vbat < M6_FG_HIGH_VOLTAGE_MV && zcv < M6_FG_HIGH_VOLTAGE_MV)
+		return KAL_FALSE;
+
+	bm_notice("M6 FG impossible low %s=%d at vbat=%d zcv=%d ichg=%d charger=%d/%d; applying guarded UI floor\n",
+		  tag, soc, vbat, zcv, BMT_status.ICharging,
+		  BMT_status.charger_exist, charger);
+	return KAL_TRUE;
+}
+
+static signed int m6_fg_guard_ui_soc(signed int soc, const char *tag)
+{
+	if (!m6_fg_low_soc_on_high_voltage(soc, tag))
+		return soc;
+
+	return M6_FG_HIGH_VOLTAGE_UI_FLOOR;
+}
+
 /* SW FG */
 signed int oam_v_ocv_init = 0;
 signed int oam_v_ocv_1 = 0;
@@ -4689,8 +4727,12 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 			signed int rtcvalue = 0;
 
 			memcpy(&rtcvalue, &msg->fgd_data[0], sizeof(rtcvalue));
-			set_rtc_spare_fg_value(rtcvalue);
-			bm_notice("[fg_res] set rtc = %d\n", rtcvalue);
+			if (m6_fg_low_soc_on_high_voltage(rtcvalue, "RTC")) {
+				bm_notice("[fg_res] skip impossible rtc = %d\n", rtcvalue);
+			} else {
+				set_rtc_spare_fg_value(rtcvalue);
+				bm_notice("[fg_res] set rtc = %d\n", rtcvalue);
+			}
 		}
 		break;
 
@@ -4723,6 +4765,7 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 	case FG_DAEMON_CMD_SET_SOC:
 		{
 			memcpy(&gFG_capacity_by_c, &msg->fgd_data[0], sizeof(gFG_capacity_by_c));
+			m6_fg_low_soc_on_high_voltage(gFG_capacity_by_c, "SOC");
 			bm_debug("[fg_res] SOC = %d\n", gFG_capacity_by_c);
 			BMT_status.SOC = gFG_capacity_by_c;
 		}
@@ -4732,6 +4775,7 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 		{
 			signed int UI_SOC = 0;
 			memcpy(&UI_SOC, &msg->fgd_data[0], sizeof(UI_SOC));
+			UI_SOC = m6_fg_guard_ui_soc(UI_SOC, "UI_SOC");
 			bm_debug("[fg_res] UI_SOC = %d\n", UI_SOC);
 			BMT_status.UI_SOC = UI_SOC;
 		}
@@ -4742,6 +4786,7 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 			signed int UI_SOC;
 
 			memcpy(&UI_SOC, &msg->fgd_data[0], sizeof(UI_SOC));
+			UI_SOC = m6_fg_guard_ui_soc(UI_SOC, "UI_SOC2");
 			bm_debug("[fg_res] UI_SOC2 = %d\n", UI_SOC);
 #ifdef USING_SMOOTH_UI_SOC2
 			temp_UI_SOC2 = UI_SOC;
@@ -4861,6 +4906,7 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 			signed int VBATSOC = 0;
 
 			memcpy(&VBATSOC, &msg->fgd_data[0], sizeof(VBATSOC));
+			m6_fg_low_soc_on_high_voltage(VBATSOC, "VBATSOC");
 			bm_print(BM_LOG_CRTI, "[fg_res] VBATSOC = %d\n", VBATSOC);
 			gFG_vbat_soc = VBATSOC;
 		}

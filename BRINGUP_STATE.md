@@ -1,5 +1,136 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-10 #123 display PQ/DSI truth window plus M4U/CCCI/FG carry
+
+PATCH HISTORY, **DIAGNOSTIC / ISOLATION / PROPER-FIX**, 2026-06-10:
+add read-only PQ progress counters to the M6 display truth window and preserve
+the current evidence-backed M4U, modem platform-string, and fuel-gauge guard
+changes that are present in the flashed #123 boot image.
+
+Hypothesis: FACT: the user sees a valid Android picture through scrcpy while
+the physical panel has had no confirmed full image, so userspace composition
+is no longer the primary display frontier. FACT: prior DSI/PQ work proved
+LCM params, init table, visible MIPITX fields, `CLK_HS_POST`, and static
+DSI/MIPITX/MMSYS parity are not enough. HYPOTHESIS: the next useful display
+split is whether the `OVL0 -> COLOR0 -> CCORR -> AAL -> GAMMA -> DITHER ->
+RDMA0 -> DSI0` chain actually advances in the live HWC path, versus being
+stuck before DSI/PHY/panel acceptance. This patch is read-only for display.
+The CCCI `AP_PLATFORM_INFO` change is a PROPER-FIX candidate for the M6/MT6750
+modem identity. The M4U exact-end callback and fuel-gauge high-voltage low-SOC
+guard are DIAGNOSTIC/ISOLATION until later captures prove them as real fixes.
+
+Evidence:
+- #123 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-m6-display-pqdelta-bootonly-0706/`.
+- #123 boot image sha256:
+  `ee7137cfa5f9b78907aab18091731f9855a4f0a48d9143fddc74efaa88867a67`.
+- #123 `Image.gz-dtb` sha256:
+  `48c1af2a1d97565b7c583b0c2394982face0de54d734e44e536b3f8ce5a104a0`.
+- #123 `System.map` sha256:
+  `e3962eb98fd4973b485989b6fea50f22224bcf34cd8dfe3f3043f728f3094376`.
+- Runtime identity/readback matched #123:
+  `Linux localhost 3.18.140 #123 SMP PREEMPT Wed Jun 10 07:05:57 CDT 2026
+  aarch64`, and live boot partition hash equals the boot image hash.
+- Early boot capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0710-m6-123-pqdelta-early-711HEBSR277K5/`.
+- Display PQ window capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0714-m6-123-pqdelta-window-711HEBSR277K5/`.
+- DSI/PHY/BIST capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0721-m6-123-dsi-phy-bist-711HEBSR277K5/`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/primary_display.c`:
+  adds `primary_display_m6_dump_pq_progress()` and calls it from
+  `primary_display_m6_truth_window()`.
+- `kernel-3.18/drivers/misc/mediatek/m4u/mt6755/m4u_hw.c`: on the first
+  few exact-end DISP_OVL0 M4U faults, logs a correlation line and calls the
+  registered display fault callback before the existing bypass path.
+- `kernel-3.18/drivers/misc/mediatek/eccci/mt6755/ccci_config.h`: changes
+  the CCCI AP platform string from donor `MT6755E1` to `MT6750_S00`.
+- `kernel-3.18/drivers/power/mediatek/battery_meter_fg_20.c`: guards
+  impossible low UI/RTC SOC values from `fuelgauged` when charger is present
+  and VBAT/ZCV are at or above 4300 mV.
+- `BRINGUP_STATE.md`: records this boot artifact, captures, interpretation,
+  expected markers, rollback, and verification commands.
+
+Why each file changed: `primary_display.c` owns the M6 truth-window debugfs
+path, so PQ counters belong there and remain read-only. `m4u_hw.c` owns the
+M4U fault ISR and is the only place that can correlate exact-end display
+faults before they are bypassed. `ccci_config.h` owns the modem AP identity
+string that the running M6 kernel exposes to CCCI. `battery_meter_fg_20.c`
+owns the kernel side of fuel-gauge daemon netlink updates and can prevent an
+obviously impossible userspace SOC from being written back to UI/RTC while
+the real fuelgauge/NVRAM cause is investigated.
+
+Result:
+- FACT: #123 booted with `sys.boot_completed=1`, `bootanim=stopped`, root ADB,
+  and the live boot partition hash matched the artifact.
+- FACT: brightness in the PQ window was proven at 255:
+  `dcs51=0xff` and `M6 DISPLAY truth[pqdelta_current][backlight] ... bl=255`.
+  The lights HAL still attempted to write `level = 11` later, then the window
+  restored and proved 255 again.
+- FACT: the HWC path has live layers and moving scanout:
+  `L0 addr=0x1e00000`, `L1 addr=0x2600000/0x2e00000/0x2a00000`,
+  RDMA `in/out` counters changed, and the captured screencap is a valid
+  720x1280 PNG.
+- FACT: AAL/GAMMA/DITHER counters moved during each 20 ms PQ window; COLOR
+  pixel/line counters stayed zero and CCORR was disabled/stable. This proves
+  the active path advances through the later PQ/RDMA/DSI side despite the
+  COLOR/CCORR counter behavior.
+- FACT: `dsi0_eof=1` and `dsi0_sof=1` remained live, while
+  `rdma_eof=0` and `mutex0_eof=0` stayed zero. Do not fake these tokens.
+- FACT: DSI/BIST host programming worked in the kernel: BIST profile 0 wrote
+  `BIST_PATTERN=0xff0000` and `BIST_CON=0x200446`, held for 4000 ms, then
+  restored `BIST_CON=0x0`.
+- FACT: DCS status reads are still skipped in video mode by this debug path
+  even under `m6_dsi_dcs_status_force`; it logged skip for 0x0A/0x0B/0x0C/0x0D
+  and 0xDA/0xDB/0xDC.
+- FACT: MIPITX/PHY live decode during HS window/BIST showed lane words
+  `0x603/0x601/0x601/0x601/0x601`, `TXRX=0x1003c`, `PHY_LCCON=0x1`,
+  lane LDOs on, PLL on/ack, `hstx_cklp=1`, and moving DSI word counters.
+- FACT: NVRAM services came up far enough for `service.nvram_init=Ready`, but
+  the early capture still logs `/misc` and `/proinfo` path lookup failures and
+  `set calibration fail`; this is a ROM/userspace/NVRAM follow-up, not solved
+  by this boot-only display patch.
+- FACT: fuelgauged remains a suspect for the long-lived 6% symptom; the
+  kernel-side SOC guard only prevents impossible low UI/RTC values when voltage
+  proves the battery is not actually empty.
+- INFERENCE: the screen frontier moved below Android composition and below
+  normal DDP/PQ progress. If the human visual result for #123/BIST is still
+  black, the remaining display work is DSI/PHY electrical behavior, panel
+  acceptance, or hidden LK side effects outside the decoded static registers.
+
+Expected next marker: `m6_display_truth_window:<tag>` should include three
+`[pq-delta]` lines. A healthy reproduction of #123 should show moving
+AAL/GAMMA/DITHER counters, moving RDMA in/out counters, `dsi0_eof=1`,
+`dsi0_sof=1`, `rdma_eof=0`, `mutex0_eof=0`, and brightness 255 when manually
+forced. For BIST, logs should show `BIST_CON=0x200446` during hold and final
+restore to `BIST_CON=0x0`. A human visual report is still required to accept
+or reject any physical-image candidate.
+
+Rollback condition: revert the PQ diagnostic if it changes boot behavior,
+hangs the truth-window command, leaves display registers modified, regresses
+scrcpy/SurfaceFlinger/HWC, disables DSI/PHY, or hides existing DDP/DSI markers.
+Revert the CCCI string if modem boot or radio logs prove the stock M6 modem
+expects a different AP platform identity. Revert the fuel-gauge guard if it
+suppresses a real low-voltage shutdown condition or if a proper fuelgauged/NVRAM
+profile fix makes the guard unnecessary. Revert the M4U callback correlation if
+it causes M4U fault storms, display wedges, or callback recursion.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-m6-display-pqdelta-bootonly-0706
+sha256sum -c SHA256SUMS
+abootimg -i boot-m6-display-pqdelta-20260610.img
+
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'uname -a; getprop sys.boot_completed; getprop init.svc.bootanim; sha256sum /dev/block/mmcblk0p21'
+$A shell 'settings put system screen_brightness_mode 0; settings put system screen_brightness 255; echo 255 > /sys/class/leds/lcd-backlight/brightness; echo m6_display_truth_window:pqdelta_verify > /sys/kernel/debug/mtkfb; echo m6_dsi_bist_profile:0:0x00ff0000:4000 > /sys/kernel/debug/mtkfb; dmesg | grep -E "pq-delta|cmdq-tokens|scanout-delta|BIST_CON|backlight" | tail -220'
+```
+
 ## 2026-06-10 #119 OV8856JSL alternate ID accept probe
 
 Patch category: **PROPER-FIX**. This patch keeps the M6 camera HAL-facing
