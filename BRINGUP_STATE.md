@@ -14944,7 +14944,7 @@ grep -E 'M6 DSI mipitx_pad_probe|M6 DSI clk_restore|M6 DISPLAY truth\\[p116_imp'
 cat "$CAP/regression-grep.txt"
 ```
 
-## Latest pointer: #116 top impedance probes
+## Previous pointer: #116 top impedance probes
 
 The latest validated M6 display boot/capture is #116:
 
@@ -14963,3 +14963,126 @@ impedance fields are therefore rejected as a full-image fix together with
 #115's lane analog fields. The next display work should stop looping through
 visible MIPITX register fields and move to hidden PHY/electrical evidence or
 stock-LK side effects outside the currently decoded register set.
+
+## Patch history: #117 PLL_TOP preserve probe
+
+Patch category: **DIAGNOSTIC / ISOLATION**. The source change is boot-inert:
+it adds readback logging for `MIPITX_DSI_PLL_TOP` (`MIPITX_BASE + 0x064`) and a
+manual restore-safe debugfs command for the undocumented preserve bits.
+
+Hypothesis: after #115 and #116 rejected the documented MIPITX lane analog
+fields and top impedance as full-image fixes, the remaining Linux-visible
+MIPITX candidate was `PLL_TOP` preserve state. Mainline-style MediaTek MIPI TX
+code names `RG_DSI_MPPLL_PRESERVE` as bits 8..15, while the local legacy
+bitfield layout suggests a possible bits 7..11 interpretation. If LK programs
+a nonzero preserve side effect that Linux leaves at zero, temporarily applying
+`preserve=3` under live video might restore HS acceptance or create a visible
+full image.
+
+Evidence:
+- Artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0410-m6-dsi-plltop-probe-bootonly/`.
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0420-m6-117-plltop-probes-711HEBSR277K5/`.
+- Capture-local analysis:
+  `/srv/forge/android/meizu_m6/captures/20260610-0420-m6-117-plltop-probes-711HEBSR277K5/analysis.md`.
+- #117 boot image sha256:
+  `55ccf169fe0015b965ea9b20b4edb37d7434f397db820fc500fa813ccbcfe993`.
+- #117 `Image.gz-dtb` sha256:
+  `6b4f9c9bda565a3996f822ecec74620a3349e00eabf9e32bd632770ea6da46f8`.
+- #117 `System.map` sha256:
+  `ff10e5a0c8d14521bcb080baabcebda19657e7b4aea71da4b3eb953b6b21ca5d`.
+- #117 `vmlinux` sha256:
+  `e86535fa57320201505b346768811bd7f9f9663c257db8a42eefe09bec7dd8e8`.
+- Runtime identity/readback matched #117:
+  `Linux localhost 3.18.140 #117 SMP PREEMPT Wed Jun 10 03:34:40 CDT 2026 aarch64`,
+  `sys.boot_completed=1`, bootanim stopped, root shell, and live boot partition
+  readback equal to the boot image hash.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: logs
+  `PLL_TOP`, decodes both preserve interpretations, includes it in pad samples,
+  and adds `dsi_m6_mipitx_plltop_probe()`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the new
+  probe for `disp_debug.c`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds
+  `m6_dsi_mipitx_plltop_probe:<preserve>[:hold_ms[:restore[:mux[:shift]]]]`.
+- `BRINGUP_STATE.md`: records artifact identity, runtime evidence, result,
+  expected next marker, rollback, and verification commands.
+
+Why each file changed: `ddp_dsi.c` already owns M6 MIPITX offsets, decode
+helpers, HS windows, and prior restore-safe MIPITX probes, so this keeps the
+new candidate owner-local and bounded. `ddp_dsi.h` and `disp_debug.c` expose
+the command through the existing `/d/mtkfb` diagnostic surface. The state file
+prevents future agents from treating `PLL_TOP preserve` as untested.
+
+Result:
+- FACT: baseline `PLL_TOP=0x20`, `preserve7=0x0`, `preserve8=0x0`.
+- FACT: shift 8 probe wrote and restored:
+  `0x20 -> 0x320 -> 0x20`, live `preserve8=0x3`, `preserve7=0x6`.
+- FACT: shift 7 probe wrote and restored:
+  `0x20 -> 0x1a0 -> 0x20`, live `preserve7=0x3`, `preserve8=0x1`.
+- FACT: all probe windows held for 8000 ms with `bl=255`.
+- FACT: final truth returned to `PLL_TOP=0x20`,
+  lane words `0x603/0x601/0x601/0x601/0x601`, `TXRX=0x1003c`,
+  `PHY_LCCON=0x1`, and `bl=255`.
+- FACT: regression grep found zero `wait VSYNC`, `abnormal`, `DEVAPC`,
+  `s_w_rst`, `RDMA0_EOF`, invalid command, `Oops`, or `panic` matches.
+- FACT: no positive full-image visual report was produced during this #117
+  session. The pre-probe human report was that the physical glass still had no
+  image while scrcpy had a valid picture.
+- INFERENCE: absent a later contradictory visual observation, `PLL_TOP preserve`
+  is rejected as a full-image fix. It does not prove there were no short
+  transient analog artifacts, because this run did not target stripe/flicker
+  observation.
+
+Expected next marker: if this probe is repeated, logs should show
+`M6 DSI plltop_probe: begin`, `after-set`, `hs_window`, `after-restore`, and
+`end`, with either `PLL_TOP=0x320` for `shift=8` or `PLL_TOP=0x1a0` for
+`shift=7`, followed by final restore to `0x20`.
+
+Rollback condition: revert #117 if merely booting changes `PLL_TOP` away from
+`0x20`, if a manual probe fails to restore final `PLL_TOP=0x20`, if `TXRX` or
+`PHY_LCCON` is left disabled, if a new DDP/CMDQ/DEVAPC wedge appears, or if
+ADB, boot completion, SurfaceFlinger/scrcpy, or backlight regress. Do not
+revert just because the glass remains black; this is diagnostic/isolation-only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-0410-m6-dsi-plltop-probe-bootonly
+sha256sum -c SHA256SUMS
+sha256sum boot-m6-dsi-plltop-probe-20260610.img live-readback-boot-m6-dsi-plltop-probe-20260610.img
+abootimg -i boot-m6-dsi-plltop-probe-20260610.img
+
+CAP=/srv/forge/android/meizu_m6/captures/20260610-0420-m6-117-plltop-probes-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/identity.txt"
+grep -E 'M6 DSI plltop_probe|PLL_TOP|pll_top|preserve7|preserve8|hs_window' "$CAP/shift8-key-lines.txt" "$CAP/shift7-key-lines.txt"
+test ! -s "$CAP/regression-grep.txt"
+```
+
+## Latest pointer: #117 PLL_TOP preserve probes
+
+The latest validated M6 display boot/capture is #117:
+
+- artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0410-m6-dsi-plltop-probe-bootonly/`;
+- capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0420-m6-117-plltop-probes-711HEBSR277K5/`;
+- boot image sha256:
+  `55ccf169fe0015b965ea9b20b4edb37d7434f397db820fc500fa813ccbcfe993`;
+- runtime:
+  `Linux localhost 3.18.140 #117 SMP PREEMPT Wed Jun 10 03:34:40 CDT 2026 aarch64`;
+- final state:
+  `PLL_TOP=0x20`, `TXRX=0x1003c`, `PHY_LCCON=0x1`, lane words
+  `0x603/0x601/0x601/0x601/0x601`, and `bl=255`.
+
+Current display interpretation: visible decoded MIPITX fields have now been
+covered as full-image candidates: `PHY_SEL`, all-lane `RT_CODE`/`LPTX`/`LPCD`,
+top `imp_en`/`imp`, and `PLL_TOP preserve` shift 8/shift 7. With scrcpy
+showing a valid Android picture while the physical glass lacks a known full
+image, the next useful display work is hidden PHY/electrical evidence,
+stock-LK-only side effects outside the decoded register set, or external
+measurement. Do not return to RDMA EOF, LCM init, `CLK_HS_POST`, lane maps, or
+these visible MIPITX fields without new contradictory evidence.

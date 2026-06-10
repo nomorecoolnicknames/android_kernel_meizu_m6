@@ -1672,6 +1672,7 @@ static void dsi_m6_dump_mipitx_decode(const char *tag)
 	uint32_t top = INREG32(MIPITX_BASE + 0x040);
 	uint32_t pll0 = INREG32(MIPITX_BASE + 0x050);
 	uint32_t pll2 = INREG32(MIPITX_BASE + 0x058);
+	uint32_t pll_top = INREG32(MIPITX_BASE + 0x064);
 	uint32_t pll_pwr = INREG32(MIPITX_BASE + 0x068);
 	uint32_t gpi_en = INREG32(MIPITX_BASE + 0x074);
 	uint32_t gpi_pull = INREG32(MIPITX_BASE + 0x078);
@@ -1706,16 +1707,18 @@ static void dsi_m6_dump_mipitx_decode(const char *tag)
 		dsi_m6_field(phy_sel, 0, 3), dsi_m6_field(phy_sel, 4, 3),
 		dsi_m6_field(phy_sel, 8, 3), dsi_m6_field(phy_sel, 12, 3),
 		dsi_m6_field(phy_sel, 16, 3), dsi_m6_field(phy_sel, 20, 3));
-	DISPERR("M6 DSI phydecode[%s]: top hs_bias=%u imp_en=%u imp=0x%x aio=0x%x pad_low=%u pll en=%u pre=%u txdiv=%u/%u pos=%u pcw=0x%x pwr_on=%u iso=%u ack=%u gpi=0x%x pull=0x%x sw=%u/0x%x/0x%x dbg=0x%x apb=0x%x\n",
+	DISPERR("M6 DSI phydecode[%s]: top hs_bias=%u imp_en=%u imp=0x%x aio=0x%x pad_low=%u pll en=%u pre=%u txdiv=%u/%u pos=%u pcw=0x%x pll_top=0x%x preserve7=0x%x preserve8=0x%x pwr_on=%u iso=%u ack=%u gpi=0x%x pull=0x%x sw=%u/0x%x/0x%x dbg=0x%x apb=0x%x\n",
 		tag, dsi_m6_field(top, 1, 1), dsi_m6_field(top, 2, 1),
 		dsi_m6_field(top, 4, 4), dsi_m6_field(top, 8, 3),
 		dsi_m6_field(top, 11, 1), dsi_m6_field(pll0, 0, 1),
 		dsi_m6_field(pll0, 1, 2), dsi_m6_field(pll0, 3, 2),
 		dsi_m6_field(pll0, 5, 2), dsi_m6_field(pll0, 7, 3),
-		dsi_m6_field(pll2, 0, 31), dsi_m6_field(pll_pwr, 0, 1),
+		dsi_m6_field(pll2, 0, 31), pll_top,
+		dsi_m6_field(pll_top, 7, 5), dsi_m6_field(pll_top, 8, 8),
+		dsi_m6_field(pll_pwr, 0, 1),
 		dsi_m6_field(pll_pwr, 1, 1), dsi_m6_field(pll_pwr, 8, 1),
 		gpi_en, gpi_pull, dsi_m6_field(sw_ctrl, 0, 1), sw0, sw1, dbg, apb);
-	DISPERR("M6 DISPLAY truth[%s][mipitx]: raw c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x lane_map d0/d1/d2/d3/c/lprx=%u/%u/%u/%u/%u/%u lptx=0x%x/0x%x/0x%x/0x%x/0x%x lpcd=0x%x/0x%x/0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x pwr=0x%x sw=0x%x/0x%x/0x%x dbg=0x%x apb=0x%x\n",
+	DISPERR("M6 DISPLAY truth[%s][mipitx]: raw c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x lane_map d0/d1/d2/d3/c/lprx=%u/%u/%u/%u/%u/%u lptx=0x%x/0x%x/0x%x/0x%x/0x%x lpcd=0x%x/0x%x/0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x pll_top=0x%x preserve7=0x%x preserve8=0x%x pwr=0x%x sw=0x%x/0x%x/0x%x dbg=0x%x apb=0x%x\n",
 		tag, clock_lane, lane0, lane1, lane2, lane3,
 		dsi_m6_field(phy_sel, 0, 3), dsi_m6_field(phy_sel, 4, 3),
 		dsi_m6_field(phy_sel, 8, 3), dsi_m6_field(phy_sel, 12, 3),
@@ -1725,7 +1728,9 @@ static void dsi_m6_dump_mipitx_decode(const char *tag)
 		dsi_m6_field(lane3, 2, 3), dsi_m6_field(clock_lane, 5, 2),
 		dsi_m6_field(lane0, 5, 2), dsi_m6_field(lane1, 5, 2),
 		dsi_m6_field(lane2, 5, 2), dsi_m6_field(lane3, 5, 2),
-		pll0, pll2, pll_pwr, INREG32(MIPITX_BASE + 0x06c),
+		pll0, pll2, pll_pwr, pll_top,
+		dsi_m6_field(pll_top, 7, 5), dsi_m6_field(pll_top, 8, 8),
+		INREG32(MIPITX_BASE + 0x06c),
 		sw_ctrl, sw0, sw1, dbg, apb);
 	DISPERR("M6 DSI phydecode[%s]: dbg_out=0x%x apb_async=0x%x\n",
 		tag, INREG32(MIPITX_BASE + 0x094),
@@ -2000,21 +2005,21 @@ static void dsi_m6_lkgold_snapshot_once(const char *tag)
 
 static void dsi_m6_phy_lk_delay(const char *tag, unsigned int delay_ms)
 {
-	DISPERR("M6 DSI physeq[%s]: lk-delay begin ms=%u top=0x%x bg=0x%x pll0=0x%x pll_chg=0x%x pwr=0x%x lanes=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+	DISPERR("M6 DSI physeq[%s]: lk-delay begin ms=%u top=0x%x bg=0x%x pll0=0x%x pll_chg=0x%x pll_top=0x%x pwr=0x%x lanes=0x%x/0x%x/0x%x/0x%x/0x%x\n",
 		tag, delay_ms, INREG32(MIPITX_BASE + 0x040),
 		INREG32(MIPITX_BASE + 0x044), INREG32(MIPITX_BASE + 0x050),
-		INREG32(MIPITX_BASE + 0x060), INREG32(MIPITX_BASE + 0x068),
-		INREG32(MIPITX_BASE + 0x004), INREG32(MIPITX_BASE + 0x008),
-		INREG32(MIPITX_BASE + 0x00c), INREG32(MIPITX_BASE + 0x010),
-		INREG32(MIPITX_BASE + 0x014));
+		INREG32(MIPITX_BASE + 0x060), INREG32(MIPITX_BASE + 0x064),
+		INREG32(MIPITX_BASE + 0x068), INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008), INREG32(MIPITX_BASE + 0x00c),
+		INREG32(MIPITX_BASE + 0x010), INREG32(MIPITX_BASE + 0x014));
 	mdelay(delay_ms);
-	DISPERR("M6 DSI physeq[%s]: lk-delay end ms=%u top=0x%x bg=0x%x pll0=0x%x pll_chg=0x%x pwr=0x%x lanes=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+	DISPERR("M6 DSI physeq[%s]: lk-delay end ms=%u top=0x%x bg=0x%x pll0=0x%x pll_chg=0x%x pll_top=0x%x pwr=0x%x lanes=0x%x/0x%x/0x%x/0x%x/0x%x\n",
 		tag, delay_ms, INREG32(MIPITX_BASE + 0x040),
 		INREG32(MIPITX_BASE + 0x044), INREG32(MIPITX_BASE + 0x050),
-		INREG32(MIPITX_BASE + 0x060), INREG32(MIPITX_BASE + 0x068),
-		INREG32(MIPITX_BASE + 0x004), INREG32(MIPITX_BASE + 0x008),
-		INREG32(MIPITX_BASE + 0x00c), INREG32(MIPITX_BASE + 0x010),
-		INREG32(MIPITX_BASE + 0x014));
+		INREG32(MIPITX_BASE + 0x060), INREG32(MIPITX_BASE + 0x064),
+		INREG32(MIPITX_BASE + 0x068), INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008), INREG32(MIPITX_BASE + 0x00c),
+		INREG32(MIPITX_BASE + 0x010), INREG32(MIPITX_BASE + 0x014));
 	dsi_m6_dump_mipitx_decode(tag);
 }
 
@@ -3331,7 +3336,7 @@ static void dsi_m6_dump_mipitx_pad_sample(const char *tag,
 					  unsigned int samples,
 					  unsigned int delay_ms)
 {
-	DISPERR("M6 DSI mipitx_pad[%s]#%u sample=%u/%u delay_ms=%u con=0x%x c=0x%x d0=0x%x d1=0x%x d2=0x%x d3=0x%x top=0x%x bg=0x%x pll=0x%x/0x%x/0x%x pwr=0x%x rgs=0x%x gpi=0x%x pull=0x%x phy_sel=0x%x sw=0x%x/0x%x/0x%x dbg=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x st8=0x%x st9=0x%x int=0x%x vm=0x%x\n",
+	DISPERR("M6 DSI mipitx_pad[%s]#%u sample=%u/%u delay_ms=%u con=0x%x c=0x%x d0=0x%x d1=0x%x d2=0x%x d3=0x%x top=0x%x bg=0x%x pll=0x%x/0x%x/0x%x pll_top=0x%x pwr=0x%x rgs=0x%x gpi=0x%x pull=0x%x phy_sel=0x%x sw=0x%x/0x%x/0x%x dbg=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x st8=0x%x st9=0x%x int=0x%x vm=0x%x\n",
 		tag, seq, sample + 1, samples, delay_ms,
 		INREG32(MIPITX_BASE + 0x000),
 		INREG32(MIPITX_BASE + 0x004),
@@ -3344,6 +3349,7 @@ static void dsi_m6_dump_mipitx_pad_sample(const char *tag,
 		INREG32(MIPITX_BASE + 0x050),
 		INREG32(MIPITX_BASE + 0x058),
 		INREG32(MIPITX_BASE + 0x060),
+		INREG32(MIPITX_BASE + 0x064),
 		INREG32(MIPITX_BASE + 0x068),
 		INREG32(MIPITX_BASE + 0x070),
 		INREG32(MIPITX_BASE + 0x074),
@@ -3653,6 +3659,93 @@ void dsi_m6_mipitx_phy_sel_probe(unsigned int value, unsigned int hold_ms,
 
 	DISPERR("M6 DSI phy_sel_probe: end value=0x%x old=0x%x final=0x%x restore=%u mux=%u\n",
 		value, old_raw, INREG32(MIPITX_BASE + 0x07c),
+		restore ? 1 : 0, sample_mux);
+}
+
+void dsi_m6_mipitx_plltop_probe(unsigned int value, unsigned int hold_ms,
+				unsigned int restore, unsigned int sample_mux,
+				unsigned int shift)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int max;
+	unsigned int mask;
+	unsigned int old_raw;
+	unsigned int new_raw;
+	unsigned int after_raw;
+	unsigned int restored_raw;
+
+	if (!DSI_REG[0])
+		return;
+
+	if (shift != 7 && shift != 8) {
+		DISPERR("M6 DSI plltop_probe: invalid shift=%u allowed=7,8\n",
+			shift);
+		return;
+	}
+
+	max = (shift == 7) ? 31U : 255U;
+	if (value > max) {
+		DISPERR("M6 DSI plltop_probe: invalid value=%u max=%u shift=%u\n",
+			value, max, shift);
+		return;
+	}
+
+	mask = max << shift;
+	old_raw = INREG32(MIPITX_BASE + 0x064);
+	new_raw = (old_raw & ~mask) | ((value << shift) & mask);
+	DISPERR("M6 DSI plltop_probe: begin value=%u shift=%u old=0x%x new=0x%x mask=0x%x restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		value, shift, old_raw, new_raw, mask, restore ? 1 : 0,
+		sample_mux, bounded, dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("plltop-probe-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("plltop-probe-before");
+
+	MIPITX_OUTREG32(MIPITX_BASE + 0x064, new_raw);
+	udelay(1);
+	after_raw = INREG32(MIPITX_BASE + 0x064);
+	DISPERR("M6 DSI plltop_probe: after-set value=%u shift=%u live=0x%x preserve7=0x%x preserve8=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+		value, shift, after_raw, dsi_m6_field(after_raw, 7, 5),
+		dsi_m6_field(after_raw, 8, 8), INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("plltop-probe-after-set", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("plltop-probe-after-set");
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "plltop-%u-s%u-mux", value, shift);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux == 2) {
+		snprintf(tag, sizeof(tag), "plltop-%u-s%u-muxstats",
+			 value, shift);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	} else if (sample_mux >= 3) {
+		snprintf(tag, sizeof(tag), "plltop-%u-s%u-window",
+			 value, shift);
+		dsi_m6_mipitx_pad_window(tag, 4, 50);
+	}
+
+	snprintf(tag, sizeof(tag), "plltop-%u-s%u-hold", value, shift);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		MIPITX_OUTREG32(MIPITX_BASE + 0x064, old_raw);
+		udelay(1);
+		restored_raw = INREG32(MIPITX_BASE + 0x064);
+		DISPERR("M6 DSI plltop_probe: after-restore old=0x%x live=0x%x preserve7=0x%x preserve8=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+			old_raw, restored_raw,
+			dsi_m6_field(restored_raw, 7, 5),
+			dsi_m6_field(restored_raw, 8, 8),
+			INREG32(MIPITX_BASE + 0x094),
+			INREG32(MIPITX_BASE + 0x098),
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+		dsi_m6_dump_snapshot("plltop-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+		dsi_m6_dump_mipitx_decode("plltop-probe-after-restore");
+	}
+
+	DISPERR("M6 DSI plltop_probe: end value=%u shift=%u old=0x%x final=0x%x restore=%u mux=%u\n",
+		value, shift, old_raw, INREG32(MIPITX_BASE + 0x064),
 		restore ? 1 : 0, sample_mux);
 }
 

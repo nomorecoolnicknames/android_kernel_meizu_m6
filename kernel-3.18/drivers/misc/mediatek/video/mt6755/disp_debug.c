@@ -155,6 +155,8 @@ char MTKFB_STR_HELP[] =
 		"             Meizu M6 restore-safe all-lane MIPITX analog-field isolation; mux=1 sweep, 2 stats, 3 pad window\n"
 		"        m6_dsi_mipitx_phy_sel_probe:<value>[:hold_ms[:restore[:mux]]]\n"
 		"             Meizu M6 restore-safe MIPITX PHY_SEL lane-map isolation; mux=1 sweep, 2 stats, 3 pad window\n"
+		"        m6_dsi_mipitx_plltop_probe:<preserve>[:hold_ms[:restore[:mux[:shift]]]]\n"
+		"             Meizu M6 restore-safe MIPITX PLL_TOP preserve isolation; shift defaults to 8, shift=7 tests local bitfield\n"
 		"        m6_dsi_wrtrace_dump[:limit]\n"
 		"             Meizu M6 dump first DSI0/MIPITX register write-order trace\n"
 		"        m6_dsi_wrtrace_reset[:enable]\n"
@@ -930,6 +932,29 @@ void mtkfb_process_dbg_opt(const char *opt)
 		primary_display_manual_unlock();
 		DISPERR("M6 DSI mipitx_phy_sel_probe command: value=0x%x hold=%u restore=%u mux=%u\n",
 			value, hold_ms, restore ? 1 : 0, sample_mux);
+	} else if (0 == strncmp(opt, "m6_dsi_mipitx_plltop_probe:",
+				sizeof("m6_dsi_mipitx_plltop_probe:") - 1)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+		unsigned int shift = 8;
+
+		ret = sscanf(opt, "m6_dsi_mipitx_plltop_probe:%i:%u:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux,
+			     &shift);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_mipitx_plltop_probe(value, hold_ms, restore, sample_mux,
+					   shift);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI mipitx_plltop_probe command: value=%u hold=%u restore=%u mux=%u shift=%u\n",
+			value, hold_ms, restore ? 1 : 0, sample_mux, shift);
 	} else if (0 == strncmp(opt, "m6_dsi_wrtrace_dump",
 				sizeof("m6_dsi_wrtrace_dump") - 1)) {
 		const unsigned int prefix = sizeof("m6_dsi_wrtrace_dump") - 1;

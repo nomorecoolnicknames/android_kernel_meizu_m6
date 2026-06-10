@@ -266,6 +266,10 @@ extern "C" {
 	void dsi_m6_mipitx_phy_sel_probe(unsigned int value, unsigned int hold_ms,
 					 unsigned int restore,
 					 unsigned int sample_mux);
+	void dsi_m6_mipitx_plltop_probe(unsigned int value, unsigned int hold_ms,
+					unsigned int restore,
+					unsigned int sample_mux,
+					unsigned int shift);
 	void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms);
 	void dsi_m6_force_clk_restore(const char *tag);
 	void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
