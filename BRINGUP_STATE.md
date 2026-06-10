@@ -1,5 +1,124 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-10 #118 M6 camera sensor list and power probe wiring
+
+PATCH HISTORY, **PROPER-FIX / ISOLATION / DIAGNOSTIC**, 2026-06-10:
+replace the donor camera sensor list with the M6 hardware pair
+`imx278_mipi_raw ov8856jsl_mipi_raw`, register both sensor init functions,
+add the missing OV8856JSL driver name, widen the camera power table to the
+kernel's configured max sensor count, add M6-named power entries for both
+sensors, and raise existing M6 camera diagnostics to warn level so the clean
+camera-provider window preserves the search path.
+
+Hypothesis: FACT: the earlier donor defconfig exposed OV13855/S5K3L8/HI846
+style camera candidates, while the M6 source reference selects IMX278 and
+OV8856JSL. HYPOTHESIS: the first camera blocker was stale donor sensor-list
+wiring, so userspace could not probe the actual M6 sensors. The sensor-list
+and driver-name edits are PROPER-FIX. The added power entries are
+ISOLATION/DIAGNOSTIC until exact stock DCT/power truth is found; they are
+needed to move the probe far enough to reveal whether the next failure is
+rail/reset/MCLK/pinmux/I2C.
+
+Evidence:
+- #118 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0406-m6-camera-sensor-wiring-bootonly/`.
+- #118 boot image sha256:
+  `e65f282ab76408635c00a19750776cfee11d3e642112f7a7e788e52316669cff`.
+- #118 runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0418-m6-118-camera-sensor-wiring-711HEBSR277K5/`.
+- #118 identity/readback: `identity-after-root.txt:1` shows
+  `Linux localhost 3.18.140 #118 SMP PREEMPT Wed Jun 10 04:05:29 CDT 2026
+  aarch64`; `boot-readback-pulled-sha256.txt:1-2` shows the flashed artifact
+  and pulled boot partition both hash to
+  `e65f282ab76408635c00a19750776cfee11d3e642112f7a7e788e52316669cff`.
+- #118 build identity: artifact `config:1180` has
+  `CONFIG_CUSTOM_KERNEL_IMGSENSOR="imx278_mipi_raw ov8856jsl_mipi_raw"`;
+  artifact `System.map:27595`, `:27611`, and `:66790` contain
+  `IMX278_MIPI_RAW_SensorInit`, `OV8856JSLMIPIRAW_SensorInit`, and
+  `kdSensorList`.
+- #118 clean camera window: `dmesg-clean-camera-window.txt:905-918` shows
+  userspace SET_DRIVER raw `0x00010000` selecting list[0] IMX278;
+  `:1191-1207` shows raw `0x00010001` selecting list[1] OV8856JSL.
+- #118 clean camera window: `dmesg-clean-camera-window.txt:923-960` and
+  `:1205-1230` show both new power entries matching and executing.
+- #118 clean camera window: `dmesg-clean-camera-window.txt:1004-1010`,
+  `:1094-1100`, and later OV8856JSL lines show I2C ACKERR/read-id failures
+  after power-on, not a missing HAL ioctl or missing sensor-list entry.
+- #118 clean camera state: `dumpsys-media-camera-clean-window.txt:4` still
+  reports `Number of camera devices: 0`.
+
+Files changed:
+- `kernel-3.18/arch/arm64/configs/meizu_m6_defconfig`: selects the M6
+  IMX278/OV8856JSL sensor pair for normal builds.
+- `kernel-3.18/arch/arm64/configs/meizu_m6_debug_defconfig`: keeps debug
+  builds on the same M6 sensor pair.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h`: adds the
+  missing OV8856JSL driver name string used by the power table.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.h`:
+  declares and registers the IMX278 and OV8856JSL sensor init functions.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.c`:
+  raises existing M6 camera diagnostics from info to warn so they survive
+  noisy clean camera windows.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/camera_hw/kd_camera_hw.c`:
+  adds M6-named power entries that let both real sensors reach ID reads.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/camera_hw/kd_camera_hw.h`
+  and `tb_kd_camera_hw.h`: make the power table size follow
+  `MAX_NUM_OF_SUPPORT_SENSOR + 1` instead of the stale literal 16.
+- `BRINGUP_STATE.md`: records artifact identity, result, rollback, and the
+  next proven frontier.
+
+Why each file changed: defconfigs control which sensor objects compile and
+which `#if defined(...)` list rows exist in the exact `Image.gz-dtb`.
+`kd_imgsensor.h` and `kd_sensorlist.h` are the MTK driver-name/init registry
+used by the HAL's SET_DRIVER ioctl. `kd_sensorlist.c` already owned the M6
+camera probe diagnostics, and warn level made the current clean-window proof
+visible. `kd_camera_hw.c` owns the MTK legacy rail/reset/MCLK sequence lookup;
+without M6-name rows the real sensors never reached a meaningful power-on ID
+probe. The two camera_hw headers had to stop truncating the power table below
+the configured sensor-list size.
+
+Expected next marker: after a stock-truth power/pin/bus fix, the clean camera
+window should keep the same list rows but replace I2C ACKERR/read-id failures
+with a real IMX278 or OV8856JSL sensor ID and `dumpsys media.camera` should
+report at least one camera device. If the next diagnostic patch only adds
+markers, it must print live MCLK, reset/PDN GPIO mode/dir/out, regulator
+enable/voltage, and adapter state immediately before the first ID read.
+
+Rollback condition: revert the power-table rows if exact stock DCT/source
+truth proves different rail order, reset polarity, MCLK routing, or sensor
+slot mapping. Revert the sensor-list/defconfig rows only if a verified M6
+stock source or capture proves a different physical sensor pair, because #118
+already proves the current userspace searches IMX278 and OV8856JSL and reaches
+their chip drivers.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260610-0406-m6-camera-sensor-wiring-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+CAP=/srv/forge/android/meizu_m6/captures/20260610-0418-m6-118-camera-sensor-wiring-711HEBSR277K5
+rg -n "Linux localhost|e65f282" "$CAP/identity-after-root.txt" "$CAP/boot-readback-pulled-sha256.txt"
+rg -n "list\\[0\\]|list\\[1\\]|power on match|i2c send fail|I2C_ACKERR|sensorID=0xffffffff" "$CAP/dmesg-clean-camera-window.txt"
+rg -n "Number of camera devices" "$CAP/dumpsys-media-camera-clean-window.txt"
+```
+
+Runtime result, **FACT / INFERENCE**, 2026-06-10:
+- FACT: #118 fixed the stale donor sensor-list layer. The kernel now exposes
+  IMX278 and OV8856JSL, the HAL selects them, their init functions run, and
+  matching power rows execute.
+- FACT: camera still enumerates zero devices; all actual ID reads still fail
+  with I2C ACKERR / `sensorID=0xffffffff`.
+- INFERENCE: the current camera frontier is no longer HAL/devnodes/sensor
+  registration. It is board wiring below the sensor driver: exact rail order,
+  reset/PDN polarity, MCLK source, pinmux, or I2C bus/address mapping.
+
 ## 2026-06-09 #114 restore-safe MIPITX PHY_SEL lane-map probes
 
 PATCH HISTORY, **ISOLATION / DIAGNOSTIC**, 2026-06-09: add a bounded manual

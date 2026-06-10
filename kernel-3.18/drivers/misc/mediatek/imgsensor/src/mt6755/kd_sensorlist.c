@@ -160,7 +160,7 @@ struct device *sensor_device = NULL;
 #endif
 
 #define M6_CAM_DIAG(fmt, arg...) \
-	pr_info_ratelimited("[M6_PERIPH_DIAG][CAM] " fmt, ##arg)
+	pr_warn_ratelimited("[M6_PERIPH_DIAG][CAM] " fmt, ##arg)
 
 static const char *m6_cam_power_type_name(PowerType type)
 {
