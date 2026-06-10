@@ -14478,6 +14478,132 @@ grep -E 'M6 DISPLAY truth\[p104_|M6 DISPLAY scanout\[p104_|M6 DSI phy_truth\[p10
 cat "$CAP/identity.txt" "$CAP/final-health.txt"
 ```
 
+## Current latest M6 display state pointer: #115 lane-group probes
+
+Latest validated boot/capture for this file is #115, not the older #106 block
+above. The full #115 patch history is in this file under
+`Patch history: #115 M6 restore-safe all-lane MIPITX analog probes`.
+
+FACT: #115 boot image sha256 is
+`2b3276272cadaabd350fac7b7b87004cd2f8234a80b0244a3daa803618eae8f2`, capture
+`/srv/forge/android/meizu_m6/captures/20260609-2350-m6-115-mipitx-lane-group-probes-711HEBSR277K5/`
+passes `sha256sum -c SHA256SUMS`, final backlight is `255`, final scanout is
+moving, and MIPITX lane words restore to
+`0x603/0x601/0x601/0x601/0x601`.
+
+INFERENCE: if the human visual observation for all five #115 windows was no
+image/stripe/flicker/change, all-lane `RT_CODE`, `LPTX`, and `LPCD` are
+rejected as optical-root candidates. Next useful low-layer probe is top-level
+MIPITX impedance enable/code (`imp_en` / `imp`) or external PHY evidence.
+
+## Patch history: #115 M6 restore-safe all-lane MIPITX analog probes
+
+Category: **DIAGNOSTIC / ISOLATION**.
+
+Hypothesis: the remaining black-glass frontier after #114 could still be a
+hidden HS/electrical mismatch inside documented per-lane MIPITX analog fields.
+Single-field top/pad probes and visible `PHY_SEL` lane-map probes did not
+exercise all five lane words together. If all lanes need a different receive
+termination / RT code, LP TX current, or LP detect current for the panel to
+accept HS-video, a restore-safe all-lane probe should create an optical
+response while leaving the digital DSI/DDP path alive.
+
+Evidence:
+
+- Final #115 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-2346-m6-dsi-lane-group-probe-bootonly/`.
+- Final #115 capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-2350-m6-115-mipitx-lane-group-probes-711HEBSR277K5/`.
+- Capture-local analysis:
+  `/srv/forge/android/meizu_m6/captures/20260609-2350-m6-115-mipitx-lane-group-probes-711HEBSR277K5/analysis.md`.
+- Build log:
+  `build-m6-dsi-lane-group-probe-20260609.log`; `Image.gz-dtb` was produced.
+- #115 boot image sha256:
+  `2b3276272cadaabd350fac7b7b87004cd2f8234a80b0244a3daa803618eae8f2`.
+- #115 `Image.gz-dtb` sha256:
+  `759be3d0ef4e206c579d42c57369164a39f5ca3e6520e4bbc0cfeb615971c24d`.
+- #115 `System.map` sha256:
+  `4f0a6108dc5d0eb4bf6e8a16fc05bee0dc7ff7bfa7345e5db7f7b5dccba02f99`.
+- #115 `vmlinux` sha256:
+  `389350a85ef8b53f49d135a268da73fcef8794ffdcdf5c19c5b0819a07c6aada`.
+- `git diff --check` passed before build. #115 artifact and #115 capture both
+  pass `sha256sum -c SHA256SUMS`.
+- Runtime identity matched #115:
+  `Linux localhost 3.18.140 #115 SMP PREEMPT Tue Jun 9 23:43:51 CDT 2026 aarch64`,
+  `sys.boot_completed=1`, `bootanim=stopped`, root shell, final boot readback
+  `2b3276272cadaabd350fac7b7b87004cd2f8234a80b0244a3daa803618eae8f2`.
+- The test pinned brightness before the probe window and final health reports
+  `255`.
+- Baseline truth: `in=507/284->491/286`, `out=662/280->644/282`,
+  `dsi_eof=1`, `dsi_sof=1`, `te=1`, `bl=255`.
+- Probed values and live lane words:
+  `rt=4 -> 0x403/0x401/0x401/0x401/0x401`,
+  `rt=8 -> 0x803/0x801/0x801/0x801/0x801`,
+  `rt=12 -> 0xc03/0xc01/0xc01/0xc01/0xc01`,
+  `lptx=7 -> 0x61f/0x61d/0x61d/0x61d/0x61d`,
+  `lpcd=3 -> 0x663/0x661/0x661/0x661/0x661`.
+- Final restore: `TXRX=0x1003c`, `PHY_LCCON=0x1`, MIPITX lane words back to
+  `0x603/0x601/0x601/0x601/0x601`, scanout moved
+  `in=446/1058->215/1061`, `out=604/1054->372/1057`, `bl=255`.
+- Current-regression grep over `dmesg-after.txt` found no `DEVAPC`,
+  `wait VSYNC`, `abnormal`, `s_w_rst`, `L1 not complete`,
+  `M6 OVL irq diag`, `RDMA0_EOF`, or invalid/unknown lane-group command
+  signatures.
+
+Files changed:
+
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds the
+  M6 all-lane MIPITX group table and `dsi_m6_mipitx_lane_group_probe()`,
+  including bounded hold, optional mux/window sampling, and restore-by-default
+  readback.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the new
+  owner-local DSI helper.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: exposes the
+  helper through `m6_dsi_mipitx_lane_group_probe:<rt|lptx|lpcd>:...`.
+- `BRINGUP_STATE.md` and
+  `docs/run_reports/2026-06-09_m6_display_closed_layers_external_audit_result.md`:
+  record artifact identity, capture evidence, interpretation, rollback, and
+  next commands.
+- Capture-local `analysis.md`: records the #115 capture facts next to the logs.
+
+Why each file changed: `ddp_dsi.c` owns the MIPITX register offsets and the
+existing M6 DSI snapshot/mux helpers, so it is the right place to modify all
+lane words atomically and restore them. `ddp_dsi.h` and `disp_debug.c` extend
+the existing manual debugfs surface without changing boot behavior. The state,
+report, and capture analysis keep the method and interpretation tied to the
+exact #115 artifact/capture, so future agents do not retest the same analog
+fields unless a human visual observation contradicts this run.
+
+Expected next marker: a valid #115 or later run of
+`m6_dsi_mipitx_lane_group_probe:<group>:<value>:<hold>:1:3` should show lane
+words changed during the hold, `mipitx-lane-group-probe-after-restore` back to
+`0x603/0x601/0x601/0x601/0x601`, final `TXRX=0x1003c`,
+`PHY_LCCON=0x1`, moving scanout, `dsi0_eof=1`, and `bl=255`. If the human
+observation for all five #115 windows was no image/stripe/flicker/change, mark
+`RT_CODE`, `LPTX`, and `LPCD` as rejected optical-root candidates and move to
+top-level impedance (`imp_en` / `imp`) or external PHY evidence.
+
+Rollback condition: revert #115 if the command changes boot behavior before
+manual invocation, leaves any lane word different from the saved old value
+after `restore=1`, leaves debug selectors non-zero, disables `TXRX`/`PHY_LCCON`,
+creates a new OVL/RDMA/CMDQ/DEVAPC wedge, or regresses ADB, SurfaceFlinger, or
+backlight. Do not revert just because the glass remains black; this is
+diagnostic-only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260609-2346-m6-dsi-lane-group-probe-bootonly
+sha256sum -c SHA256SUMS
+abootimg -i boot-m6-dsi-lane-group-probe-20260609-2346.img
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-2350-m6-115-mipitx-lane-group-probes-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+grep -E 'M6 DSI mipitx_lane_group_probe|M6 DISPLAY truth\\[p115_lanegrp|M6 DSI clk_restore' "$CAP/key-lines.txt"
+grep -E 'wait VSYNC|abnormal|DEVAPC|s_w_rst|L1 not complete|RDMA0_EOF' "$CAP/dmesg-after.txt"
+cat "$CAP/identity.txt" "$CAP/final-health.txt"
+```
+
 ### Follow-up live capture: #104 steady/BIST/resume mux comparison
 
 Patch category: **DIAGNOSTIC / STATE-ONLY**. No source or boot image changed
@@ -14692,3 +14818,25 @@ CAP=/srv/forge/android/meizu_m6/captures/20260610-0252-m6-106-offsetfix-probe-sa
 grep -E 'M6 DSI (cc_probe|lc_hs_probe|clk_restore)|M6 DSI snapshot\\[(cc-probe|lc-hs-probe|clk-restore)' "$CAP/m6-lines.txt"
 cat "$CAP/identity.txt" "$CAP/final-health.txt"
 ```
+
+## Latest pointer: #115 lane-group probes
+
+The latest validated M6 display boot/capture is #115:
+
+- artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-2346-m6-dsi-lane-group-probe-bootonly/`;
+- capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-2350-m6-115-mipitx-lane-group-probes-711HEBSR277K5/`;
+- boot image sha256:
+  `2b3276272cadaabd350fac7b7b87004cd2f8234a80b0244a3daa803618eae8f2`;
+- capture checksum now includes `analysis.md` and passes
+  `sha256sum -c SHA256SUMS`.
+
+FACT: #115 changed/restored all-lane MIPITX `RT_CODE`, `LPTX`, and `LPCD`
+under live video, kept final `TXRX=0x1003c`, `PHY_LCCON=0x1`, moving scanout,
+and `bl=255`.
+
+INFERENCE: if the human visual result for the #115 windows was still no
+image/stripe/flicker/change, those all-lane analog fields are rejected. The
+next useful low-level candidate is top-level MIPITX impedance enable/code
+(`imp_en` / `imp`) or external PHY evidence.

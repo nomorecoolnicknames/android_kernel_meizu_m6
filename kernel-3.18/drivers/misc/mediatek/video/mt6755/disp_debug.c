@@ -151,6 +151,8 @@ char MTKFB_STR_HELP[] =
 		"             Meizu M6 read-only repeated MIPITX pad/top/lane sampler\n"
 		"        m6_dsi_mipitx_pad_probe:<field>:<value>[:hold_ms[:restore[:mux]]]\n"
 		"             Meizu M6 restore-safe MIPITX field isolation; mux=1 sweep, 2 stats, 3 pad window\n"
+		"        m6_dsi_mipitx_lane_group_probe:<rt|lptx|lpcd>:<value>[:hold_ms[:restore[:mux]]]\n"
+		"             Meizu M6 restore-safe all-lane MIPITX analog-field isolation; mux=1 sweep, 2 stats, 3 pad window\n"
 		"        m6_dsi_mipitx_phy_sel_probe:<value>[:hold_ms[:restore[:mux]]]\n"
 		"             Meizu M6 restore-safe MIPITX PHY_SEL lane-map isolation; mux=1 sweep, 2 stats, 3 pad window\n"
 		"        m6_dsi_wrtrace_dump[:limit]\n"
@@ -872,6 +874,42 @@ void mtkfb_process_dbg_opt(const char *opt)
 		primary_display_manual_unlock();
 		DISPERR("M6 DSI mipitx_pad_probe command: field=%s value=%u hold=%u restore=%u mux=%u\n",
 			field, value, hold_ms, restore ? 1 : 0, sample_mux);
+	} else if (0 == strncmp(opt, "m6_dsi_mipitx_lane_group_probe:",
+				sizeof("m6_dsi_mipitx_lane_group_probe:") - 1)) {
+		const char *p = opt + sizeof("m6_dsi_mipitx_lane_group_probe:") - 1;
+		char group[16];
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+		size_t i = 0;
+
+		while (i + 1 < sizeof(group) && *p &&
+		       *p != ':' && *p != '\n' && *p != '\r' &&
+		       *p != ' ' && *p != '\t') {
+			group[i] = *p;
+			i++;
+			p++;
+		}
+		group[i] = '\0';
+		if (!group[0] || *p != ':') {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		ret = sscanf(p + 1, "%i:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_mipitx_lane_group_probe(group, value, hold_ms,
+					       restore, sample_mux);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI mipitx_lane_group_probe command: group=%s value=%u hold=%u restore=%u mux=%u\n",
+			group, value, hold_ms, restore ? 1 : 0, sample_mux);
 	} else if (0 == strncmp(opt, "m6_dsi_mipitx_phy_sel_probe:",
 				sizeof("m6_dsi_mipitx_phy_sel_probe:") - 1)) {
 		int value_arg = 0;

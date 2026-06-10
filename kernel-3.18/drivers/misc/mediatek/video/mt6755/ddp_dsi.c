@@ -3205,6 +3205,13 @@ struct dsi_m6_mipitx_probe_field {
 	unsigned int max;
 };
 
+struct dsi_m6_mipitx_lane_group {
+	const char *name;
+	unsigned int mask;
+	unsigned int shift;
+	unsigned int max;
+};
+
 #define M6_MIPITX_PHY_SEL_MASK 0x00777777U
 #define M6_MIPITX_PHY_SEL_FIELD(_raw, _idx) (((_raw) >> ((_idx) * 4)) & 0x7U)
 
@@ -3220,6 +3227,16 @@ static const struct dsi_m6_mipitx_probe_field dsi_m6_mipitx_probe_fields[] = {
 	{ "pad_low", 0x040, 1U << 11, 11, 1 },
 };
 
+static const unsigned int dsi_m6_mipitx_lane_offsets[] = {
+	0x004, 0x008, 0x00c, 0x010, 0x014,
+};
+
+static const struct dsi_m6_mipitx_lane_group dsi_m6_mipitx_lane_groups[] = {
+	{ "rt", 0xfU << 8, 8, 15 },
+	{ "lptx", 0x7U << 2, 2, 7 },
+	{ "lpcd", 0x3U << 5, 5, 3 },
+};
+
 static const struct dsi_m6_mipitx_probe_field *
 dsi_m6_mipitx_find_probe_field(const char *name)
 {
@@ -3231,6 +3248,22 @@ dsi_m6_mipitx_find_probe_field(const char *name)
 	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_probe_fields); i++) {
 		if (!strcmp(name, dsi_m6_mipitx_probe_fields[i].name))
 			return &dsi_m6_mipitx_probe_fields[i];
+	}
+
+	return NULL;
+}
+
+static const struct dsi_m6_mipitx_lane_group *
+dsi_m6_mipitx_find_lane_group(const char *name)
+{
+	unsigned int i;
+
+	if (!name)
+		return NULL;
+
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_groups); i++) {
+		if (!strcmp(name, dsi_m6_mipitx_lane_groups[i].name))
+			return &dsi_m6_mipitx_lane_groups[i];
 	}
 
 	return NULL;
@@ -3437,6 +3470,115 @@ void dsi_m6_mipitx_pad_probe(const char *field_name, unsigned int value,
 	DISPERR("M6 DSI mipitx_pad_probe: end field=%s value=%u old=0x%x final=0x%x restore=%u mux=%u\n",
 		field->name, value, old_raw,
 		INREG32(MIPITX_BASE + field->offset),
+			restore ? 1 : 0, sample_mux);
+}
+
+void dsi_m6_mipitx_lane_group_probe(const char *group_name,
+				    unsigned int value,
+				    unsigned int hold_ms,
+				    unsigned int restore,
+				    unsigned int sample_mux)
+{
+	char tag[64];
+	const struct dsi_m6_mipitx_lane_group *group;
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old_raw[ARRAY_SIZE(dsi_m6_mipitx_lane_offsets)];
+	unsigned int new_raw[ARRAY_SIZE(dsi_m6_mipitx_lane_offsets)];
+	unsigned int after_raw[ARRAY_SIZE(dsi_m6_mipitx_lane_offsets)];
+	unsigned int restored_raw[ARRAY_SIZE(dsi_m6_mipitx_lane_offsets)];
+	unsigned int i;
+
+	if (!DSI_REG[0])
+		return;
+
+	group = dsi_m6_mipitx_find_lane_group(group_name);
+	if (!group) {
+		DISPERR("M6 DSI mipitx_lane_group_probe: unknown group=%s allowed=rt,lptx,lpcd\n",
+			group_name ? group_name : "null");
+		return;
+	}
+	if (value > group->max) {
+		DISPERR("M6 DSI mipitx_lane_group_probe: invalid group=%s value=%u max=%u\n",
+			group->name, value, group->max);
+		return;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++) {
+		old_raw[i] = INREG32(MIPITX_BASE +
+				     dsi_m6_mipitx_lane_offsets[i]);
+		new_raw[i] = (old_raw[i] & ~group->mask) |
+			     ((value << group->shift) & group->mask);
+	}
+
+	DISPERR("M6 DSI mipitx_lane_group_probe: begin group=%s value=%u old c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x new=0x%x/0x%x/0x%x/0x%x/0x%x mask=0x%x shift=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		group->name, value, old_raw[0], old_raw[1], old_raw[2],
+		old_raw[3], old_raw[4], new_raw[0], new_raw[1], new_raw[2],
+		new_raw[3], new_raw[4], group->mask, group->shift,
+		restore ? 1 : 0, sample_mux, bounded, dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("mipitx-lane-group-probe-before",
+			     DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("mipitx-lane-group-probe-before");
+
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++)
+		MIPITX_OUTREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[i],
+				new_raw[i]);
+	udelay(1);
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++)
+		after_raw[i] = INREG32(MIPITX_BASE +
+				       dsi_m6_mipitx_lane_offsets[i]);
+	DISPERR("M6 DSI mipitx_lane_group_probe: after-set group=%s value=%u live c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+		group->name, value, after_raw[0], after_raw[1],
+		after_raw[2], after_raw[3], after_raw[4],
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098),
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("mipitx-lane-group-probe-after-set",
+			     DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("mipitx-lane-group-probe-after-set");
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "lanegrp-%s-mux", group->name);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux == 2) {
+		snprintf(tag, sizeof(tag), "lanegrp-%s-muxstats", group->name);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	} else if (sample_mux >= 3) {
+		snprintf(tag, sizeof(tag), "lanegrp-%s-window", group->name);
+		dsi_m6_mipitx_pad_window(tag, 4, 50);
+	}
+
+	snprintf(tag, sizeof(tag), "lanegrp-%s-hold", group->name);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++)
+			MIPITX_OUTREG32(MIPITX_BASE +
+					dsi_m6_mipitx_lane_offsets[i],
+					old_raw[i]);
+		udelay(1);
+		for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++)
+			restored_raw[i] = INREG32(MIPITX_BASE +
+					dsi_m6_mipitx_lane_offsets[i]);
+		DISPERR("M6 DSI mipitx_lane_group_probe: after-restore group=%s old c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x live=0x%x/0x%x/0x%x/0x%x/0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+			group->name, old_raw[0], old_raw[1], old_raw[2],
+			old_raw[3], old_raw[4], restored_raw[0],
+			restored_raw[1], restored_raw[2], restored_raw[3],
+			restored_raw[4], INREG32(MIPITX_BASE + 0x094),
+			INREG32(MIPITX_BASE + 0x098),
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+		dsi_m6_dump_snapshot("mipitx-lane-group-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+		dsi_m6_dump_mipitx_decode("mipitx-lane-group-probe-after-restore");
+	}
+
+	DISPERR("M6 DSI mipitx_lane_group_probe: end group=%s value=%u old c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x final=0x%x/0x%x/0x%x/0x%x/0x%x restore=%u mux=%u\n",
+		group->name, value, old_raw[0], old_raw[1], old_raw[2],
+		old_raw[3], old_raw[4],
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[0]),
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[1]),
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[2]),
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[3]),
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[4]),
 		restore ? 1 : 0, sample_mux);
 }
 

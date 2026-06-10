@@ -258,6 +258,11 @@ extern "C" {
 	void dsi_m6_mipitx_pad_probe(const char *field_name, unsigned int value,
 				     unsigned int hold_ms, unsigned int restore,
 				     unsigned int sample_mux);
+	void dsi_m6_mipitx_lane_group_probe(const char *group_name,
+					    unsigned int value,
+					    unsigned int hold_ms,
+					    unsigned int restore,
+					    unsigned int sample_mux);
 	void dsi_m6_mipitx_phy_sel_probe(unsigned int value, unsigned int hold_ms,
 					 unsigned int restore,
 					 unsigned int sample_mux);
