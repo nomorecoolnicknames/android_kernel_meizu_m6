@@ -252,6 +252,7 @@ extern "C" {
 	void dsi_m6_debug_mux_sweep(const char *tag);
 	void dsi_m6_debug_mux_stats(const char *tag, unsigned int samples,
 				    unsigned int delay_us);
+	void dsi_m6_lkgold_muxstats_dump(void);
 	void dsi_m6_mipitx_pad_window(const char *tag, unsigned int samples,
 				      unsigned int delay_ms);
 	void dsi_m6_mipitx_pad_probe(const char *field_name, unsigned int value,

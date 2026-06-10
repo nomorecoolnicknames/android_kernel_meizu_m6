@@ -139,6 +139,8 @@ char MTKFB_STR_HELP[] =
 		"             Meizu M6 bounded DSI/MIPITX debug mux sweep; restores selectors\n"
 		"        m6_dsi_debug_mux_stats[:tag[:samples[:delay_us]]]\n"
 		"             Meizu M6 DSI/MIPITX debug mux multi-sample stats; restores selectors\n"
+		"        m6_dsi_lkgold_muxstats_dump\n"
+		"             Meizu M6 dump cached early LK handoff MIPITX mux stats\n"
 		"        m6_dsi_clk_restore[:tag]\n"
 		"             Meizu M6 force TXRX HSTX_CKLP_EN and PHY LC_HS_TX_EN back on\n"
 		"        m6_dsi_cc_probe:<0|1>[:hold_ms[:restore[:mux]]]\n"
@@ -732,6 +734,12 @@ void mtkfb_process_dbg_opt(const char *opt)
 			primary_display_manual_unlock();
 			DISPERR("M6 DSI debug_mux_stats command: tag=%s samples=%u delay_us=%u\n",
 				safe_tag, samples, delay_us);
+		} else if (0 == strncmp(opt, "m6_dsi_lkgold_muxstats_dump",
+					sizeof("m6_dsi_lkgold_muxstats_dump") - 1)) {
+			primary_display_manual_lock();
+			dsi_m6_lkgold_muxstats_dump();
+			primary_display_manual_unlock();
+			DISPERR("M6 DSI lkgold_muxstats_dump command\n");
 		} else if (0 == strncmp(opt, "m6_dsi_debug_mux", 16)) {
 			const char *tag = "manual";
 			char safe_tag[32];

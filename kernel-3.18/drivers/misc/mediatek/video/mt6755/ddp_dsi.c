@@ -1801,6 +1801,61 @@ static bool m6_lkgold_dumped_pre;
 static bool m6_lkgold_dumped_post_config;
 static bool m6_lkgold_dumped_post_start;
 
+static void dsi_m6_dump_mipitx_debug_mux_stats_direct(const char *tag,
+						      unsigned int sweep_id,
+						      unsigned int samples,
+						      unsigned int delay_us);
+
+#define M6_LKGOLD_MUX_TAGS 3
+#define M6_LKGOLD_MUX_SELS 16
+
+struct m6_lkgold_mipitx_mux_cache {
+	bool valid;
+	char tag[24];
+	unsigned int sweep_id;
+	unsigned int sel;
+	unsigned int samples;
+	unsigned int delay_us;
+	uint32_t orig;
+	uint32_t now;
+	uint32_t out_first;
+	uint32_t out_last;
+	uint32_t out_min;
+	uint32_t out_max;
+	uint32_t out_or;
+	uint32_t out_and;
+	uint32_t out_xor;
+	unsigned int out_changes;
+	uint32_t apb_first;
+	uint32_t apb_last;
+	uint32_t apb_or;
+	uint32_t apb_and;
+	uint32_t apb_xor;
+	unsigned int apb_changes;
+	unsigned int word_first;
+	unsigned int word_last;
+	unsigned int line_first;
+	unsigned int line_last;
+	uint32_t lanes[5];
+	uint32_t pll[3];
+};
+
+static struct m6_lkgold_mipitx_mux_cache
+	m6_lkgold_mipitx_mux_cache[M6_LKGOLD_MUX_TAGS][M6_LKGOLD_MUX_SELS];
+
+static int dsi_m6_lkgold_mux_cache_slot(const char *tag)
+{
+	if (!tag)
+		return -1;
+	if (!strncmp(tag, "lkgold-pre-init", sizeof("lkgold-pre-init") - 1))
+		return 0;
+	if (!strncmp(tag, "lkgold-post-config", sizeof("lkgold-post-config") - 1))
+		return 1;
+	if (!strncmp(tag, "lkgold-post-start", sizeof("lkgold-post-start") - 1))
+		return 2;
+	return -1;
+}
+
 static void dsi_m6_lkgold_capture(struct m6_lkgold_snapshot *snap)
 {
 	unsigned int idx;
@@ -1882,6 +1937,32 @@ static void dsi_m6_lkgold_dump_diff(const char *stage,
 	}
 }
 
+static void dsi_m6_lkgold_muxstats(const char *tag)
+{
+	char mux_tag[32];
+	static unsigned int sweep_count;
+
+	if (!tag || DSI_REG[0] == NULL)
+		return;
+
+	snprintf(mux_tag, sizeof(mux_tag), "lkgold-%s", tag);
+	DISPERR("M6 lkgold_muxstats[%s]#%u: begin dbg=0x%x out=0x%x apb=0x%x start=0x%x mode=0x%x txrx=0x%x lccon=0x%x\n",
+		tag, sweep_count + 1, INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	dsi_m6_dump_mipitx_debug_mux_stats_direct(mux_tag, ++sweep_count, 4, 1000);
+	DISPERR("M6 lkgold_muxstats[%s]#%u: end dbg=0x%x out=0x%x apb=0x%x start=0x%x mode=0x%x txrx=0x%x lccon=0x%x\n",
+		tag, sweep_count, INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+}
+
 static void dsi_m6_lkgold_snapshot_once(const char *tag)
 {
 	struct m6_lkgold_snapshot snap;
@@ -1914,6 +1995,7 @@ static void dsi_m6_lkgold_snapshot_once(const char *tag)
 	dsi_m6_lkgold_dump_raw(tag, &snap);
 	if (strcmp(tag, "pre-init"))
 		dsi_m6_lkgold_dump_diff(tag, &snap);
+	dsi_m6_lkgold_muxstats(tag);
 }
 
 static void dsi_m6_phy_lk_delay(const char *tag, unsigned int delay_ms)
@@ -2615,12 +2697,14 @@ static void dsi_m6_dump_mipitx_debug_mux_stats_direct(const char *tag,
 	unsigned int sel;
 	unsigned int bounded_samples;
 	unsigned int bounded_delay_us;
+	int cache_slot;
 
 	if (DSI_REG[0] == NULL)
 		return;
 
 	bounded_samples = dsi_m6_bound_mux_samples(samples);
 	bounded_delay_us = dsi_m6_bound_mux_delay_us(delay_us);
+	cache_slot = dsi_m6_lkgold_mux_cache_slot(tag);
 	orig = INREG32(MIPITX_BASE + 0x090);
 	for (sel = 0; sel < 16; sel++) {
 		uint32_t debug_sel = (orig & ~0x1f) | 0x10 | sel;
@@ -2691,6 +2775,47 @@ static void dsi_m6_dump_mipitx_debug_mux_stats_direct(const char *tag,
 				udelay(bounded_delay_us);
 		}
 
+		if (cache_slot >= 0) {
+			struct m6_lkgold_mipitx_mux_cache *entry =
+				&m6_lkgold_mipitx_mux_cache[cache_slot][sel];
+
+			memset(entry, 0, sizeof(*entry));
+			entry->valid = true;
+			snprintf(entry->tag, sizeof(entry->tag), "%s", tag);
+			entry->sweep_id = sweep_id;
+			entry->sel = sel;
+			entry->samples = bounded_samples;
+			entry->delay_us = bounded_delay_us;
+			entry->orig = orig;
+			entry->now = INREG32(MIPITX_BASE + 0x090);
+			entry->out_first = out_first;
+			entry->out_last = out_last;
+			entry->out_min = out_min;
+			entry->out_max = out_max;
+			entry->out_or = out_or;
+			entry->out_and = out_and;
+			entry->out_xor = out_xor;
+			entry->out_changes = out_changes;
+			entry->apb_first = apb_first;
+			entry->apb_last = apb_last;
+			entry->apb_or = apb_or;
+			entry->apb_and = apb_and;
+			entry->apb_xor = apb_xor;
+			entry->apb_changes = apb_changes;
+			entry->word_first = word_first;
+			entry->word_last = word_last;
+			entry->line_first = line_first;
+			entry->line_last = line_last;
+			entry->lanes[0] = INREG32(MIPITX_BASE + 0x004);
+			entry->lanes[1] = INREG32(MIPITX_BASE + 0x008);
+			entry->lanes[2] = INREG32(MIPITX_BASE + 0x00c);
+			entry->lanes[3] = INREG32(MIPITX_BASE + 0x010);
+			entry->lanes[4] = INREG32(MIPITX_BASE + 0x014);
+			entry->pll[0] = INREG32(MIPITX_BASE + 0x050);
+			entry->pll[1] = INREG32(MIPITX_BASE + 0x058);
+			entry->pll[2] = INREG32(MIPITX_BASE + 0x068);
+		}
+
 		DISPERR("M6 MIPITX mux_stats[%s]#%u sel=0x%x n=%u delay_us=%u orig=0x%x now=0x%x out=0x%x/0x%x minmax=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u apb=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u word=%u/%u line=%u/%u lanes=0x%x/0x%x/0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x\n",
 			tag, sweep_id, sel, bounded_samples, bounded_delay_us,
 			orig, INREG32(MIPITX_BASE + 0x090),
@@ -2709,6 +2834,53 @@ static void dsi_m6_dump_mipitx_debug_mux_stats_direct(const char *tag,
 	DISPERR("M6 MIPITX mux_stats[%s]#%u restore orig=0x%x now=0x%x out=0x%x apb=0x%x n=%u delay_us=%u\n",
 		tag, sweep_id, orig, restored, INREG32(MIPITX_BASE + 0x094),
 		INREG32(MIPITX_BASE + 0x098), bounded_samples, bounded_delay_us);
+}
+
+void dsi_m6_lkgold_muxstats_dump(void)
+{
+	static const char *const names[M6_LKGOLD_MUX_TAGS] = {
+		"lkgold-pre-init",
+		"lkgold-post-config",
+		"lkgold-post-start",
+	};
+	unsigned int slot;
+	unsigned int sel;
+
+	DISPERR("M6 lkgold_muxstats_cache: begin live_dbg=0x%x out=0x%x apb=0x%x start=0x%x mode=0x%x txrx=0x%x lccon=0x%x\n",
+		INREG32(MIPITX_BASE + 0x090), INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	for (slot = 0; slot < M6_LKGOLD_MUX_TAGS; slot++) {
+		unsigned int valid = 0;
+
+		for (sel = 0; sel < M6_LKGOLD_MUX_SELS; sel++) {
+			const struct m6_lkgold_mipitx_mux_cache *entry =
+				&m6_lkgold_mipitx_mux_cache[slot][sel];
+
+			if (!entry->valid)
+				continue;
+			valid++;
+			DISPERR("M6 lkgold_muxstats_cache[%s]#%u sel=0x%x n=%u delay_us=%u orig=0x%x now=0x%x out=0x%x/0x%x minmax=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u apb=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u word=%u/%u line=%u/%u lanes=0x%x/0x%x/0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x\n",
+				entry->tag, entry->sweep_id, entry->sel,
+				entry->samples, entry->delay_us, entry->orig,
+				entry->now, entry->out_first, entry->out_last,
+				entry->out_min, entry->out_max, entry->out_or,
+				entry->out_and, entry->out_xor, entry->out_changes,
+				entry->apb_first, entry->apb_last, entry->apb_or,
+				entry->apb_and, entry->apb_xor, entry->apb_changes,
+				entry->word_first, entry->word_last,
+				entry->line_first, entry->line_last,
+				entry->lanes[0], entry->lanes[1], entry->lanes[2],
+				entry->lanes[3], entry->lanes[4], entry->pll[0],
+				entry->pll[1], entry->pll[2]);
+		}
+		if (!valid)
+			DISPERR("M6 lkgold_muxstats_cache[%s]: missing\n",
+				names[slot]);
+	}
+	DISPERR("M6 lkgold_muxstats_cache: end\n");
 }
 
 void dsi_m6_debug_mux_sweep(const char *tag)

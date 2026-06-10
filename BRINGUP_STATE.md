@@ -1,5 +1,145 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #113 LK handoff MIPITX muxstats cache
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: cache early LK-handoff MIPITX
+debug-mux stats in RAM and expose them through debugfs command
+`m6_dsi_lkgold_muxstats_dump`. This closes the dmesg eviction trap seen in
+#112, where the early `lkgold-pre-init`, `lkgold-post-config`, and
+`lkgold-post-start` muxstats were printed but overwritten by later SDIO/MMC
+noise before capture.
+
+Hypothesis: FACT from #109/#111: normal Linux video keeps DSI/MIPITX mux
+selector classes changing, while forcing `PHY_LCCON.LC_HS_TX_EN=0` collapses
+every DSI selector. HYPOTHESIS: if Linux takeover loses a hidden LK-only
+MIPITX state before normal capture can read it, the loss should be visible in
+early handoff muxstats at pre-init, post-config, or post-start. A RAM cache
+can preserve those early rows even when dmesg evicts them before userspace
+capture.
+
+Evidence:
+- #112 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-2213-m6-lkgold-muxstats-bootonly/`.
+- #112 boot image sha256:
+  `0caa2ef54575615a927f6c6f4bfb0a09bd1fd9deffe9a1d8fbc9a65d89985bb8`.
+- #112 runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-2220-m6-112-lkgold-muxstats-711HEBSR277K5/`.
+- FACT: #112 booted, but the live dmesg ring began around 66 seconds and
+  evicted the early lkgold lines; pstore was an older #111 console. Logging
+  alone was therefore insufficient.
+- #113 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-2224-m6-lkgold-muxstats-cache-bootonly/`.
+- #113 boot image sha256:
+  `83113ecc9fee58be1635b1ab822ba33ffc34314d7b19086fcb30a3c7ae1afa99`.
+- #113 `Image.gz-dtb` sha256:
+  `5154748da9f63cb80c69709c60b9712ed965b58ceef1ca7abd18c008b1a4d1e8`.
+- #113 `System.map` sha256:
+  `2945bc35878f2d6ef2c54185f06dfda4ff94b872fea5f4e31d5b58cfc45230f7`.
+- #113 `vmlinux` sha256:
+  `2e194266e5b2f94afa1541ba722b974d0d02c8759311b085cdd4e9e6587cb513`.
+- #113 `.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- #113 runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-2228-m6-113-lkgold-muxstats-cache-711HEBSR277K5/`.
+- #113 capture-local analysis:
+  `/srv/forge/android/meizu_m6/captures/20260609-2228-m6-113-lkgold-muxstats-cache-711HEBSR277K5/analysis.md`.
+- #113 freshness: local image, `/data/local/tmp`, and boot partition readback
+  all matched
+  `83113ecc9fee58be1635b1ab822ba33ffc34314d7b19086fcb30a3c7ae1afa99`.
+  Runtime identity was `Linux localhost 3.18.140 #113 SMP PREEMPT Tue Jun 9
+  22:23:51 CDT 2026 aarch64`, serial `711HEBSR277K5`,
+  `sys.boot_completed=1`, bootanim stopped, Display Power ON.
+- #113 brightness: `identity.txt` saw the HAL trap at `10` before pinning;
+  `brightness-pin.txt` forced 255 and final truth proved `bl=255`.
+- #113 dmesg lines `7984..8033`: `m6_dsi_lkgold_muxstats_dump` emitted 48
+  cached rows: 16 each for `lkgold-pre-init`, `lkgold-post-config`, and
+  `lkgold-post-start`; no cached row was missing.
+- #113 dmesg lines `7985..8032`: all cached stages had lane words
+  `0x603/0x601/0x601/0x601/0x601`, PLL words `0x9/0x46c4ec4e/0x101`, and
+  `apb=0x0/... changes=0`.
+- #113 dmesg lines `8280..8345`: final truth was not the #98 OVL
+  `s_w_rst` state. `ovl0 flow decode fsm=0x20/eng_act`, `out_valid=1`,
+  `out_ready=1`, `running=1`; RDMA/DSI counters moved
+  (`in=176/384->234/388`, `out=330/380->388/384`, `dsi_eof=1`,
+  `dsi_sof=1`, `te=1`), while CMDQ `rdma_eof` stayed zero.
+- #113 dmesg lines `8311..8317`: current SMI/LARB0 diagnostics read the real
+  M4U MMU enable at `larb0+0xfc0` as `MMU_M4U=0x7ff`; the `0xa0..0xac`
+  values are the separate `vio/ongoing` line and were zero in this window.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  lkgold-stage muxstats capture, bounded RAM cache for three early stages and
+  sixteen selectors, and a dump helper that prints the cache after boot.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exposes
+  `dsi_m6_lkgold_muxstats_dump()` to the debugfs parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds help
+  text and parser entry for `m6_dsi_lkgold_muxstats_dump`.
+- `BRINGUP_STATE.md`: records category, evidence, artifact identity, runtime
+  result, expected next marker, rollback condition, and verification commands.
+- `docs/run_reports/2026-06-09_m6_display_closed_layers_external_audit_result.md`:
+  records the layer result and the current interpretation.
+- `captures/20260609-2228-m6-113-lkgold-muxstats-cache-711HEBSR277K5/analysis.md`:
+  capture-local FACT/INFERENCE summary.
+
+Why each file changed: `ddp_dsi.c` owns DSI/MIPITX register access and the
+existing M6 muxstats helper, so early handoff sampling and selector restore
+must remain there. `ddp_dsi.h` is required by the established debugfs command
+surface. `disp_debug.c` is the manual command entry point used by capture
+scripts. The state, report, and capture-local analysis files preserve the
+evidence in the expected durable locations.
+
+Expected next marker: on #113 or any derivative, `echo
+m6_dsi_lkgold_muxstats_dump > /d/mtkfb` should print exactly three populated
+groups, 16 rows each, with no `missing` rows. A final
+`m6_display_truth_window:<tag>` should still prove brightness 255 and show
+whether the DDP state is the active #113 scanout mode or the older #98 OVL
+reset wedge.
+
+Rollback condition: revert this patch if it changes boot or display behavior
+before manual debugfs use, fails to restore the MIPITX debug selector, causes
+new parser errors, introduces boot hangs, VSYNC/CMDQ/RDMA/OVL regressions, or
+produces missing/partially written cached rows on a verified #113 derivative.
+Do not revert only because the glass remains black; this patch is diagnostic.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-2224-m6-lkgold-muxstats-cache-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-2228-m6-113-lkgold-muxstats-cache-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/analysis.md"
+
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_dsi_lkgold_muxstats_dump > /d/mtkfb'
+adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5 shell 'echo m6_display_truth_window:pXXX_final > /d/mtkfb'
+```
+
+Runtime result, **FACT**, 2026-06-09:
+- #113 closes a specific handoff question: no mux-visible LK-only MIPITX
+  state disappears during Linux takeover. Pre-init, post-config, post-start,
+  and steady-state all show the same visible MIPITX lane/PLL class and the
+  same active selector classes.
+- #113 also splits the digital symptoms: #98 OVL `s_w_rst` was a real wedge
+  mode, but current #113 final truth is active `eng_act` with moving RDMA/DSI
+  counters. CMDQ `RDMA0_EOF` remains zero while DSI EOF and counters move, so
+  it is a reliability/mapping/handshake issue, not the current optical root.
+- Current source already logs the real M4U MMU enable as `MMU_M4U` from
+  `larb0+0xfc0`; do not read `MMU_SMI=0x0` or the `0xa0..0xac` vio line as
+  "M4U disabled" in #113.
+
+INFERENCE: after #113, the highest-value optical frontier is below the
+software-visible DSI/MIPITX register and mux classes: PHY electrical
+acceptance, hidden lane polarity/map, board lane routing, or panel HS-video
+acceptance. The CMDQ `RDMA0_EOF`/resume path should still be repaired, but it
+does not explain black glass in the #113 active scanout truth window.
+
 ## 2026-06-09 #110 MIPITX pad/top/lane probes
 
 PATCH HISTORY, **DIAGNOSTIC / ISOLATION**, 2026-06-09: add bounded manual
