@@ -13881,3 +13881,50 @@ grep -E 'M6 DSI debug_mux|M6 DSI dbg_mux|M6 MIPITX dbg_mux|M6 DSI snapshot\[debu
 grep -E 'M6 DISPLAY truth\[p104_|M6 DISPLAY scanout\[p104_|M6 DSI phy_truth\[p104_' "$CAP/m6-lines.txt"
 cat "$CAP/identity.txt" "$CAP/final-health.txt"
 ```
+
+### Follow-up live capture: #104 steady/BIST/resume mux comparison
+
+Patch category: **DIAGNOSTIC / STATE-ONLY**. No source or boot image changed
+after checkpoint `20032997be1`; this capture uses the #104 manual command to
+compare MIPITX debug mux words in steady video, red DSI BIST, and after a clean
+power-key off/on resume cycle.
+
+Evidence:
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0110-m6-104-mux-bist-resume-711HEBSR277K5/`.
+- Capture `sha256sum -c SHA256SUMS` passed.
+- Identity and final health show #104 boot hash
+  `67ef7a721cd1cc577312295b46b835e571756ad705be3b7c0fb248ad46d00a7e`,
+  `sys.boot_completed=1`, bootanim stopped, and display power ON.
+- `power-after-off.txt`: the off half reaches `mWakefulness=Dozing` and
+  `Display Power: state=OFF`.
+- `m6-lines.txt:178-210`: the cycle reaches `M6 LCM suspend start/end`,
+  `M6 LCM resume start/end`, `primary state: ALIVE -> SLEPT`, and
+  `primary state: SLEPT -> ALIVE`.
+- `mipitx-mux-summary.txt`: steady video has 10 non-zero MIPITX mux selectors
+  and `sel=0xf out=0x0`; red BIST has 11 non-zero selectors and
+  `sel=0xf out=0xff0000`; after resume returns to 10 non-zero selectors and
+  `sel=0xf out=0x0`.
+- `m6-lines.txt:86-87` and `m6-lines.txt:166`: red BIST was actually enabled
+  with `BIST_PATTERN=0xff0000`, `BIST_CON=0x200040`, and `self_pat=1`.
+- `m6-lines.txt:130-145`: during red BIST, `MIPITX dbg_mux[p104_bist_red]`
+  reports `sel=0xf now=0x1f out=0xff0000`.
+- `m6-lines.txt:260-300`: after resume, the mux restores, scanout remains
+  active, and RDMA/DSI counters continue moving.
+- Brightness caveat: `power-brightness-after-wake.txt` shows settings at
+  manual/255, but sysfs backlight has already fallen to `10`; the after-resume
+  truth window also reports `bl=10`. Therefore the after-resume optical window
+  is not brightness-proof, although the machine-visible mux/scanout evidence is
+  valid.
+
+Result:
+- FACT: MIPITX debug mux selector `0x1f` exposes the programmed DSI BIST
+  pattern while self-pattern is enabled: red BIST gives `out=0xff0000`, and
+  steady/after-resume give `out=0x0`.
+- FACT: the MIPITX debug mux remains alive across clean Linux-owned
+  suspend/resume, and #104 does not revive the old #98/#100 digital wedge.
+- INFERENCE: the mux can now distinguish at least one DSI-internal payload
+  state. The next layer should decode the remaining non-zero selector words and
+  use them as an HS/lane/PHY acceptance probe, not as generic final-register
+  dumps. For visual tests after wake, brightness must be pinned at the sysfs/LED
+  driver level inside the same window; settings alone are insufficient.
