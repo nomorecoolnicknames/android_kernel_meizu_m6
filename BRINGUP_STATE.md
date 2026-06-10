@@ -16128,6 +16128,35 @@ The latest validated M6 display boot/capture is #126:
   MIPITX/HWC/RDMA layers with indirect PHY/electrical/panel-HS acceptance
   evidence.
 
+Rejected display isolation after #126:
+
+- #130 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-1310-m6-dsi-sideband-replay-bootonly/`;
+- #130 capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-1318-m6-130-dsi-sideband-replay-711HEBSR277K5/`;
+- #130 boot image sha256:
+  `3cd1862a2b7e2202376be50767d730b8ec7830e57fd6de3e0ca2b36fb0d0faff`;
+- runtime:
+  `Linux version 3.18.140 ... #130 SMP PREEMPT Wed Jun 10 13:09:17 CDT 2026`;
+- FACT: the user observed the same boot takeover symptom before the manual
+  probe: bootlogo disappeared in the first seconds and the glass became black;
+- FACT: `m6_dsi_mipitx_sideband_replay:8000:1:3` executed with brightness 255,
+  but readback returned address values instead of programmed sideband data;
+- FACT: the replay poisoned visible DSI/MMIO state: DSI raw block became
+  repeated `0x30870`, and MIPITX lane words changed from
+  `0x603/0x601/0x601/0x601/0x601` to `0x31/0x601/0x7f/0x601/0x1`;
+- REJECTED: do not replay the `CONFIG_FPGA_EARLY_PORTING`
+  `MIPITX_Write60384` sideband sequence in the live production DSI path. It is
+  not a valid hidden-PHY fix and it corrupts the observable register state.
+- FACT: the source-side debugfs command was removed after capture; no sideband
+  replay diff remains in `ddp_dsi.c`, `ddp_dsi.h`, or `disp_debug.c`.
+- FACT: the boot partition was written back to the stable #129 boot image and
+  readback matched
+  `f598d0220bdb834525b927503a14b9d04e2f1a94a17931b8a1bbca6957f888b5`.
+- FACT: after the #129 restore/reboot attempt, M6 did not reappear in the ADB
+  device list during the local polling window. Runtime recovery is not
+  confirmed by Codex; get physical status before continuing.
+
 The latest validated M6 WiFi/BT/RIL/battery multi-subsystem boot/capture is #125:
 
 - artifact:
