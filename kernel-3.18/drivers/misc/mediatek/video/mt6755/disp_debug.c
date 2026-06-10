@@ -145,10 +145,14 @@ char MTKFB_STR_HELP[] =
 		"             Meizu M6 isolation toggle for TXRX HSTX_CKLP_EN; mux=1 sweep, mux=2 stats\n"
 		"        m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore[:mux]]]\n"
 		"             Meizu M6 isolation toggle for PHY LC_HS_TX_EN; mux=1 sweep, mux=2 stats\n"
-	"        m6_dsi_wrtrace_dump[:limit]\n"
-	"             Meizu M6 dump first DSI0/MIPITX register write-order trace\n"
-	"        m6_dsi_wrtrace_reset[:enable]\n"
-	"             Meizu M6 clear DSI0/MIPITX write-order trace and set capture state\n"
+		"        m6_dsi_mipitx_pad_window[:tag[:samples[:delay_ms]]]\n"
+		"             Meizu M6 read-only repeated MIPITX pad/top/lane sampler\n"
+		"        m6_dsi_mipitx_pad_probe:<field>:<value>[:hold_ms[:restore[:mux]]]\n"
+		"             Meizu M6 restore-safe MIPITX field isolation; mux=1 sweep, 2 stats, 3 pad window\n"
+		"        m6_dsi_wrtrace_dump[:limit]\n"
+		"             Meizu M6 dump first DSI0/MIPITX register write-order trace\n"
+		"        m6_dsi_wrtrace_reset[:enable]\n"
+		"             Meizu M6 clear DSI0/MIPITX write-order trace and set capture state\n"
 	"        m6_dsi_wrtrace_enable:<0|1>\n"
 	"             Meizu M6 enable/disable DSI0/MIPITX write-order capture\n"
 	"        m6_dsi_hsa_wc:<value>[:hold_ms]\n"
@@ -784,10 +788,80 @@ void mtkfb_process_dbg_opt(const char *opt)
 		}
 		value = (unsigned int)value_arg;
 		primary_display_manual_lock();
-			dsi_m6_force_lc_hs_probe(value, hold_ms, restore, sample_mux);
-			primary_display_manual_unlock();
-			DISPERR("M6 DSI lc_hs_probe command: value=%u hold=%u restore=%u mux=%u\n",
-				value, hold_ms, restore ? 1 : 0, sample_mux);
+		dsi_m6_force_lc_hs_probe(value, hold_ms, restore, sample_mux);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI lc_hs_probe command: value=%u hold=%u restore=%u mux=%u\n",
+			value, hold_ms, restore ? 1 : 0, sample_mux);
+	} else if (0 == strncmp(opt, "m6_dsi_mipitx_pad_window",
+				sizeof("m6_dsi_mipitx_pad_window") - 1)) {
+		const size_t prefix_len = sizeof("m6_dsi_mipitx_pad_window") - 1;
+		char safe_tag[32] = "manual";
+		unsigned int samples = 6;
+		unsigned int delay_ms = 100;
+
+		if (opt[prefix_len] == ':') {
+			const char *arg = opt + prefix_len + 1;
+			const char *p = arg;
+			char tag_arg[32];
+			size_t i = 0;
+
+			while (i + 1 < sizeof(tag_arg) && *p &&
+			       *p != ':' && *p != '\n' && *p != '\r' &&
+			       *p != ' ' && *p != '\t') {
+				tag_arg[i] = *p;
+				i++;
+				p++;
+			}
+			tag_arg[i] = '\0';
+			disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag_arg);
+			if (*p == ':') {
+				ret = sscanf(p + 1, "%u:%u", &samples, &delay_ms);
+				if (ret < 1) {
+					pr_err("error to parse cmd %s\n", opt);
+					return;
+				}
+			}
+		}
+		primary_display_manual_lock();
+		dsi_m6_mipitx_pad_window(safe_tag, samples, delay_ms);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI mipitx_pad_window command: tag=%s samples=%u delay_ms=%u\n",
+			safe_tag, samples, delay_ms);
+	} else if (0 == strncmp(opt, "m6_dsi_mipitx_pad_probe:",
+				sizeof("m6_dsi_mipitx_pad_probe:") - 1)) {
+		const char *p = opt + sizeof("m6_dsi_mipitx_pad_probe:") - 1;
+		char field[24];
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+		size_t i = 0;
+
+		while (i + 1 < sizeof(field) && *p &&
+		       *p != ':' && *p != '\n' && *p != '\r' &&
+		       *p != ' ' && *p != '\t') {
+			field[i] = *p;
+			i++;
+			p++;
+		}
+		field[i] = '\0';
+		if (!field[0] || *p != ':') {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		ret = sscanf(p + 1, "%i:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_mipitx_pad_probe(field, value, hold_ms, restore, sample_mux);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI mipitx_pad_probe command: field=%s value=%u hold=%u restore=%u mux=%u\n",
+			field, value, hold_ms, restore ? 1 : 0, sample_mux);
 	} else if (0 == strncmp(opt, "m6_dsi_wrtrace_dump",
 				sizeof("m6_dsi_wrtrace_dump") - 1)) {
 		const unsigned int prefix = sizeof("m6_dsi_wrtrace_dump") - 1;

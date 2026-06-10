@@ -3018,6 +3018,217 @@ void dsi_m6_dump_hs_window(const char *tag, unsigned int hold_ms)
 		safe_tag, bounded, jiffies);
 }
 
+static unsigned int dsi_m6_bound_hold_ms(unsigned int hold_ms);
+static void dsi_m6_dump_probe_mux_sweep(const char *tag);
+static void dsi_m6_dump_probe_mux_stats(const char *tag, unsigned int samples,
+					unsigned int delay_us);
+static unsigned int dsi_m6_txrx_ctrl_raw(void);
+static unsigned int dsi_m6_phy_lccon_raw(void);
+
+struct dsi_m6_mipitx_probe_field {
+	const char *name;
+	unsigned int offset;
+	unsigned int mask;
+	unsigned int shift;
+	unsigned int max;
+};
+
+static const struct dsi_m6_mipitx_probe_field dsi_m6_mipitx_probe_fields[] = {
+	{ "lptx_clmp", 0x000, 1U << 11, 11, 1 },
+	{ "c_b1", 0x004, 1U << 1, 1, 1 },
+	{ "d0_b1", 0x008, 1U << 1, 1, 1 },
+	{ "d1_b1", 0x00c, 1U << 1, 1, 1 },
+	{ "d2_b1", 0x010, 1U << 1, 1, 1 },
+	{ "d3_b1", 0x014, 1U << 1, 1, 1 },
+	{ "hs_bias", 0x040, 1U << 1, 1, 1 },
+	{ "aio", 0x040, 0x7U << 8, 8, 7 },
+	{ "pad_low", 0x040, 1U << 11, 11, 1 },
+};
+
+static const struct dsi_m6_mipitx_probe_field *
+dsi_m6_mipitx_find_probe_field(const char *name)
+{
+	unsigned int i;
+
+	if (!name)
+		return NULL;
+
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_probe_fields); i++) {
+		if (!strcmp(name, dsi_m6_mipitx_probe_fields[i].name))
+			return &dsi_m6_mipitx_probe_fields[i];
+	}
+
+	return NULL;
+}
+
+static unsigned int dsi_m6_bound_pad_samples(unsigned int samples)
+{
+	if (samples == 0)
+		return 6;
+	if (samples > 20)
+		return 20;
+	return samples;
+}
+
+static unsigned int dsi_m6_bound_pad_delay_ms(unsigned int delay_ms)
+{
+	if (delay_ms == 0)
+		return 100;
+	if (delay_ms > 1000)
+		return 1000;
+	return delay_ms;
+}
+
+static void dsi_m6_dump_mipitx_pad_sample(const char *tag,
+					  unsigned int seq,
+					  unsigned int sample,
+					  unsigned int samples,
+					  unsigned int delay_ms)
+{
+	DISPERR("M6 DSI mipitx_pad[%s]#%u sample=%u/%u delay_ms=%u con=0x%x c=0x%x d0=0x%x d1=0x%x d2=0x%x d3=0x%x top=0x%x bg=0x%x pll=0x%x/0x%x/0x%x pwr=0x%x rgs=0x%x gpi=0x%x pull=0x%x phy_sel=0x%x sw=0x%x/0x%x/0x%x dbg=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x st8=0x%x st9=0x%x int=0x%x vm=0x%x\n",
+		tag, seq, sample + 1, samples, delay_ms,
+		INREG32(MIPITX_BASE + 0x000),
+		INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008),
+		INREG32(MIPITX_BASE + 0x00c),
+		INREG32(MIPITX_BASE + 0x010),
+		INREG32(MIPITX_BASE + 0x014),
+		INREG32(MIPITX_BASE + 0x040),
+		INREG32(MIPITX_BASE + 0x044),
+		INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x058),
+		INREG32(MIPITX_BASE + 0x060),
+		INREG32(MIPITX_BASE + 0x068),
+		INREG32(MIPITX_BASE + 0x070),
+		INREG32(MIPITX_BASE + 0x074),
+		INREG32(MIPITX_BASE + 0x078),
+		INREG32(MIPITX_BASE + 0x07c),
+		INREG32(MIPITX_BASE + 0x080),
+		INREG32(MIPITX_BASE + 0x084),
+		INREG32(MIPITX_BASE + 0x088),
+		INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098),
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw(),
+		INREG32(DDP_REG_BASE_DSI0 + 0x168),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130));
+}
+
+void dsi_m6_mipitx_pad_window(const char *tag, unsigned int samples,
+			      unsigned int delay_ms)
+{
+	static unsigned int window_count;
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int bounded_samples = dsi_m6_bound_pad_samples(samples);
+	unsigned int bounded_delay_ms = dsi_m6_bound_pad_delay_ms(delay_ms);
+	unsigned int n;
+	unsigned int sample;
+
+	if (!DSI_REG[0])
+		return;
+
+	n = ++window_count;
+	DISPERR("M6 DSI mipitx_pad[%s]#%u: begin samples=%u delay_ms=%u\n",
+		safe_tag, n, bounded_samples, bounded_delay_ms);
+	dsi_m6_dump_snapshot("mipitx-pad-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode(safe_tag);
+
+	for (sample = 0; sample < bounded_samples; sample++) {
+		dsi_m6_dump_mipitx_pad_sample(safe_tag, n, sample,
+					      bounded_samples, bounded_delay_ms);
+		if (sample + 1 < bounded_samples)
+			msleep(bounded_delay_ms);
+	}
+
+	dsi_m6_dump_snapshot("mipitx-pad-after", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode(safe_tag);
+	DISPERR("M6 DSI mipitx_pad[%s]#%u: end samples=%u delay_ms=%u\n",
+		safe_tag, n, bounded_samples, bounded_delay_ms);
+}
+
+void dsi_m6_mipitx_pad_probe(const char *field_name, unsigned int value,
+			     unsigned int hold_ms, unsigned int restore,
+			     unsigned int sample_mux)
+{
+	char tag[64];
+	const struct dsi_m6_mipitx_probe_field *field;
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old_raw;
+	unsigned int new_raw;
+	unsigned int after_raw;
+	unsigned int restored_raw;
+
+	if (!DSI_REG[0])
+		return;
+
+	field = dsi_m6_mipitx_find_probe_field(field_name);
+	if (!field) {
+		DISPERR("M6 DSI mipitx_pad_probe: unknown field=%s allowed=lptx_clmp,c_b1,d0_b1,d1_b1,d2_b1,d3_b1,hs_bias,aio,pad_low\n",
+			field_name ? field_name : "null");
+		return;
+	}
+	if (value > field->max) {
+		DISPERR("M6 DSI mipitx_pad_probe: invalid field=%s value=%u max=%u\n",
+			field->name, value, field->max);
+		return;
+	}
+
+	old_raw = INREG32(MIPITX_BASE + field->offset);
+	new_raw = (old_raw & ~field->mask) |
+		  ((value << field->shift) & field->mask);
+	DISPERR("M6 DSI mipitx_pad_probe: begin field=%s value=%u old=0x%x new=0x%x off=0x%x mask=0x%x shift=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		field->name, value, old_raw, new_raw, field->offset,
+		field->mask, field->shift, restore ? 1 : 0, sample_mux,
+		bounded, dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("mipitx-pad-probe-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("mipitx-pad-probe-before");
+
+	MIPITX_OUTREG32(MIPITX_BASE + field->offset, new_raw);
+	udelay(1);
+	after_raw = INREG32(MIPITX_BASE + field->offset);
+	DISPERR("M6 DSI mipitx_pad_probe: after-set field=%s value=%u live=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+		field->name, value, after_raw, INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("mipitx-pad-probe-after-set", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("mipitx-pad-probe-after-set");
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "pad-%s-mux", field->name);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux == 2) {
+		snprintf(tag, sizeof(tag), "pad-%s-muxstats", field->name);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	} else if (sample_mux >= 3) {
+		snprintf(tag, sizeof(tag), "pad-%s-window", field->name);
+		dsi_m6_mipitx_pad_window(tag, 4, 50);
+	}
+
+	snprintf(tag, sizeof(tag), "pad-%s-hold", field->name);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		MIPITX_OUTREG32(MIPITX_BASE + field->offset, old_raw);
+		udelay(1);
+		restored_raw = INREG32(MIPITX_BASE + field->offset);
+		DISPERR("M6 DSI mipitx_pad_probe: after-restore field=%s old=0x%x live=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+			field->name, old_raw, restored_raw,
+			INREG32(MIPITX_BASE + 0x094),
+			INREG32(MIPITX_BASE + 0x098),
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+		dsi_m6_dump_snapshot("mipitx-pad-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+		dsi_m6_dump_mipitx_decode("mipitx-pad-probe-after-restore");
+	}
+
+	DISPERR("M6 DSI mipitx_pad_probe: end field=%s value=%u old=0x%x final=0x%x restore=%u mux=%u\n",
+		field->name, value, old_raw,
+		INREG32(MIPITX_BASE + field->offset),
+		restore ? 1 : 0, sample_mux);
+}
+
 void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms)
 {
 	unsigned int bounded = hold_ms;

@@ -1,5 +1,164 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #110 MIPITX pad/top/lane probes
+
+PATCH HISTORY, **DIAGNOSTIC / ISOLATION**, 2026-06-09: add bounded manual
+MIPITX pad/top/lane samplers and restore-safe field probes. New manual
+controls:
+
+- `m6_dsi_mipitx_pad_window[:tag[:samples[:delay_ms]]]`;
+- `m6_dsi_mipitx_pad_probe:<field>:<value>[:hold_ms[:restore[:mux]]]`.
+
+Allowlisted fields are `lptx_clmp`, `c_b1`, `d0_b1`, `d1_b1`, `d2_b1`,
+`d3_b1`, `hs_bias`, `aio`, and `pad_low`. No boot-time behavior changes.
+
+Hypothesis: FACT from #109: disabling `PHY_LCCON.LC_HS_TX_EN` collapses every
+DSI debug-mux selector row while normal video keeps those rows changing.
+HYPOTHESIS: if the black glass is caused by one of the obvious documented
+MIPITX pad/top/lane controls rather than hidden electrical state, toggling that
+field under a bounded restore-safe probe should produce a distinct DSI/MIPITX
+mux signature or at least show a repeatable digital side effect without
+rewiring boot/resume.
+
+Evidence:
+- #110 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-2143-m6-mipitx-pad-probes-bootonly/boot-m6-mipitx-pad-probes-20260609.img`.
+- #110 boot image sha256:
+  `fa41884c65b17751ddcf8ad3a3c422e1a32edcb67a49c6b3831cde239254fb71`.
+- #110 `Image.gz-dtb` sha256:
+  `34949652afdb9fbcc76f0fd407bcc4be026230d8c768d2b0ba52563ff88d4380`.
+- #110 `System.map` sha256:
+  `88ee22eaaaecb821f01defb16213f38e85ca2ed289a0353224069e9d23b213a0`.
+- #110 `vmlinux` sha256:
+  `0d77e832011382ac203554027fc3ddbbb513992e5578d5497de5871e6e7cca2a`.
+- #110 `.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Final #111 source/artifact parity rebuild after the formatting-only
+  `disp_debug.c` indentation fix:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0000-m6-mipitx-pad-probes-final-bootonly/boot-m6-mipitx-pad-probes-final-20260610.img`.
+- Final #111 boot image sha256:
+  `bf5d86a6aff4b0be5fb1e6f5aafcfc626c3c731d41acd6c5328b4fb824851539`.
+- Final #111 `Image.gz-dtb` sha256:
+  `82abbda1265e0e639aa107ef1f76a945b913256a249545b8d3d1db4f42b3acbe`.
+- Final #111 `System.map` sha256:
+  `88ee22eaaaecb821f01defb16213f38e85ca2ed289a0353224069e9d23b213a0`.
+- Final #111 `vmlinux` sha256:
+  `a0fc41e8cbcf0a96e242405595505897ce718ea2e34b5b7ee5b53f6dc3a5d931`.
+- Build/packaging verification: `git diff --check` passed, `make
+  Image.gz-dtb` completed, `strings vmlinux` contains
+  `m6_dsi_mipitx_pad_window`, `m6_dsi_mipitx_pad_probe`, and
+  `M6 DSI mipitx_pad`, artifact `sha256sum -c SHA256SUMS` passed, and
+  unpacked `zImage` / `initrd.img` match packaged inputs. Final #111 rebuild
+  also passed `git diff --check`, `make Image.gz-dtb`, `sha256sum -c
+  SHA256SUMS`, unpacked input matching, flash readback matching the local boot
+  image, postboot identity, and a read-only `m6_dsi_mipitx_pad_window` smoke.
+- Runtime captures:
+  `/srv/forge/android/meizu_m6/captures/20260609-2146-m6-110-mipitx-pad-probes-711HEBSR277K5/`
+  and
+  `/srv/forge/android/meizu_m6/captures/20260609-2148-m6-110-mipitx-lane-b1-probes-711HEBSR277K5/`.
+- Runtime capture `sha256sum -c SHA256SUMS` passed for both captures.
+  Runtime identity is root adb, boot partition sha256
+  `fa41884c65b17751ddcf8ad3a3c422e1a32edcb67a49c6b3831cde239254fb71`,
+  kernel `#110 SMP PREEMPT Tue Jun 9 21:42:37 CDT 2026`,
+  `sys.boot_completed=1`, bootanim stopped, Display Power ON, backlight 255.
+- Final #111 runtime identity: boot partition readback sha256
+  `bf5d86a6aff4b0be5fb1e6f5aafcfc626c3c731d41acd6c5328b4fb824851539`,
+  kernel `#111 SMP PREEMPT Tue Jun 9 21:57:32 CDT 2026`,
+  `sys.boot_completed=1`, bootanim stopped, Display Power ON, backlight 255.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds compact
+  repeated MIPITX pad/top/lane samples and restore-safe single-field probes
+  with exact old-word restore, muxstats/hs-window hooks, and allowlisted fields.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exposes the
+  manual MIPITX pad probe helpers to the debugfs parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds help
+  text and parser entries for the new manual commands.
+- `BRINGUP_STATE.md`: records category, evidence, artifact identity, runtime
+  result, expected next marker, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns MIPITX register access and the existing
+M6 DSI/MIPITX mux samplers, so the restore semantics must live there rather
+than in the parser. `ddp_dsi.h` is required for the established debugfs control
+surface. `disp_debug.c` is the manual M6 command entry point used by capture
+scripts. The state file is the durable M6 bring-up record required for this
+diagnostic/isolation patch.
+
+Expected next marker: manual
+`echo m6_dsi_mipitx_pad_window:pXXX:6:100 > /d/mtkfb` should log begin/end
+markers plus bounded `M6 DSI mipitx_pad[pXXX]` samples. Manual
+`echo m6_dsi_mipitx_pad_probe:pad_low:1:1200:1:2 > /d/mtkfb` should log
+begin, after-set, muxstats, hs-window, after-restore, and end markers, with the
+final word matching the old word. Final truth should keep `TXRX=0x1003c`,
+`PHY_LCCON=0x1`, MIPITX lane words `0x603/0x601/0x601/0x601/0x601`, and
+backlight 255, with no OVL/RDMA/VSYNC wedge signatures.
+
+Rollback condition: revert this patch if it changes boot before manual debugfs
+use, fails to restore an allowlisted MIPITX word exactly, leaves `TXRX` or
+`PHY_LCCON` altered after `m6_dsi_clk_restore`, reintroduces `wait VSYNC
+timeout`, `RDMA0_EOF`, `M6 OVL irq diag`, `abnormal SOF`, `L1 not complete`, a
+boot hang, or if a manual probe causes persistent DSI/MIPITX corruption. Do not
+revert only because the glass remains black; this patch is diagnostic/isolation.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-2143-m6-mipitx-pad-probes-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260610-0000-m6-mipitx-pad-probes-final-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-2146-m6-110-mipitx-pad-probes-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/p112-analysis.txt"
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-2148-m6-110-mipitx-lane-b1-probes-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/p113-analysis.txt"
+```
+
+Runtime result, **FACT**, 2026-06-09:
+- p112 baseline pad window showed stable documented MIPITX config words while
+  DSI `state8` changed: `con=0x403`, `c=0x603`,
+  `d0/d1/d2/d3=0x601/0x601/0x601/0x601`, `top=0x82`,
+  `phy_sel=0x43210`, `sw=0x0/0x333/0x0`.
+- p112 changed and restored exactly: `hs_bias` (`0x82 -> 0x80 -> 0x82`),
+  `pad_low` (`0x82 -> 0x882 -> 0x82`), `lptx_clmp`
+  (`0x403 -> 0xc03 -> 0x403`), and `aio` (`0x82 -> 0x182 -> 0x82`).
+- p113 changed and restored exactly: `c_b1` (`0x603 -> 0x601 -> 0x603`) and
+  `d0_b1`/`d1_b1`/`d2_b1`/`d3_b1`
+  (`0x601 -> 0x603 -> 0x601` for each lane).
+- FACT: none of the p112/p113 probes reproduced the #109 LC-HS-off DSI-mux
+  collapse. For every probed field, all 32 DSI mux selector rows kept changing
+  across the 12-sample stats window (`zero flat rows`, `changes=11/11`).
+  MIPITX mux rows kept the normal 16-row shape: 4 flat rows and 12 changing
+  rows.
+- FACT: no parser errors, no `wait VSYNC timeout`, no `RDMA0_EOF`, no
+  `abnormal SOF`, no `L1 not complete`, and no `M6 OVL irq diag` signatures in
+  the selected windows. Final truth restored `TXRX=0x1003c`, `PHY_LCCON=0x1`,
+  MIPITX lane words `0x603/0x601/0x601/0x601/0x601`, lane map `0/1/2/3/4/0`,
+  and backlight 255.
+- FACT: final #111 parity artifact booted after readback-verified flash.
+  Read-only smoke `m6_dsi_mipitx_pad_window:p111_final_smoke:2:50` logged the
+  command marker and expected MIPITX state (`c/d0/d1/d2/d3 =
+  0x603/0x601/0x601/0x601/0x601`, lane map `0/1/2/3/4/0`,
+  `TXRX` decode with `hstx_cklp=1`, `MODE=0x3`) with brightness 255.
+
+INFERENCE: the documented MIPITX pad/top/lane bits covered by #110 are
+low-value as one-bit fixes. They can be toggled and restored safely, but they
+do not affect the Linux-visible DSI/MIPITX stream like disabling
+`PHY_LCCON.LC_HS_TX_EN`. The remaining black-glass frontier is below these
+documented controls or outside Linux-visible register state: pad electrical
+behavior, hidden lane polarity/map, board-level routing, or panel HS-video
+acceptance.
+
 ## 2026-06-09 #109 DSI/MIPITX debug-mux stats sampler
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded multi-sample
