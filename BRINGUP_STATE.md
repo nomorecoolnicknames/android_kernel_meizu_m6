@@ -16176,3 +16176,116 @@ The latest validated M6 WiFi/BT/RIL/battery multi-subsystem boot/capture is #125
 - current battery frontier:
   charger is active, voltage is high, but raw FG/RTC SOC is stuck at impossible
   6 and needs calibration/NVRAM/fuel-gauge repair;
+
+## Patch history: #131 M6 DSI takeover-hold isolation (built, not flashed)
+
+Patch category: **ISOLATION** plus **DIAGNOSTIC**. This patch deliberately
+adds a one-shot 15 second sleep before the first Linux-owned DSI takeover
+point, but it does not change final DSI timing, MIPITX programming, DDP
+routing, LCM command tables, panel power, backlight, or GPIO state. It is not
+a display fix.
+
+Hypothesis: the user's current physical observation repeats the old takeover
+signature: the LK boot logo is visible, then somewhere in the first seconds of
+Linux boot the glass becomes black. Earlier handoff experiments proved that a
+full first-config/start skip is harmful after stop/restart (#65/#66), while
+forcing the first DSI config on LK MIPITX state restores expected visible
+register fields but still leaves the panel black (#73/#74). Therefore the next
+cheap discriminator is a hold at the exact first `ddp_dsi_config()` /
+`ddp_dsi_start()` boundary: if the LK logo survives the hold and dies only
+after it ends, the destructive edge is inside Linux DSI config/start; if the
+logo dies during the hold, an earlier non-DSI-config path is killing panel
+acceptance.
+
+Evidence:
+- Current user observation on 2026-06-10: boot logo disappears in the first
+  seconds and the glass becomes black.
+- #126 remains the latest validated display runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0939-m6-126-dsi-rawblock-diag-711HEBSR277K5/`.
+- #126 proves userspace/scrcpy/RDMA scanout are alive while the physical glass
+  is black with brightness forced to 255.
+- #130 sideband replay is rejected and must not be repeated; the source-side
+  replay command was already removed.
+- ADB state while building #131: only `810BBMM22D7S ... m2note` was visible on
+  `127.0.0.1:15038`, so #131 was not flashed by Codex.
+- Artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-1355-m6-dsi-takeover-hold-bootonly/`.
+- #131 boot image sha256:
+  `c20a44cb8e75c0c1d73ed515593fb3831e1df9fa8e47d96c0732e29b6d7cfd3e`.
+- #131 `Image.gz-dtb` sha256:
+  `69e60df9b43fa346f569a6c8413db50415385c1ca19d671c52936bbd32c8ac4b`.
+- #131 `System.map` sha256:
+  `0ddb03d91ffb4106d8ba233f60b2ee252480667cc999d73c7ca2f70be15583be`.
+- Build identity from `compile.h`:
+  `Linux 3.18.140 #131 SMP PREEMPT Wed Jun 10 13:52:59 CDT 2026`.
+- Packaging verification: `abootimg --create`, `abootimg -i`, `abootimg -x`,
+  `cmp Image.gz-dtb verify-unpack.tmp/zImage`,
+  `cmp initrd.img verify-unpack.tmp/initrd.img`, and
+  `sha256sum -c SHA256SUMS` all passed.
+- Marker string verification found:
+  `M6 DSI takeover_hold[%s]: begin`, `takeover-hold-begin`,
+  `takeover-hold-end`, and `M6 DSI takeover_hold[%s]: end`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  `M6_LK_HANDOFF_TAKEOVER_HOLD_MS=15000`, a one-shot
+  `dsi_m6_takeover_hold_once()` helper, and calls it at the beginning of
+  `ddp_dsi_config()` and `ddp_dsi_start()` before Linux writes the DSI
+  config/start path.
+- `BRINGUP_STATE.md`: records the built-but-not-flashed isolation artifact,
+  proof, interpretation matrix, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the first Linux DSI config/start
+boundary and already contains the M6 handoff controls and snapshot helpers.
+Placing the hold there answers exactly whether the visible LK logo dies before
+or after the first Linux DSI takeover write path without adding another
+register replay theory. The state file preserves the artifact identity so the
+next capture is decoded against the matching `System.map`.
+
+Expected next marker and interpretation:
+- Dmesg should contain either
+  `M6 DSI takeover_hold[config-entry]: begin` or
+  `M6 DSI takeover_hold[start-entry]: begin`, followed by
+  `takeover-hold-begin`, then a 15 second wall-clock hold, then
+  `takeover-hold-end` and the matching `end` line.
+- If the LK logo remains visible for the whole 15 second hold and goes black
+  only after the `end` marker, the destructive frontier is in the post-hold
+  Linux DSI config/start sequence.
+- If the logo goes black before or during the hold, the destructive frontier
+  is earlier than DSI config/start and the next patch should move the hold
+  up-tree into the first mtkfb/primary_display/lcm boundary.
+- If no hold marker appears, either this image was not booted or a still
+  earlier failure prevents reaching `ddp_dsi_config()` / `ddp_dsi_start()`.
+
+Rollback condition: revert this patch after the observation is collected, or
+immediately if the 15 second delay causes boot regression, loss of root ADB,
+watchdog reset, unacceptable boot delay, or no new marker/visual information.
+Do not keep it in a normal bring-up image; it is a boundary isolation tool.
+
+Verification commands:
+
+```bash
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260610-1355-m6-dsi-takeover-hold-bootonly
+cd "$ART"
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack.tmp/zImage
+cmp initrd.img verify-unpack.tmp/initrd.img
+abootimg -i boot-m6-dsi-takeover-hold-20260610.img
+
+A="adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5"
+$A get-state
+$A root
+$A wait-for-device
+$A push "$ART/boot-m6-dsi-takeover-hold-20260610.img" /cache/boot-m6-dsi-takeover-hold-20260610.img
+$A shell 'sha256sum /cache/boot-m6-dsi-takeover-hold-20260610.img'
+$A shell 'BOOT_PART=$(readlink -f /dev/block/platform/mtk-msdc.0/by-name/boot); dd if=/cache/boot-m6-dsi-takeover-hold-20260610.img of=$BOOT_PART bs=1048576; sync'
+$A reboot
+
+# During the next boot, watch the physical glass:
+# - does LK logo stay visible for the 15 second hold?
+# - does it go black before/during/after the hold?
+$A wait-for-device
+$A root
+$A shell dmesg > /tmp/m6-131-dmesg.txt
+grep -E 'M6 DSI takeover_hold|takeover-hold-(begin|end)' /tmp/m6-131-dmesg.txt
+```

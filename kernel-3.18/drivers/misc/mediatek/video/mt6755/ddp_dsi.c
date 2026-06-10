@@ -239,6 +239,7 @@ t_dsi_context _dsi_context[DSI_INTERFACE_NUM];
 #define M6_LKGOLD_DSI_WORDS ((M6_LKGOLD_DSI_LAST / 4) + 1)
 #define M6_LKGOLD_MIPITX_LAST 0x104
 #define M6_LKGOLD_MIPITX_WORDS ((M6_LKGOLD_MIPITX_LAST / 4) + 1)
+#define M6_LK_HANDOFF_TAKEOVER_HOLD_MS 15000
 /*
  * PROPER-FIX: keep Linux-owned DSI config/start enabled. The old M6
  * isolation skip leaves DSI in CMD mode after any stop/restart sequence.
@@ -268,6 +269,7 @@ static bool wait_sleep_out_done;
 static int s_isDsiPowerOn;
 static int dsi_currect_mode;
 static int dsi_force_config;
+static unsigned int m6_lk_handoff_takeover_hold_done;
 static int dsi0_te_enable = 1;
 static const LCM_UTIL_FUNCS lcm_utils_dsi0;
 unsigned int clock_lane = 0;/*MIPITX_DSI_CLOCK_LANE*/
@@ -2390,8 +2392,39 @@ static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM modul
 	dsi_m6_dump_snapshot(tag, module, cmdq);
 }
 
+static void dsi_m6_takeover_hold_once(const char *where,
+				      DISP_MODULE_ENUM module, void *cmdq,
+				      unsigned int *dump_count)
+{
+	const char *safe_where = where ? where : "null";
+
+	if (!M6_LK_HANDOFF_TAKEOVER_HOLD_MS)
+		return;
+	if (module != DISP_MODULE_DSI0)
+		return;
+	if (m6_lk_handoff_takeover_hold_done)
+		return;
+	if (atomic_read(&PMaster_enable) != 0 || dsi_force_config)
+		return;
+
+	m6_lk_handoff_takeover_hold_done = 1;
+	DISPERR("M6 DSI takeover_hold[%s]: begin hold_ms=%u PMaster=%d force=%d jiffies=%lu\n",
+		safe_where, M6_LK_HANDOFF_TAKEOVER_HOLD_MS,
+		atomic_read(&PMaster_enable), dsi_force_config, jiffies);
+	dsi_m6_sram_snapshot("takeover-hold-begin", module);
+	dsi_m6_dump_snapshot_limited("takeover-hold-begin", module, cmdq,
+				     dump_count, 4);
+	msleep(M6_LK_HANDOFF_TAKEOVER_HOLD_MS);
+	dsi_m6_sram_snapshot("takeover-hold-end", module);
+	dsi_m6_dump_snapshot_limited("takeover-hold-end", module, cmdq,
+				     dump_count, 4);
+	DISPERR("M6 DSI takeover_hold[%s]: end hold_ms=%u PMaster=%d force=%d jiffies=%lu\n",
+		safe_where, M6_LK_HANDOFF_TAKEOVER_HOLD_MS,
+		atomic_read(&PMaster_enable), dsi_force_config, jiffies);
+}
+
 static void dsi_m6_dump_hs_video_marker(const char *tag, DISP_MODULE_ENUM module,
-					 void *cmdq);
+					void *cmdq);
 static void dsi_m6_dump_hs_video_edge_marker(const char *tag,
 					     DISP_MODULE_ENUM module,
 					     void *cmdq);
@@ -6460,6 +6493,7 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 	}
 	DISPFUNC();
 	DISPDBG("===>run here 00 Pmaster: clk:%d\n", _dsi_context[0].dsi_params.PLL_CLOCK);
+	dsi_m6_takeover_hold_once("config-entry", module, cmdq, &dump_count);
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
 		_copy_dsi_params(dsi_config, &(_dsi_context[i].dsi_params));
@@ -6586,6 +6620,7 @@ int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq)
 	static unsigned int dump_count;
 
 	DISPFUNC();
+	dsi_m6_takeover_hold_once("start-entry", module, cmdq, &dump_count);
 	if (M6_LK_HANDOFF_SKIP_FIRST_DSI_CONFIG &&
 	    atomic_read(&PMaster_enable) == 0 && !dsi_force_config) {
 		DISPERR("M6 DSI lk-handoff[start]: skip first DSI start to preserve LK bootlogo state\n");
