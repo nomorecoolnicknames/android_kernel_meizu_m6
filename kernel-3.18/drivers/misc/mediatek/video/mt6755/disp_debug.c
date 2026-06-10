@@ -137,10 +137,12 @@ char MTKFB_STR_HELP[] =
 	"             Meizu M6 read-only DSI/MIPITX/LCM lane and PHY truth dump\n"
 	"        m6_dsi_debug_mux[:tag]\n"
 	"             Meizu M6 bounded DSI/MIPITX debug mux sweep; restores selectors\n"
-	"        m6_dsi_cc_probe:<0|1>[:hold_ms[:restore]]\n"
-	"             Meizu M6 isolation toggle for TXRX HSTX_CKLP_EN with snapshots\n"
-	"        m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore]]\n"
-	"             Meizu M6 isolation toggle for PHY LC_HS_TX_EN with snapshots\n"
+	"        m6_dsi_clk_restore[:tag]\n"
+	"             Meizu M6 force TXRX HSTX_CKLP_EN and PHY LC_HS_TX_EN back on\n"
+	"        m6_dsi_cc_probe:<0|1>[:hold_ms[:restore[:mux]]]\n"
+	"             Meizu M6 isolation toggle for TXRX HSTX_CKLP_EN; mux=1 samples under hold\n"
+	"        m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore[:mux]]]\n"
+	"             Meizu M6 isolation toggle for PHY LC_HS_TX_EN; mux=1 samples under hold\n"
 	"        m6_dsi_wrtrace_dump[:limit]\n"
 	"             Meizu M6 dump first DSI0/MIPITX register write-order trace\n"
 	"        m6_dsi_wrtrace_reset[:enable]\n"
@@ -700,42 +702,55 @@ void mtkfb_process_dbg_opt(const char *opt)
 		dsi_m6_debug_mux_sweep(safe_tag);
 		primary_display_manual_unlock();
 		DISPERR("M6 DSI debug_mux command: tag=%s\n", safe_tag);
+	} else if (0 == strncmp(opt, "m6_dsi_clk_restore", 18)) {
+		const char *tag = "manual";
+		char safe_tag[32];
+
+		if (opt[18] == ':')
+			tag = opt + 19;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+		primary_display_manual_lock();
+		dsi_m6_force_clk_restore(safe_tag);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI clk_restore command: tag=%s\n", safe_tag);
 	} else if (0 == strncmp(opt, "m6_dsi_cc_probe:", sizeof("m6_dsi_cc_probe:") - 1)) {
 		int value_arg = 0;
 		unsigned int value = 0;
 		unsigned int hold_ms = 1000;
 		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
 
-		ret = sscanf(opt, "m6_dsi_cc_probe:%i:%u:%u\n",
-			     &value_arg, &hold_ms, &restore);
+		ret = sscanf(opt, "m6_dsi_cc_probe:%i:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux);
 		if (ret < 1 || value_arg < 0 || value_arg > 1) {
 			pr_err("error to parse cmd %s\n", opt);
 			return;
 		}
 		value = (unsigned int)value_arg;
 		primary_display_manual_lock();
-		dsi_m6_force_cc_probe(value, hold_ms, restore);
+		dsi_m6_force_cc_probe(value, hold_ms, restore, sample_mux);
 		primary_display_manual_unlock();
-		DISPERR("M6 DSI cc_probe command: value=%u hold=%u restore=%u\n",
-			value, hold_ms, restore ? 1 : 0);
+		DISPERR("M6 DSI cc_probe command: value=%u hold=%u restore=%u mux=%u\n",
+			value, hold_ms, restore ? 1 : 0, sample_mux ? 1 : 0);
 	} else if (0 == strncmp(opt, "m6_dsi_lc_hs_probe:", sizeof("m6_dsi_lc_hs_probe:") - 1)) {
 		int value_arg = 0;
 		unsigned int value = 0;
 		unsigned int hold_ms = 1000;
 		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
 
-		ret = sscanf(opt, "m6_dsi_lc_hs_probe:%i:%u:%u\n",
-			     &value_arg, &hold_ms, &restore);
+		ret = sscanf(opt, "m6_dsi_lc_hs_probe:%i:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux);
 		if (ret < 1 || value_arg < 0 || value_arg > 1) {
 			pr_err("error to parse cmd %s\n", opt);
 			return;
 		}
 		value = (unsigned int)value_arg;
 		primary_display_manual_lock();
-		dsi_m6_force_lc_hs_probe(value, hold_ms, restore);
+		dsi_m6_force_lc_hs_probe(value, hold_ms, restore, sample_mux);
 		primary_display_manual_unlock();
-		DISPERR("M6 DSI lc_hs_probe command: value=%u hold=%u restore=%u\n",
-			value, hold_ms, restore ? 1 : 0);
+		DISPERR("M6 DSI lc_hs_probe command: value=%u hold=%u restore=%u mux=%u\n",
+			value, hold_ms, restore ? 1 : 0, sample_mux ? 1 : 0);
 	} else if (0 == strncmp(opt, "m6_dsi_wrtrace_dump",
 				sizeof("m6_dsi_wrtrace_dump") - 1)) {
 		const unsigned int prefix = sizeof("m6_dsi_wrtrace_dump") - 1;

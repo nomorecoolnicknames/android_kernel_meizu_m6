@@ -2806,8 +2806,56 @@ static unsigned int dsi_m6_bound_hold_ms(unsigned int hold_ms)
 	return hold_ms;
 }
 
+static void dsi_m6_dump_probe_mux_sweep(const char *tag)
+{
+	static unsigned int probe_mux_count;
+	unsigned int n;
+
+	if (!DSI_REG[0])
+		return;
+
+	n = ++probe_mux_count;
+	dsi_m6_dump_debug_mux_sweep_direct(tag, n);
+	dsi_m6_dump_mipitx_debug_mux_sweep_direct(tag, n);
+}
+
+static unsigned int dsi_m6_txrx_ctrl_raw(void)
+{
+	return AS_UINT32(&DSI_REG[0]->DSI_TXRX_CTRL);
+}
+
+static unsigned int dsi_m6_phy_lccon_raw(void)
+{
+	return AS_UINT32(&DSI_REG[0]->DSI_PHY_LCCON);
+}
+
+void dsi_m6_force_clk_restore(const char *tag)
+{
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int old_cc;
+	unsigned int old_lc;
+
+	if (!DSI_REG[0])
+		return;
+
+	old_cc = PanelMaster_get_CC(PM_DSI0);
+	old_lc = DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0;
+	DISPERR("M6 DSI clk_restore[%s]: begin old_cc=%u old_lc=%u txrx=0x%x lccon=0x%x\n",
+		safe_tag, old_cc, old_lc,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("clk-restore-before", DISP_MODULE_DSI0, NULL);
+
+	PanelMaster_set_CC(PM_DSI0, 1);
+	DSI_clk_HS_mode(DISP_MODULE_DSI0, NULL, true);
+	DISPERR("M6 DSI clk_restore[%s]: after-force cc=%u lc=%u txrx=0x%x lccon=0x%x\n",
+		safe_tag, PanelMaster_get_CC(PM_DSI0),
+		DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("clk-restore-after", DISP_MODULE_DSI0, NULL);
+}
+
 void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
-			   unsigned int restore)
+			   unsigned int restore, unsigned int sample_mux)
 {
 	char tag[64];
 	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
@@ -2817,18 +2865,21 @@ void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
 		return;
 
 	old = PanelMaster_get_CC(PM_DSI0);
-	DISPERR("M6 DSI cc_probe: begin enable=%u old=%u restore=%u hold=%u txrx=0x%x lccon=0x%x\n",
-		enable ? 1 : 0, old, restore ? 1 : 0, bounded,
-		INREG32(DDP_REG_BASE_DSI0 + 0x010),
-		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	DISPERR("M6 DSI cc_probe: begin enable=%u old=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux ? 1 : 0, bounded,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 	dsi_m6_dump_snapshot("cc-probe-before", DISP_MODULE_DSI0, NULL);
 
 	PanelMaster_set_CC(PM_DSI0, enable ? 1 : 0);
 	DISPERR("M6 DSI cc_probe: after-set enable=%u now=%u txrx=0x%x lccon=0x%x\n",
 		enable ? 1 : 0, PanelMaster_get_CC(PM_DSI0),
-		INREG32(DDP_REG_BASE_DSI0 + 0x010),
-		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 	dsi_m6_dump_snapshot("cc-probe-after-set", DISP_MODULE_DSI0, NULL);
+
+	if (sample_mux) {
+		snprintf(tag, sizeof(tag), "cc-probe-%u-mux", enable ? 1 : 0);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	}
 
 	snprintf(tag, sizeof(tag), "cc-probe-%u-hold", enable ? 1 : 0);
 	dsi_m6_dump_hs_window(tag, bounded);
@@ -2837,17 +2888,17 @@ void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
 		PanelMaster_set_CC(PM_DSI0, old ? 1 : 0);
 		DISPERR("M6 DSI cc_probe: after-restore old=%u now=%u txrx=0x%x lccon=0x%x\n",
 			old, PanelMaster_get_CC(PM_DSI0),
-			INREG32(DDP_REG_BASE_DSI0 + 0x010),
-			INREG32(DDP_REG_BASE_DSI0 + 0x104));
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 		dsi_m6_dump_snapshot("cc-probe-after-restore", DISP_MODULE_DSI0, NULL);
 	}
 
-	DISPERR("M6 DSI cc_probe: end enable=%u old=%u restore=%u final=%u\n",
-		enable ? 1 : 0, old, restore ? 1 : 0, PanelMaster_get_CC(PM_DSI0));
+	DISPERR("M6 DSI cc_probe: end enable=%u old=%u restore=%u mux=%u final=%u\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux ? 1 : 0,
+		PanelMaster_get_CC(PM_DSI0));
 }
 
 void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
-			      unsigned int restore)
+			      unsigned int restore, unsigned int sample_mux)
 {
 	char tag[64];
 	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
@@ -2857,19 +2908,22 @@ void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
 		return;
 
 	old = DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0;
-	DISPERR("M6 DSI lc_hs_probe: begin enable=%u old=%u restore=%u hold=%u txrx=0x%x lccon=0x%x\n",
-		enable ? 1 : 0, old, restore ? 1 : 0, bounded,
-		INREG32(DDP_REG_BASE_DSI0 + 0x010),
-		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	DISPERR("M6 DSI lc_hs_probe: begin enable=%u old=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux ? 1 : 0, bounded,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 	dsi_m6_dump_snapshot("lc-hs-probe-before", DISP_MODULE_DSI0, NULL);
 
 	DSI_clk_HS_mode(DISP_MODULE_DSI0, NULL, enable ? true : false);
 	DISPERR("M6 DSI lc_hs_probe: after-set enable=%u now=%u txrx=0x%x lccon=0x%x\n",
 		enable ? 1 : 0,
 		DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0,
-		INREG32(DDP_REG_BASE_DSI0 + 0x010),
-		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 	dsi_m6_dump_snapshot("lc-hs-probe-after-set", DISP_MODULE_DSI0, NULL);
+
+	if (sample_mux) {
+		snprintf(tag, sizeof(tag), "lc-hs-probe-%u-mux", enable ? 1 : 0);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	}
 
 	snprintf(tag, sizeof(tag), "lc-hs-probe-%u-hold", enable ? 1 : 0);
 	dsi_m6_dump_hs_window(tag, bounded);
@@ -2878,13 +2932,12 @@ void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
 		DSI_clk_HS_mode(DISP_MODULE_DSI0, NULL, old ? true : false);
 		DISPERR("M6 DSI lc_hs_probe: after-restore old=%u now=%u txrx=0x%x lccon=0x%x\n",
 			old, DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0,
-			INREG32(DDP_REG_BASE_DSI0 + 0x010),
-			INREG32(DDP_REG_BASE_DSI0 + 0x104));
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 		dsi_m6_dump_snapshot("lc-hs-probe-after-restore", DISP_MODULE_DSI0, NULL);
 	}
 
-	DISPERR("M6 DSI lc_hs_probe: end enable=%u old=%u restore=%u final=%u\n",
-		enable ? 1 : 0, old, restore ? 1 : 0,
+	DISPERR("M6 DSI lc_hs_probe: end enable=%u old=%u restore=%u mux=%u final=%u\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux ? 1 : 0,
 		DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0);
 }
 

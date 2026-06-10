@@ -13952,3 +13952,147 @@ selector samples in known states (LK logo if possible, Linux steady video,
 BIST, suspend/resume, forced clock-lane probes) and/or bring in an external MTK
 register manual. Do not infer lane polarity or HS acceptance from individual
 bits without a reference.
+
+## 2026-06-10 #106 safe DSI clock-lane mux probes
+
+Patch category: **DIAGNOSTIC / ISOLATION**. The patch is inert during boot and
+extends the existing manual debugfs probe surface. It supersedes the
+intermediate #105 image, which was flashed only to validate the safe-probe API
+and exposed one stale inline `TXRX` read offset.
+
+New / changed manual commands:
+
+- `m6_dsi_clk_restore[:tag]`;
+- `m6_dsi_cc_probe:<0|1>[:hold_ms[:restore[:mux]]]`;
+- `m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore[:mux]]]`.
+
+Hypothesis: #104 made the MIPITX debug mux usable, but the first clock-lane
+probe session (#105 live capture on #104 code) showed a methodology hazard:
+manual probes with `restore=0` can leave `HSTX_CKLP_EN` and/or
+`PHY_LCCON.LC_HS_TX_EN` disabled and make later MIPITX samples look like a new
+hardware state. The correct next layer needs mux samples taken while the lane
+is intentionally disabled, but with automatic restore and with a hard recovery
+command. A second small diagnostic bug was also found: the short probe log read
+`DDP_REG_BASE_DSI0 + 0x010`, which is `DSI_COM_CTRL`, while this tree's
+`DSI_TXRX_CTRL` is at struct offset `0x018`; snapshots were already correct,
+but the short `txrx=...` fields were misleading.
+
+Evidence:
+- Methodology-trap capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0128-m6-104-mux-clocklane-probes-711HEBSR277K5/`.
+- Recovery capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0145-m6-104-p105-clocklane-recovery-711HEBSR277K5/`.
+- Intermediate #105 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0228-m6-dsi-probe-mux-safe-bootonly/`.
+- Intermediate #105 sanity capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0235-m6-105-probe-mux-safe-711HEBSR277K5/`.
+- Final #106 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0248-m6-dsi-probe-mux-safe-offsetfix-bootonly/`.
+- Final #106 runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0252-m6-106-offsetfix-probe-sanity-711HEBSR277K5/`.
+- #106 boot image sha256:
+  `cde5e8023076280e899682412c3a011289699b87b6969480480b5952d326d6eb`.
+- #106 `Image.gz-dtb` sha256:
+  `9c839de87bbc6f7e41e9b1f64f6e07e7e4782fe1e7ea2d012369dfe463b3afff`.
+- #106 `System.map` sha256:
+  `768f8d0d7c1a7436bf61d296046f21880631b2ff1dec19abab0846b883d86a55`.
+- #106 `vmlinux` sha256:
+  `fcd8b35d5777c4077cbdf5bd6bd1bc4360892475e53c16b7475d87b502d07c65`.
+- #106 `initrd.img` sha256:
+  `7de975b4485324f4a76eb44fa4cc61472e829421e8d27e31f50d80b984cb4a4f`.
+- `git diff --check` passed. `make -C kernel-3.18
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb`
+  completed in `build-m6-dsi-probe-mux-safe-offsetfix-20260610.log`.
+- #106 artifact `sha256sum -c SHA256SUMS` passed. `abootimg -i` reports the
+  unchanged 16 MiB boot image geometry, and unpacked `zImage` / `initrd.img`
+  match packaged inputs.
+- Flash chain: first #105 flash attempt with `dd bs=4M` failed because this
+  Android `dd` rejects the suffix (`dd: block size '4M': illegal number`).
+  The successful flash path uses `bs=1048576`. #106 write readback and
+  postboot readback both report boot sha256
+  `cde5e8023076280e899682412c3a011289699b87b6969480480b5952d326d6eb`.
+- #105 sanity capture proved the new `restore=1,mux=1` probe API restores
+  state, but also exposed the stale inline offset: short probe strings showed
+  `txrx=0x0` while adjacent snapshots showed `TXRX=0x1003c`.
+- #107/#106 sanity capture `sha256sum -c SHA256SUMS` passed. Identity and final
+  health show root shell, `sys.boot_completed=1`, bootanim stopped, display
+  power ON, boot hash `cde5e802...`, and backlight pinned to 255.
+- #107 lines prove the final offset fix:
+  `cc_probe begin ... txrx=0x1003c lccon=0x1`,
+  `cc_probe after-set ... txrx=0x3c lccon=0x1`,
+  `cc_probe after-restore ... txrx=0x1003c lccon=0x1`,
+  `lc_hs_probe after-set ... txrx=0x1003c lccon=0x0`,
+  `lc_hs_probe after-restore ... txrx=0x1003c lccon=0x1`, and
+  `clk_restore[p107_final] ... txrx=0x1003c lccon=0x1`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds the
+  bounded internal mux-under-probe helper, adds `dsi_m6_force_clk_restore()`,
+  extends the CC and LC probe helpers with a `sample_mux` argument, and changes
+  short probe `txrx/lccon` reads to owner-local `DSI_REG[0]` struct accessors
+  rather than the stale `0x010` absolute offset.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the
+  restore helper and updated probe signatures.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  `m6_dsi_clk_restore[:tag]` command and extends both clock-lane probe parsers
+  / help strings with the optional `mux` argument.
+- `BRINGUP_STATE.md` and
+  `docs/run_reports/2026-06-09_m6_display_closed_layers_external_audit_result.md`:
+  record the capture evidence, final artifact identity, expected next marker,
+  rollback condition, and the `bs=1048576` flash-method correction.
+
+Why each file changed: `ddp_dsi.c` owns DSI/MIPITX register knowledge and the
+existing clock-lane toggles, so it is the only safe place to sample mux output
+while a lane is intentionally disabled and then restore the old state.
+`ddp_dsi.h` and `disp_debug.c` expose that owner-local helper through the
+existing manual diagnostic surface. The state/report files preserve the
+methodology correction so future agents do not treat p105's self-inflicted
+lane-off state or stale `txrx=0x0` short log as a hardware finding.
+
+Result:
+- FACT: p105 final state was a probe-methodology artifact, not a new hardware
+  frontier. `restore=0` left `HSTX_CKLP_EN` and then `PHY_LCCON` disabled for
+  later samples.
+- FACT: `m6_dsi_cc_probe:0:<hold>:1:1` now samples DSI/MIPITX mux output under
+  disabled `HSTX_CKLP_EN` and restores `TXRX=0x1003c`.
+- FACT: `m6_dsi_lc_hs_probe:0:<hold>:1:1` now samples DSI/MIPITX mux output
+  under disabled `PHY_LCCON.LC_HS_TX_EN` and restores `PHY_LCCON=0x1`.
+- FACT: `m6_dsi_clk_restore:<tag>` force-restores CC and LC state to on and
+  snapshots before/after.
+- FACT: short probe `txrx=...` fields now agree with snapshots; the old
+  `txrx=0x0` short strings were stale-offset noise.
+- INFERENCE: the next useful layer is an empirical MIPITX mux comparison using
+  the safe probes, especially selectors that changed in steady video/BIST and
+  under CC/LC disable. Do not run `restore=0` except as a deliberately tagged
+  destructive isolation step with a final `m6_dsi_clk_restore`.
+
+Expected next marker: from #106, run safe comparison windows only:
+`m6_dsi_debug_mux:<baseline>`,
+`m6_dsi_cc_probe:0:2500:1:1`,
+`m6_dsi_lc_hs_probe:0:2500:1:1`,
+`m6_dsi_clk_restore:<final>`, then a truth window. A valid capture should show
+the mux samples tagged `cc-probe-0-mux` and `lc-hs-probe-0-mux`, followed by
+final `TXRX=0x1003c`, `PHY_LCCON=0x1`, `DSI_DEBUG_SEL=0`, and
+`MIPITX_DSI_DBG_CON=0`. Any comparison of mux words must reference whether the
+sample was steady video, BIST, CC-disabled, or LC-disabled.
+
+Rollback condition: revert #106 if the new commands change boot behavior before
+manual invocation, leave `HSTX_CKLP_EN` or `PHY_LCCON` disabled after
+`restore=1`, leave debug selectors non-zero, create a new OVL/RDMA/CMDQ wedge,
+or regress ADB/SurfaceFlinger/backlight. Do not revert because the glass remains
+black; this is diagnostic-only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-0248-m6-dsi-probe-mux-safe-offsetfix-bootonly
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack.tmp/zImage
+cmp initrd.img verify-unpack.tmp/initrd.img
+abootimg -i boot-m6-dsi-probe-mux-safe-offsetfix-20260610.img
+
+CAP=/srv/forge/android/meizu_m6/captures/20260610-0252-m6-106-offsetfix-probe-sanity-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+grep -E 'M6 DSI (cc_probe|lc_hs_probe|clk_restore)|M6 DSI snapshot\\[(cc-probe|lc-hs-probe|clk-restore)' "$CAP/m6-lines.txt"
+cat "$CAP/identity.txt" "$CAP/final-health.txt"
+```

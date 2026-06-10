@@ -251,10 +251,11 @@ extern "C" {
 	void dsi_m6_dump_phy_truth(const char *tag);
 	void dsi_m6_debug_mux_sweep(const char *tag);
 	void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms);
+	void dsi_m6_force_clk_restore(const char *tag);
 	void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
-				   unsigned int restore);
+				   unsigned int restore, unsigned int sample_mux);
 	void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
-				      unsigned int restore);
+				      unsigned int restore, unsigned int sample_mux);
 	bool dsi_m6_capture_live_snapshot(struct m6_dsi_live_snapshot *snap);
 	void dsi_m6_dump_dcs_status(const char *tag);
 	void dsi_m6_dump_dcs_status_force(const char *tag);
