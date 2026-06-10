@@ -271,6 +271,9 @@ extern "C" {
 					unsigned int sample_mux,
 					unsigned int shift);
 	void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms);
+	void dsi_m6_force_vm_cmd(unsigned int value, unsigned int hold_ms,
+				 unsigned int restore,
+				 unsigned int sample_mux);
 	void dsi_m6_force_clk_restore(const char *tag);
 	void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
 				   unsigned int restore, unsigned int sample_mux);

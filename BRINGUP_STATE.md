@@ -1,5 +1,107 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-10 #124 DSI VM_CMD_CON restore-safe isolation probe
+
+PATCH HISTORY, **DIAGNOSTIC / ISOLATION**, 2026-06-10: add a manual
+restore-safe M6 debugfs command for live `DSI_VM_CMD_CON` probing. This is a
+display isolation patch, not a claimed screen fix.
+
+Hypothesis: FACT: #123 proved a valid Android image in scrcpy, live HWC layers,
+moving RDMA/PQ/DSI counters, brightness 255, and a programmed red DSI BIST
+window, while the human observation still reported no visible physical image.
+FACT: prior sessions closed LK LCM parameters/table parity, `CLK_HS_POST`,
+static DSI0/MIPITX/MMSYS parity, visible MIPITX lane/top/PLL fields, and panel
+identity/init retention as full-image fixes. FACT: the live #123 DSI video
+state still carries `VM_CMD=0xff511521`, including per-frame DCS `0x51`
+traffic in VFP. HYPOTHESIS: the remaining software-probeable display variable
+is not Android composition but HS-video/panel acceptance around VFP command
+injection. Temporarily clearing `TS_VFP_EN`, clearing `VM_CMD_EN`, or disabling
+the VM command word under live video may either restore a visible image, create
+a visible transient, or cleanly reject this branch.
+
+Evidence:
+- #123 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-m6-display-pqdelta-bootonly-0706/`.
+- #123 boot image sha256:
+  `ee7137cfa5f9b78907aab18091731f9855a4f0a48d9143fddc74efaa88867a67`.
+- #123 `Image.gz-dtb` sha256:
+  `48c1af2a1d97565b7c583b0c2394982face0de54d734e44e536b3f8ce5a104a0`.
+- #123 `System.map` sha256:
+  `e3962eb98fd4973b485989b6fea50f22224bcf34cd8dfe3f3043f728f3094376`.
+- #123 display captures:
+  `/srv/forge/android/meizu_m6/captures/20260610-0714-m6-123-pqdelta-window-711HEBSR277K5/`
+  and
+  `/srv/forge/android/meizu_m6/captures/20260610-0721-m6-123-dsi-phy-bist-711HEBSR277K5/`.
+- #123 result lines recorded above prove `dcs51=0xff`, `bl=255`, moving
+  scanout, live `dsi0_eof=1`, and successful BIST register programming.
+- #124 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-m6-dsi-vmcmd-probe-bootonly-0756/`.
+- #124 boot image sha256:
+  `7ef75da5b27ed1c816f6c2b1d52d7d954c4a5949e01407d9c67b61c420976ba2`.
+- #124 `Image.gz-dtb` sha256:
+  `d1ed9adba01baf903852de211c326e6edcef98822ee3de9cc5e96cb469608de2`.
+- #124 `System.map` sha256:
+  `77aa651f14e347c6a7bc37a9bd839e6f5253db4d9642c94c2ef03e191a4a89f0`.
+- #124 `vmlinux` sha256:
+  `4065420077dd4b399ca2351c1507b2650144f76ba331ab21f029b2f1033e3d76`.
+- Build result: `make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb`
+  completed successfully, then `abootimg --create` produced a 16 MiB boot
+  image with the same #123 ramdisk/cmdline/config layout.
+- Live flash/capture status: not flashed in this session because ADB over the
+  forwarded server reports `711HEBSR277K5 offline`; do not use the online
+  `810BBMM22D7S` device because it is a different `m2note`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  `dsi_m6_force_vm_cmd()` to read old `DSI_VM_CMD_CON`, log DSI state and VM
+  payload, write a requested raw value, optionally sample probe mux/counters,
+  hold an HS window, and restore the old raw value.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the new
+  owner-local helper to the display debugfs parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds
+  `m6_dsi_vm_cmd_probe:<raw>[:hold_ms[:restore[:mux]]]`.
+- `BRINGUP_STATE.md`: records the hypothesis, interpretation, expected marker,
+  rollback, and verification commands for the probe.
+
+Why each file changed: `ddp_dsi.c` owns M6 DSI register snapshots, VM payload
+logging, HS windows, and prior restore-safe display probes, so the register
+write/restore belongs there. `ddp_dsi.h` and `disp_debug.c` expose the helper
+through the existing `/sys/kernel/debug/mtkfb` diagnostic surface without
+changing boot behavior before manual invocation. The state file keeps this
+branch visible so future agents do not confuse a failed visual run with an
+untested VM command path.
+
+Expected next marker: a manual invocation should log
+`M6 DSI vm_cmd_probe: begin`, `vmcmd-probe-before`,
+`vmcmd-probe-after-write`, `vmcmd-0x...-hold`, optional mux stats, and
+`M6 DSI vm_cmd_probe: after-restore` followed by `end`. With `restore=1`,
+final raw `DSI_VM_CMD_CON` must equal the old raw value. The human observation
+must report whether the physical LCD changes during each hold window.
+
+Rollback condition: revert #124 if merely booting changes display behavior,
+if a manual probe fails to restore the original `DSI_VM_CMD_CON`, if it leaves
+DSI start/PHY disabled, if scrcpy/HWC/boot completion regresses, or if it
+introduces new OVL/RDMA/CMDQ/DEVAPC wedges. Do not keep a non-restoring value
+as a fix unless a later capture proves stable visible scanout and a separate
+proper-fix patch explains why that value is correct.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-m6-dsi-vmcmd-probe-bootonly-0756
+sha256sum -c SHA256SUMS
+abootimg -i boot-m6-dsi-vmcmd-probe-20260610.img
+
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'settings put system screen_brightness_mode 0; settings put system screen_brightness 255; echo 255 > /sys/class/leds/lcd-backlight/brightness'
+$A shell 'echo m6_dsi_vm_cmd_probe:ff511501:8000:1:2 > /sys/kernel/debug/mtkfb'
+$A shell 'echo m6_dsi_vm_cmd_probe:ff511520:8000:1:2 > /sys/kernel/debug/mtkfb'
+$A shell 'echo m6_dsi_vm_cmd_probe:00000000:8000:1:2 > /sys/kernel/debug/mtkfb'
+$A shell 'dmesg | grep -E "M6 DSI vm_cmd_probe|vmcmd-probe|vmcmd-0x|M6 DISPLAY truth" | tail -260'
+```
+
 ## 2026-06-10 #123 display PQ/DSI truth window plus M4U/CCCI/FG carry
 
 PATCH HISTORY, **DIAGNOSTIC / ISOLATION / PROPER-FIX**, 2026-06-10:

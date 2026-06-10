@@ -165,6 +165,8 @@ char MTKFB_STR_HELP[] =
 	"             Meizu M6 enable/disable DSI0/MIPITX write-order capture\n"
 	"        m6_dsi_hsa_wc:<value>[:hold_ms]\n"
 	"             Meizu M6 isolation override for DSI_HSA_WC with snapshots\n"
+	"        m6_dsi_vm_cmd_probe:<raw>[:hold_ms[:restore[:mux]]]\n"
+	"             Meizu M6 restore-safe VM_CMD_CON isolation; try 0xff511501 to clear TS_VFP_EN\n"
 	"        m6_dsi_bist_profile:<profile>:<rgb>[:hold_ms]\n"
 	"             Meizu M6 manual DSI BIST profile sweep; auto-disables\n"
 	"        m6_lcm_page5_2a:<value>[:hold_ms]\n"
@@ -1020,6 +1022,24 @@ void mtkfb_process_dbg_opt(const char *opt)
 		primary_display_manual_unlock();
 		DISPMSG("m6 dsi hsa wc: value=0x%08x hold=%u\n",
 			value, hold_ms);
+	} else if (0 == strncmp(opt, "m6_dsi_vm_cmd_probe:",
+				sizeof("m6_dsi_vm_cmd_probe:") - 1)) {
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+
+		ret = sscanf(opt, "m6_dsi_vm_cmd_probe:%x:%u:%u:%u\n",
+			     &value, &hold_ms, &restore, &sample_mux);
+		if (ret < 1) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		primary_display_manual_lock();
+		dsi_m6_force_vm_cmd(value, hold_ms, restore, sample_mux);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI vm_cmd_probe command: value=0x%x hold=%u restore=%u mux=%u\n",
+			value, hold_ms, restore ? 1 : 0, sample_mux);
 	} else if (0 == strncmp(opt, "bypass_blank:", 13)) {
 		char *p = (char *)opt + 13;
 		unsigned int blank;

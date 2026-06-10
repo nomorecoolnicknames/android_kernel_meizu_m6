@@ -3792,6 +3792,70 @@ static unsigned int dsi_m6_bound_hold_ms(unsigned int hold_ms)
 	return hold_ms;
 }
 
+void dsi_m6_force_vm_cmd(unsigned int value, unsigned int hold_ms,
+			 unsigned int restore, unsigned int sample_mux)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old_raw;
+	unsigned int final_raw;
+
+	if (!DSI_REG[0])
+		return;
+
+	old_raw = INREG32(DDP_REG_BASE_DSI0 + 0x130);
+	DISPERR("M6 DSI vm_cmd_probe: begin value=0x%x old=0x%x restore=%u mux=%u hold=%u start=0x%x int=0x%x mode=0x%x txrx=0x%x ps=0x%x\n",
+		value, old_raw, restore ? 1 : 0, sample_mux, bounded,
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c));
+	dsi_m6_dump_snapshot("vmcmd-probe-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_vm_payload_marker("vmcmd-probe-before", DISP_MODULE_DSI0,
+				      NULL);
+
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_VM_CMD_CON, value);
+	DISPERR("M6 DSI vm_cmd_probe: after-write value=0x%x live=0x%x start=0x%x int=0x%x state=0x%x/0x%x checksum=0x%x\n",
+		value, INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x144));
+	dsi_m6_dump_snapshot("vmcmd-probe-after-write", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_vm_payload_marker("vmcmd-probe-after-write",
+				      DISP_MODULE_DSI0, NULL);
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "vmcmd-0x%x-mux", value);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux >= 2) {
+		snprintf(tag, sizeof(tag), "vmcmd-0x%x-muxstats", value);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	}
+
+	snprintf(tag, sizeof(tag), "vmcmd-0x%x-hold", value);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_VM_CMD_CON, old_raw);
+		DISPERR("M6 DSI vm_cmd_probe: after-restore old=0x%x live=0x%x start=0x%x int=0x%x state=0x%x/0x%x checksum=0x%x\n",
+			old_raw, INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x164),
+			INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x144));
+		dsi_m6_dump_snapshot("vmcmd-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+	}
+
+	final_raw = INREG32(DDP_REG_BASE_DSI0 + 0x130);
+	DISPERR("M6 DSI vm_cmd_probe: end value=0x%x old=0x%x final=0x%x restore=%u mux=%u\n",
+		value, old_raw, final_raw, restore ? 1 : 0, sample_mux);
+}
+
 static void dsi_m6_dump_probe_mux_sweep(const char *tag)
 {
 	static unsigned int probe_mux_count;
