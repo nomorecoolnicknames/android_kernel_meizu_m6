@@ -13928,3 +13928,27 @@ Result:
   use them as an HS/lane/PHY acceptance probe, not as generic final-register
   dumps. For visual tests after wake, brightness must be pinned at the sysfs/LED
   driver level inside the same window; settings alone are insufficient.
+
+### Local source audit: MIPITX debug mux definitions
+
+Patch category: **DIAGNOSTIC / STATE-ONLY**. No source changed.
+
+FACT: local MT6750/MT6755/MT6757 source trees define `MIPITX_DSI_DBG_CON` fields
+as selector/control bits, not as an output decoder:
+
+- active mt6755 tree:
+  `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_reg.h` defines
+  `MIPI_TX_DBG_SEL:4`, `MIPI_TX_DBG_OUT_EN:1`, `MIPI_TX_GPIO_MODE_EN:1`, and
+  `MIPI_TX_APB_ASYNC_CNT_EN:1`;
+- mt6757 donor:
+  `android_kernel_collection_mt6750-Q-ex2/.../mt6757/dispsys/ddp_reg.h` adds
+  `MIPI_TX_TST_CK_OUT_EN` and `MIPI_TX_TST_CK_OUT_SEL`;
+- mt6757 still declares `MIPITX_DSI_DBG_OUT` as a raw 32-bit value
+  (`MIPI_TX_DBG_OUT:32`) rather than named lane/PHY status fields.
+
+INFERENCE: there is no local ready-made bit decoder for the non-zero #104
+`DBG_OUT` words. The next useful comparison must be empirical: repeat the same
+selector samples in known states (LK logo if possible, Linux steady video,
+BIST, suspend/resume, forced clock-lane probes) and/or bring in an external MTK
+register manual. Do not infer lane polarity or HS acceptance from individual
+bits without a reference.
