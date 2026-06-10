@@ -15531,3 +15531,139 @@ image, the next useful display work is hidden PHY/electrical evidence,
 stock-LK-only side effects outside the decoded register set, or external
 measurement. Do not return to RDMA EOF, LCM init, `CLK_HS_POST`, lane maps, or
 these visible MIPITX fields without new contradictory evidence.
+
+## Patch history: #125 WCN WiFi IRQ DT fallback and multi-subsystem capture
+
+Patch category: **PROPER-FIX + DIAGNOSTIC**. The behavior change is narrow:
+the WCN SDIO IRQ lookup now falls back from the absent
+`mediatek,connectivity-combo` node to the actual M6 `mediatek,wifi` DT node.
+The diagnostic part logs the selected IRQ source and whether the parsed IRQ is
+valid at request and board power-control boundaries.
+
+Hypothesis: WiFi/BT had one real board-port mismatch in the WCN glue. The M6
+DTB exposes the WiFi EINT on `wifi@180f0000` with compatible `mediatek,wifi`,
+but `mtk_wcn_stub_alps.c` only looked for `mediatek,connectivity-combo`.
+Therefore the previous build left `wifi_irq=4294967295`, preventing the WCN
+stack from using the board IRQ and hiding the next lower failure. Falling back
+to `mediatek,wifi` should close the invalid-IRQ layer without pretending that
+SDIO enumeration is fixed.
+
+Evidence:
+- Pre-fix #124 logs showed WCN SDIO using `wifi_irq=4294967295 valid=0`.
+- Source DT facts: `arch/arm64/boot/dts/mt6755.dtsi` has
+  `wifi@180f0000 { compatible = "mediatek,wifi"; interrupts = <GIC_SPI 238
+  IRQ_TYPE_LEVEL_LOW>; }`, while no active `mediatek,connectivity-combo` node
+  exists for this board.
+- Artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-m6-wifi-irq-fallback-bootonly/`.
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-125-wifi-irq-fallback-multisubsystem-711HEBSR277K5/`.
+- #125 boot image sha256:
+  `08e30c67051632f282503ba3b46b530d9ceb71f7aa74cc2eb2816da97fee35c0`.
+- Runtime identity/readback matched #125:
+  `Linux localhost 3.18.140 #125 SMP PREEMPT Wed Jun 10 09:01:20 CDT 2026 aarch64`,
+  `sys.boot_completed=1`, `bootanim=stopped`, root ADB available, and live boot
+  partition readback equal to the boot image hash.
+- Capture `SHA256SUMS` verified the #125 boot image, `Image.gz-dtb`,
+  `System.map`, and boot dmesg.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/connectivity/common/common_detect/mtk_wcn_stub_alps.c`:
+  adds `m6_cmb_find_wifi_irq_node()`, uses it in
+  `mtk_wcn_cmb_sdio_request_eirq()`, and includes the chosen IRQ source in the
+  existing M6 WCN logs.
+- `BRINGUP_STATE.md`: records the artifact, capture, result, current
+  frontiers, rollback condition, and verification commands.
+
+Why each file changed: `mtk_wcn_stub_alps.c` is the owner of the legacy WCN
+SDIO callback and EINT glue. The fix keeps the existing combo-node path for
+trees that still provide it, but teaches M6 to use its actual DT node instead
+of leaving `wifi_irq` invalid. The state file preserves the exact proof so
+future agents do not chase the already-closed invalid-IRQ layer.
+
+Result:
+- FACT: #125 now parses a real WiFi IRQ:
+  `M6 CMB ... wifi_irq=270 valid=1`.
+- FACT: the previous `wifi_irq=4294967295 valid=0` layer is closed.
+- FACT: WiFi/BT still do not work; the new earliest WCN failure is SDIO card
+  response, not IRQ:
+  `M6 MMC2 attach_sdio CMD5 probe err=0 ocr=0x0`,
+  `M6 MMC2 attach_sdio err=-22 ocr=0x0 rocr=0x0 funcs=0`,
+  `HIF-SDIO ... no supported func probed`, and
+  `WIFI_write: WMT turn on WIFI fail!`.
+- FACT: CONSYS power-on reaches chip-id readback (`0x326`) and the logged WiFi
+  rails are on at 3.3 V before the SDIO failure, so the next WCN frontier is
+  SDIO power/reset/pinctrl/timing or card detect/rescan ordering, not Android
+  framework WiFi state.
+- FACT: #125 also captured the current camera, modem, and battery state:
+  camera provider loads and reports one legacy camera, but opens into corrupt
+  or missing static metadata around `SENSOR_DRVNAME_IMX278_MIPI_RAW` and HIDL
+  status `-32`; modem asserts in `pcore/driver/devdrv/mdipc/src/cc_irq.c:1043`
+  with `MD_BOOT_HS2_FAIL`; charger is enabled and battery voltage is high, but
+  raw FG/RTC SOC remains impossible at 6 while healthd reports the guarded UI
+  floor.
+- INFERENCE: the screen is not abandoned, but #125 does not change the display
+  conclusion from #117/#123/#124. The physical display frontier remains below
+  HWC/RDMA/userspace because scrcpy shows a valid picture while the glass
+  remains black/glowing.
+
+Expected next marker:
+- For WiFi/BT, a real fix should change the first SDIO response from
+  `CMD5 ... ocr=0x0` to a nonzero OCR, then bind at least one SDIO function
+  before WMT tries to enable STP.
+- For camera, the next ROM/vendor fix should remove the missing
+  `constructCustStaticMetadata_*_SENSOR_DRVNAME_IMX278_MIPI_RAW` symbol set or
+  otherwise make static info return sane dimensions before HAL open.
+- For RIL, the next kernel/vendor fix should remove the MD assert at
+  `cc_irq.c:1043` before debugging Android RIL sockets.
+- For battery, a proper FG/NVRAM/calibration fix should make raw UI_SOC/RTC SOC
+  consistent with the measured voltage instead of relying on the guarded UI
+  floor.
+
+Rollback condition: revert the WCN IRQ fallback if it causes boot regression,
+IRQ request conflicts, loss of root ADB, or a new WCN crash before the SDIO
+CMD5 probe. Do not revert it merely because WiFi/BT still fail at `ocr=0x0`;
+that failure is the next exposed layer.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-m6-wifi-irq-fallback-bootonly
+sha256sum -c SHA256SUMS
+
+CAP=/srv/forge/android/meizu_m6/captures/20260610-125-wifi-irq-fallback-multisubsystem-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/kernel-identity.txt" "$CAP/boot-readback-sha256.txt"
+grep -E 'M6 CMB .*wifi_irq=270 valid=1|M6 MMC2 attach_sdio CMD5 probe|HIF-SDIO.*no supported func|WIFI_write: WMT turn on WIFI fail' "$CAP/dmesg-boot.txt"
+grep -E 'found <0x278|constructCustStaticMetadata|unknown HAL status code -32|getInfo2' "$CAP/logcat-boot.txt"
+grep -E 'MD_BOOT_HS2_FAIL|cc_irq.c|MD exception|RADIO_NOT_AVAILABLE' "$CAP/dmesg-boot.txt" "$CAP/logcat-boot.txt"
+grep -E 'M6 FG impossible|healthd: battery|bq2415x_.*charge|bq2415x_charging' "$CAP/dmesg-boot.txt" "$CAP/logcat-boot.txt"
+```
+
+## Latest multi-subsystem pointer: #125
+
+The latest validated M6 multi-subsystem boot/capture is #125:
+
+- artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-m6-wifi-irq-fallback-bootonly/`;
+- capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-125-wifi-irq-fallback-multisubsystem-711HEBSR277K5/`;
+- boot image sha256:
+  `08e30c67051632f282503ba3b46b530d9ceb71f7aa74cc2eb2816da97fee35c0`;
+- runtime:
+  `Linux localhost 3.18.140 #125 SMP PREEMPT Wed Jun 10 09:01:20 CDT 2026 aarch64`;
+- closed layer:
+  WCN WiFi IRQ DT lookup now resolves to `wifi_irq=270 valid=1`;
+- current WiFi/BT frontier:
+  SDIO CMD5 returns `ocr=0x0` even after CONSYS power-on and valid IRQ;
+- current camera frontier:
+  HAL/provider reaches sensor discovery, but IMX278 static metadata/sensor info
+  is missing or corrupt and returns HIDL status `-32`;
+- current RIL frontier:
+  modem asserts at `pcore/driver/devdrv/mdipc/src/cc_irq.c:1043`;
+- current battery frontier:
+  charger is active, voltage is high, but raw FG/RTC SOC is stuck at impossible
+  6 and needs calibration/NVRAM/fuel-gauge repair;
+- current display frontier:
+  physical glass remains black while scrcpy is valid; continue below decoded
+  MIPITX/HWC/RDMA layers.

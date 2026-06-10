@@ -155,11 +155,31 @@ static bool m6_wifi_irq_valid(void)
 	return wifi_irq != M6_WIFI_IRQ_INVALID && wifi_irq != 0;
 }
 
-static void m6_cmb_trace_irq_node(const char *phase, struct device_node *node,
-	int gpio, int request_ret)
+static struct device_node *m6_cmb_find_wifi_irq_node(const char **source)
 {
-	pr_warn_ratelimited("M6 CMB connectivity-combo %s node=%p gpio5=%d gpio_valid=%d wifi_irq=%u irq_valid=%d request_ret=%d claim=%d enable=%d handler=%p data=%p\n",
-		phase, node, gpio, gpio_is_valid(gpio), wifi_irq,
+	struct device_node *node;
+
+	node = of_find_compatible_node(NULL, NULL, "mediatek,connectivity-combo");
+	if (node) {
+		*source = "mediatek,connectivity-combo";
+		return node;
+	}
+
+	node = of_find_compatible_node(NULL, NULL, "mediatek,wifi");
+	if (node) {
+		*source = "mediatek,wifi";
+		return node;
+	}
+
+	*source = "missing";
+	return NULL;
+}
+
+static void m6_cmb_trace_irq_node(const char *phase, const char *source,
+	struct device_node *node, int gpio, int request_ret)
+{
+	pr_warn_ratelimited("M6 CMB wifi-irq %s source=%s node=%p gpio5=%d gpio_valid=%d wifi_irq=%u irq_valid=%d request_ret=%d claim=%d enable=%d handler=%p data=%p\n",
+		phase, source, node, gpio, gpio_is_valid(gpio), wifi_irq,
 		m6_wifi_irq_valid(), request_ret,
 		atomic_read(&sdio_claim_irq_enable_flag),
 		atomic_read(&irq_enable_flag), mtk_wcn_cmb_sdio_eirq_handler,
@@ -507,6 +527,7 @@ irqreturn_t mtk_wcn_cmb_sdio_eirq_handler_stub(int irq, void *data)
 static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, void *data)
 {
 	struct device_node *node;
+	const char *irq_source;
 	int ret = -EINVAL;
 	int gpio_wifi_eint_pin = -ENOENT;
 #if 0
@@ -518,9 +539,9 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 	mtk_wcn_cmb_sdio_eirq_data = data;
 	mtk_wcn_cmb_sdio_eirq_handler = irq_handler;
 
-	node = (struct device_node *)of_find_compatible_node(NULL, NULL, "mediatek,connectivity-combo");
-	pr_warn("M6 CMB SDIO request_eirq handler=%p data=%p node=%p\n",
-		irq_handler, data, node);
+	node = m6_cmb_find_wifi_irq_node(&irq_source);
+	pr_warn("M6 CMB SDIO request_eirq handler=%p data=%p node=%p source=%s\n",
+		irq_handler, data, node, irq_source);
 	if (node) {
 		gpio_wifi_eint_pin = of_get_gpio(node, 5);
 #if 0
@@ -528,7 +549,7 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 			gpio_wifi_eint_pin);
 		wifi_irq = gpio_to_irq(gpio_wifi_eint_pin);
 #else
-		m6_cmb_trace_irq_node("irq-parse-entry", node,
+		m6_cmb_trace_irq_node("irq-parse-entry", irq_source, node,
 			gpio_wifi_eint_pin, ret);
 		wifi_irq = irq_of_parse_and_map(node, 0);/* get wifi eint num */
 #endif
@@ -540,9 +561,9 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 		} else {
 			ret = -ENODEV;
 		}
-		pr_warn("M6 CMB SDIO request_eirq parsed_irq=%u valid=%d request_ret=%d\n",
-			wifi_irq, m6_wifi_irq_valid(), ret);
-		m6_cmb_trace_irq_node("irq-parse-result", node,
+		pr_warn("M6 CMB SDIO request_eirq source=%s parsed_irq=%u valid=%d request_ret=%d\n",
+			irq_source, wifi_irq, m6_wifi_irq_valid(), ret);
+		m6_cmb_trace_irq_node("irq-parse-result", irq_source, node,
 			gpio_wifi_eint_pin, ret);
 #endif
 
@@ -552,11 +573,11 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 			mtk_wcn_cmb_sdio_disable_eirq();/*not ,chip state is power off*/
 	} else {
 		wifi_irq = M6_WIFI_IRQ_INVALID;
-		pr_warn("M6 CMB SDIO request_eirq missing connectivity-combo node wifi_irq=%u\n",
+		pr_warn("M6 CMB SDIO request_eirq missing wifi irq node wifi_irq=%u\n",
 			wifi_irq);
-		m6_cmb_trace_irq_node("irq-missing-node", node,
+		m6_cmb_trace_irq_node("irq-missing-node", irq_source, node,
 			gpio_wifi_eint_pin, ret);
-		CMB_STUB_LOG_WARN("[%s] can't find connectivity compatible node\n", __func__);
+		CMB_STUB_LOG_WARN("[%s] can't find wifi irq compatible node\n", __func__);
 	}
 
 	CMB_STUB_LOG_INFO("exit %s\n", __func__);
