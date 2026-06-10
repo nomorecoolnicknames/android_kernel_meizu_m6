@@ -148,6 +148,7 @@ NSFeature :  : RAWSensorInfo < _id >  :  : getFlickerPara \
 #define OV9726MIPI_SENSOR_ID                    0x9726
 #define OV8865_SENSOR_ID                        0x8865
 #define OV8856_SENSOR_ID                        0x8856
+#define OV8856JSL_SENSOR_ID                     0x885A
 #define OV5695_SENSOR_ID                        0x5695
 #define OV8858_SENSOR_ID                        0x8858
 #define OV8858S_SENSOR_ID                      (0x8858+1)

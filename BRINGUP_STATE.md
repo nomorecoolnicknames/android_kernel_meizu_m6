@@ -1,5 +1,98 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-10 #119 OV8856JSL alternate ID accept probe
+
+Patch category: **PROPER-FIX**. This patch keeps the M6 camera HAL-facing
+sensor list and power sequence from #118 unchanged, but allows the OV8856JSL
+driver to accept the physical ID `0x885a` observed on the sub-camera bus in the
+verified #118 capture.
+
+Hypothesis: FACT: #118 proved that the sub OV8856JSL power sequence, pinSetIdx
+1, bus 2, and I2C address `0x42` are live, because the clean camera window read
+`0x88` from register `0x300b` and `0x5a` from register `0x300c` twice. FACT:
+the same window still returned `sensorID=0xffffffff` and zero camera devices
+because the local OV8856JSL driver only accepted `OV8856_SENSOR_ID=0x8856`.
+HYPOTHESIS: this M6 module is an OV8856JSL variant whose chip ID is `0x885a`,
+so accepting that ID should move the sub camera past CHECK_SENSOR_ID and expose
+the next real camera frontier.
+
+Evidence:
+- #119 built artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0436-m6-ov8856jsl-885a-bootonly/`.
+- #119 boot image sha256:
+  `e691426fbf7ce9286e5be58f88a54e155e6ca93161258d8c3d23f2c767e2508c`.
+- #119 `Image.gz-dtb` sha256:
+  `b59fcf614e93cad883a8a0baed23d433ef4ffba28df71ecfc12671289576f1e8`.
+- #119 `System.map` sha256:
+  `2940a22c15bc06658fb4581357afe5559ed51836450b4f81cde3f21b14184212`.
+- #119 build check:
+  `make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb`
+  completed successfully; `System.map` contains
+  `OV8856JSLMIPIRAW_SensorInit` and `kdSensorList`.
+- #118 artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0406-m6-camera-sensor-wiring-bootonly/`.
+- #118 capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0418-m6-118-camera-sensor-wiring-711HEBSR277K5/`.
+- #118 identity/readback:
+  `identity-after-root.txt:1` shows `Linux localhost 3.18.140 #118 SMP
+  PREEMPT Wed Jun 10 04:05:29 CDT 2026 aarch64`, and
+  `boot-readback-pulled-sha256.txt:1` matches the artifact SHA
+  `e65f282ab76408635c00a19750776cfee11d3e642112f7a7e788e52316669cff`.
+- #118 clean camera window:
+  `dmesg-clean-camera-window.txt:1658-1682` and `:2558-2585` show
+  `sensorIdx=2 name=ov8856jslmipiraw pinSetIdx=1`, bus 2 reads
+  `0x300b=0x88` and `0x300c=0x5a`, followed by
+  `sensorID=0xffffffff`.
+- #118 clean camera state:
+  `dumpsys-media-camera-clean-window.txt:4` reports
+  `Number of camera devices: 0`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h`: adds
+  `OV8856JSL_SENSOR_ID=0x885a` for the observed JSL variant.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/ov8856jsl_mipi_raw/ov8856jslmipiraw_Sensor.c`:
+  accepts either the legacy OV8856 `0x8856` or observed JSL `0x885a` ID in
+  CHECK_SENSOR_ID and SensorOpen.
+- `BRINGUP_STATE.md`: records evidence, expected marker, rollback, and
+  verification commands.
+
+Why each file changed: `kd_imgsensor.h` owns shared numeric sensor IDs.
+The OV8856JSL chip driver owns the ID comparison that rejected the otherwise
+responding sub sensor, so the behavioral change is local to the proven failing
+comparison. `kd_sensorlist.h` is deliberately left at `OV8856_SENSOR_ID` for
+this cycle to avoid changing HAL raw-index/list behavior while validating the
+physical ID accept path.
+
+Expected next marker: in a clean camera-provider window, the OV8856JSL sub
+probe should log `accept alternate sensor id: expected 0x8856, got 0x885a`,
+then `feature CHECK_SENSOR_ID ret ... name=ov8856jslmipiraw ... sensorID=0x0000885a`
+instead of `0xffffffff`. If register `0x302a`, `SensorOpen`, OTP, or CSI/MIPI
+then fails, the next capture should show that as the new earliest camera
+blocker. `dumpsys media.camera` should move from zero devices if no later
+userspace/static-info blocker exists.
+
+Rollback condition: revert this patch if the physical OV8856JSL read no longer
+returns `0x885a`, if accepting `0x885a` breaks boot/camera-provider startup,
+if HAL rejects a non-`0x8856` returned CHECK_SENSOR_ID while it would have
+accepted a list-ID-only path, or if a stock M6 source/capture proves that this
+module must report `0x8856` and the observed `0x885a` was caused by a bus/read
+artifact.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'dmesg -c >/dev/null 2>&1 || true; logcat -c || true; killall android.hardware.camera.provider@2.4-service; killall mediaserver; killall cameraserver; sleep 5; dumpsys media.camera > /data/local/tmp/m6-camera-119-dumpsys.txt; dmesg > /data/local/tmp/m6-camera-119-dmesg.txt; logcat -b all -d -v threadtime > /data/local/tmp/m6-camera-119-logcat.txt'
+$A pull /data/local/tmp/m6-camera-119-dmesg.txt .
+rg -n "accept alternate sensor id|ov8856jslmipiraw|CHECK_SENSOR_ID ret|Number of camera devices|0x885a|0xffffffff" .
+```
+
 ## 2026-06-10 #118 M6 camera sensor list and power probe wiring
 
 PATCH HISTORY, **PROPER-FIX / ISOLATION / DIAGNOSTIC**, 2026-06-10:
