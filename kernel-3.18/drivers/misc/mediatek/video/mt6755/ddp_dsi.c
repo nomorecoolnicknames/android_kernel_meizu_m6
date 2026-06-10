@@ -2487,6 +2487,230 @@ static void dsi_m6_dump_mipitx_debug_mux_sweep(const char *tag,
 	dsi_m6_dump_mipitx_debug_mux_sweep_direct(tag, sweep_count);
 }
 
+static unsigned int dsi_m6_bound_mux_samples(unsigned int samples)
+{
+	if (samples == 0)
+		return 12;
+	if (samples > 32)
+		return 32;
+	return samples;
+}
+
+static unsigned int dsi_m6_bound_mux_delay_us(unsigned int delay_us)
+{
+	if (delay_us == 0)
+		return 1000;
+	if (delay_us > 5000)
+		return 5000;
+	return delay_us;
+}
+
+static void dsi_m6_dump_debug_mux_stats_direct(const char *tag,
+					       unsigned int sweep_id,
+					       unsigned int samples,
+					       unsigned int delay_us)
+{
+	uint32_t orig;
+	uint32_t restored;
+	unsigned int sel;
+	unsigned int bounded_samples;
+	unsigned int bounded_delay_us;
+
+	if (DSI_REG[0] == NULL)
+		return;
+
+	bounded_samples = dsi_m6_bound_mux_samples(samples);
+	bounded_delay_us = dsi_m6_bound_mux_delay_us(delay_us);
+	orig = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
+	for (sel = 0; sel < 32; sel++) {
+		uint32_t debug_sel = (orig & ~0x1f) | sel;
+		unsigned int sample;
+		unsigned int word_first = 0;
+		unsigned int word_last = 0;
+		unsigned int word_min = 0;
+		unsigned int word_max = 0;
+		unsigned int word_or = 0;
+		unsigned int word_and = 0;
+		unsigned int word_xor = 0;
+		unsigned int word_prev = 0;
+		unsigned int word_changes = 0;
+		unsigned int line_first = 0;
+		unsigned int line_last = 0;
+		unsigned int line_min = 0;
+		unsigned int line_max = 0;
+		unsigned int line_prev = 0;
+		unsigned int line_changes = 0;
+		uint32_t state8_first = 0;
+		uint32_t state8_last = 0;
+		uint32_t state9_first = 0;
+		uint32_t state9_last = 0;
+
+		DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_DEBUG_SEL, debug_sel);
+		udelay(1);
+		for (sample = 0; sample < bounded_samples; sample++) {
+			uint32_t state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+			uint32_t state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+			unsigned int word = dsi_m6_field(state8, 0, 14);
+			unsigned int line = dsi_m6_field(state9, 0, 22);
+
+			if (sample == 0) {
+				word_first = word_last = word_min = word_max = word;
+				word_or = word_and = word_xor = word;
+				word_prev = word;
+				line_first = line_last = line_min = line_max = line;
+				line_prev = line;
+				state8_first = state8_last = state8;
+				state9_first = state9_last = state9;
+			} else {
+				if (word != word_prev)
+					word_changes++;
+				if (line != line_prev)
+					line_changes++;
+				if (word < word_min)
+					word_min = word;
+				if (word > word_max)
+					word_max = word;
+				if (line < line_min)
+					line_min = line;
+				if (line > line_max)
+					line_max = line;
+				word_or |= word;
+				word_and &= word;
+				word_xor ^= word;
+				word_last = word;
+				word_prev = word;
+				line_last = line;
+				line_prev = line;
+				state8_last = state8;
+				state9_last = state9;
+			}
+			if (sample + 1 < bounded_samples)
+				udelay(bounded_delay_us);
+		}
+
+		DISPERR("M6 DSI mux_stats[%s]#%u sel=0x%x n=%u delay_us=%u orig=0x%x now=0x%x word=%u/%u minmax=%u/%u or=0x%x and=0x%x xor=0x%x changes=%u line=%u/%u minmax=%u/%u changes=%u st8=0x%x/0x%x st9=0x%x/0x%x int=0x%x vm=0x%x cksm=0x%x\n",
+			tag, sweep_id, sel, bounded_samples, bounded_delay_us,
+			orig, INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+			word_first, word_last, word_min, word_max, word_or,
+			word_and, word_xor, word_changes, line_first, line_last,
+			line_min, line_max, line_changes, state8_first, state8_last,
+			state9_first, state9_last, INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x144));
+	}
+
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_DEBUG_SEL, orig);
+	restored = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
+	DISPERR("M6 DSI mux_stats[%s]#%u restore orig=0x%x now=0x%x n=%u delay_us=%u\n",
+		tag, sweep_id, orig, restored, bounded_samples, bounded_delay_us);
+}
+
+static void dsi_m6_dump_mipitx_debug_mux_stats_direct(const char *tag,
+						      unsigned int sweep_id,
+						      unsigned int samples,
+						      unsigned int delay_us)
+{
+	uint32_t orig;
+	uint32_t restored;
+	unsigned int sel;
+	unsigned int bounded_samples;
+	unsigned int bounded_delay_us;
+
+	if (DSI_REG[0] == NULL)
+		return;
+
+	bounded_samples = dsi_m6_bound_mux_samples(samples);
+	bounded_delay_us = dsi_m6_bound_mux_delay_us(delay_us);
+	orig = INREG32(MIPITX_BASE + 0x090);
+	for (sel = 0; sel < 16; sel++) {
+		uint32_t debug_sel = (orig & ~0x1f) | 0x10 | sel;
+		unsigned int sample;
+		uint32_t out_first = 0;
+		uint32_t out_last = 0;
+		uint32_t out_min = 0;
+		uint32_t out_max = 0;
+		uint32_t out_or = 0;
+		uint32_t out_and = 0;
+		uint32_t out_xor = 0;
+		uint32_t out_prev = 0;
+		unsigned int out_changes = 0;
+		uint32_t apb_first = 0;
+		uint32_t apb_last = 0;
+		uint32_t apb_or = 0;
+		uint32_t apb_and = 0;
+		uint32_t apb_xor = 0;
+		uint32_t apb_prev = 0;
+		unsigned int apb_changes = 0;
+		unsigned int word_first = 0;
+		unsigned int word_last = 0;
+		unsigned int line_first = 0;
+		unsigned int line_last = 0;
+
+		mt_reg_sync_writel(debug_sel, MIPITX_BASE + 0x090);
+		udelay(1);
+		for (sample = 0; sample < bounded_samples; sample++) {
+			uint32_t out = INREG32(MIPITX_BASE + 0x094);
+			uint32_t apb = INREG32(MIPITX_BASE + 0x098);
+			uint32_t state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+			uint32_t state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+			unsigned int word = dsi_m6_field(state8, 0, 14);
+			unsigned int line = dsi_m6_field(state9, 0, 22);
+
+			if (sample == 0) {
+				out_first = out_last = out_min = out_max = out;
+				out_or = out_and = out_xor = out;
+				out_prev = out;
+				apb_first = apb_last = apb;
+				apb_or = apb_and = apb_xor = apb;
+				apb_prev = apb;
+				word_first = word_last = word;
+				line_first = line_last = line;
+			} else {
+				if (out != out_prev)
+					out_changes++;
+				if (apb != apb_prev)
+					apb_changes++;
+				if (out < out_min)
+					out_min = out;
+				if (out > out_max)
+					out_max = out;
+				out_or |= out;
+				out_and &= out;
+				out_xor ^= out;
+				out_last = out;
+				out_prev = out;
+				apb_or |= apb;
+				apb_and &= apb;
+				apb_xor ^= apb;
+				apb_last = apb;
+				apb_prev = apb;
+				word_last = word;
+				line_last = line;
+			}
+			if (sample + 1 < bounded_samples)
+				udelay(bounded_delay_us);
+		}
+
+		DISPERR("M6 MIPITX mux_stats[%s]#%u sel=0x%x n=%u delay_us=%u orig=0x%x now=0x%x out=0x%x/0x%x minmax=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u apb=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u word=%u/%u line=%u/%u lanes=0x%x/0x%x/0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x\n",
+			tag, sweep_id, sel, bounded_samples, bounded_delay_us,
+			orig, INREG32(MIPITX_BASE + 0x090),
+			out_first, out_last, out_min, out_max, out_or, out_and,
+			out_xor, out_changes, apb_first, apb_last, apb_or,
+			apb_and, apb_xor, apb_changes, word_first, word_last,
+			line_first, line_last, INREG32(MIPITX_BASE + 0x004),
+			INREG32(MIPITX_BASE + 0x008), INREG32(MIPITX_BASE + 0x00c),
+			INREG32(MIPITX_BASE + 0x010), INREG32(MIPITX_BASE + 0x014),
+			INREG32(MIPITX_BASE + 0x050), INREG32(MIPITX_BASE + 0x058),
+			INREG32(MIPITX_BASE + 0x068));
+	}
+
+	mt_reg_sync_writel(orig, MIPITX_BASE + 0x090);
+	restored = INREG32(MIPITX_BASE + 0x090);
+	DISPERR("M6 MIPITX mux_stats[%s]#%u restore orig=0x%x now=0x%x out=0x%x apb=0x%x n=%u delay_us=%u\n",
+		tag, sweep_id, orig, restored, INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), bounded_samples, bounded_delay_us);
+}
+
 void dsi_m6_debug_mux_sweep(const char *tag)
 {
 	static unsigned int manual_count;
@@ -2508,6 +2732,37 @@ void dsi_m6_debug_mux_sweep(const char *tag)
 	dsi_m6_dump_mipitx_debug_mux_sweep_direct(safe_tag, n);
 	dsi_m6_dump_snapshot("debugmux-after", DISP_MODULE_DSI0, NULL);
 	DISPERR("M6 DSI debug_mux[%s]#%u: end dsi_debug_sel=0x%x mipitx_dbg=0x%x out=0x%x apb=0x%x\n",
+		safe_tag, n, INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+		INREG32(MIPITX_BASE + 0x090), INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098));
+}
+
+void dsi_m6_debug_mux_stats(const char *tag, unsigned int samples,
+			    unsigned int delay_us)
+{
+	static unsigned int manual_count;
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int n;
+	unsigned int bounded_samples = dsi_m6_bound_mux_samples(samples);
+	unsigned int bounded_delay_us = dsi_m6_bound_mux_delay_us(delay_us);
+
+	if (DSI_REG[0] == NULL) {
+		DISPERR("M6 DSI mux_stats[%s]: DSI_REG0 missing\n", safe_tag);
+		return;
+	}
+
+	n = ++manual_count;
+	DISPERR("M6 DSI mux_stats[%s]#%u: begin samples=%u delay_us=%u dsi_debug_sel=0x%x mipitx_dbg=0x%x out=0x%x apb=0x%x\n",
+		safe_tag, n, bounded_samples, bounded_delay_us,
+		INREG32(&DSI_REG[0]->DSI_DEBUG_SEL), INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098));
+	dsi_m6_dump_snapshot("muxstats-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_debug_mux_stats_direct(safe_tag, n, bounded_samples,
+					   bounded_delay_us);
+	dsi_m6_dump_mipitx_debug_mux_stats_direct(safe_tag, n, bounded_samples,
+						  bounded_delay_us);
+	dsi_m6_dump_snapshot("muxstats-after", DISP_MODULE_DSI0, NULL);
+	DISPERR("M6 DSI mux_stats[%s]#%u: end dsi_debug_sel=0x%x mipitx_dbg=0x%x out=0x%x apb=0x%x\n",
 		safe_tag, n, INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
 		INREG32(MIPITX_BASE + 0x090), INREG32(MIPITX_BASE + 0x094),
 		INREG32(MIPITX_BASE + 0x098));
@@ -2819,6 +3074,20 @@ static void dsi_m6_dump_probe_mux_sweep(const char *tag)
 	dsi_m6_dump_mipitx_debug_mux_sweep_direct(tag, n);
 }
 
+static void dsi_m6_dump_probe_mux_stats(const char *tag, unsigned int samples,
+					unsigned int delay_us)
+{
+	static unsigned int probe_mux_stats_count;
+	unsigned int n;
+
+	if (!DSI_REG[0])
+		return;
+
+	n = ++probe_mux_stats_count;
+	dsi_m6_dump_debug_mux_stats_direct(tag, n, samples, delay_us);
+	dsi_m6_dump_mipitx_debug_mux_stats_direct(tag, n, samples, delay_us);
+}
+
 static unsigned int dsi_m6_txrx_ctrl_raw(void)
 {
 	return AS_UINT32(&DSI_REG[0]->DSI_TXRX_CTRL);
@@ -2866,7 +3135,7 @@ void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
 
 	old = PanelMaster_get_CC(PM_DSI0);
 	DISPERR("M6 DSI cc_probe: begin enable=%u old=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
-		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux ? 1 : 0, bounded,
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux, bounded,
 		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 	dsi_m6_dump_snapshot("cc-probe-before", DISP_MODULE_DSI0, NULL);
 
@@ -2876,9 +3145,12 @@ void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
 		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 	dsi_m6_dump_snapshot("cc-probe-after-set", DISP_MODULE_DSI0, NULL);
 
-	if (sample_mux) {
+	if (sample_mux == 1) {
 		snprintf(tag, sizeof(tag), "cc-probe-%u-mux", enable ? 1 : 0);
 		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux >= 2) {
+		snprintf(tag, sizeof(tag), "cc-probe-%u-muxstats", enable ? 1 : 0);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
 	}
 
 	snprintf(tag, sizeof(tag), "cc-probe-%u-hold", enable ? 1 : 0);
@@ -2893,7 +3165,7 @@ void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
 	}
 
 	DISPERR("M6 DSI cc_probe: end enable=%u old=%u restore=%u mux=%u final=%u\n",
-		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux ? 1 : 0,
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux,
 		PanelMaster_get_CC(PM_DSI0));
 }
 
@@ -2909,7 +3181,7 @@ void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
 
 	old = DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0;
 	DISPERR("M6 DSI lc_hs_probe: begin enable=%u old=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
-		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux ? 1 : 0, bounded,
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux, bounded,
 		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 	dsi_m6_dump_snapshot("lc-hs-probe-before", DISP_MODULE_DSI0, NULL);
 
@@ -2920,9 +3192,12 @@ void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
 		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
 	dsi_m6_dump_snapshot("lc-hs-probe-after-set", DISP_MODULE_DSI0, NULL);
 
-	if (sample_mux) {
+	if (sample_mux == 1) {
 		snprintf(tag, sizeof(tag), "lc-hs-probe-%u-mux", enable ? 1 : 0);
 		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux >= 2) {
+		snprintf(tag, sizeof(tag), "lc-hs-probe-%u-muxstats", enable ? 1 : 0);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
 	}
 
 	snprintf(tag, sizeof(tag), "lc-hs-probe-%u-hold", enable ? 1 : 0);
@@ -2937,7 +3212,7 @@ void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
 	}
 
 	DISPERR("M6 DSI lc_hs_probe: end enable=%u old=%u restore=%u mux=%u final=%u\n",
-		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux ? 1 : 0,
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux,
 		DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0);
 }
 

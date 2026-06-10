@@ -1,5 +1,131 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #109 DSI/MIPITX debug-mux stats sampler
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded multi-sample
+DSI/MIPITX debug-mux stats sampler after p108/p109 proved single mux sweeps
+are phase-dependent. New manual control:
+
+- `m6_dsi_debug_mux_stats[:tag[:samples[:delay_us]]]`;
+- existing `m6_dsi_cc_probe:<0|1>[:hold_ms[:restore[:mux]]]` keeps
+  `mux=1` as the old one-shot sweep and adds `mux=2` for stats under hold;
+- existing `m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore[:mux]]]` keeps
+  `mux=1` as the old one-shot sweep and adds `mux=2` for stats under hold.
+
+Hypothesis: FACT from p108/p109: single DSI/MIPITX mux words change with video
+phase, while forcing `PHY_LCCON.LC_HS_TX_EN=0` repeatedly collapses every DSI
+debug selector to one word for that capture. HYPOTHESIS: the useful signal is
+not an absolute mux word but whether each selector varies across a bounded
+time window, especially during CC-off versus LC-HS-off probes. A read-only
+stats sampler can convert phase-sensitive mux snapshots into stable evidence
+without changing boot/resume behavior.
+
+Evidence:
+- #109 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0220-m6-dsi-mux-stats-parserfix-bootonly/boot-m6-dsi-mux-stats-parserfix-20260610.img`.
+- #109 boot image sha256:
+  `db01a9e1877c2b135c7a63f45fd671f1017ae773c9127bd48c017d710e666770`.
+- #109 `Image.gz-dtb` sha256:
+  `23db08ac03aaa653d39661a9426902356de5fb326d01678019d5f3a31095ba54`.
+- #109 `System.map` sha256:
+  `718247c73c884c83763df84a737451e9efaf6efbae739bf63bdcf40537a4410a`.
+- #109 `vmlinux` sha256:
+  `792ae7b2e80f75ed6bf28e8b735bf8efd532e472330f3f07e03d4594044d89f3`.
+- #109 `.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- Build/packaging verification: `git diff --check` passed, `make
+  Image.gz-dtb` completed, `strings vmlinux` contains
+  `m6_dsi_debug_mux_stats`, `M6 DSI mux_stats`, and `M6 MIPITX mux_stats`,
+  artifact `sha256sum -c SHA256SUMS` passed, and unpacked `zImage` /
+  `initrd.img` match packaged inputs.
+- Runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-2128-m6-111-mux-stats-parserfix-711HEBSR277K5/`.
+- Runtime capture `sha256sum -c SHA256SUMS` passed. Runtime identity is root
+  adb, boot partition sha256
+  `db01a9e1877c2b135c7a63f45fd671f1017ae773c9127bd48c017d710e666770`,
+  kernel `#109 SMP PREEMPT Tue Jun 9 21:24:31 CDT 2026`,
+  `sys.boot_completed=1`, bootanim stopped, `mWakefulness=Awake`,
+  `mDisplayReady=true`, `Display Power: state=ON`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds bounded
+  DSI and MIPITX mux stats helpers, public manual stats entrypoint, and
+  `mux=2` stats wiring inside CC and LC-HS probes.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exposes the
+  stats entrypoint to the debugfs parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds help
+  text and manual parser for `m6_dsi_debug_mux_stats`; parser uses manual
+  token scanning because kernel `sscanf` rejected the first `%[...]` parser in
+  p110.
+- `BRINGUP_STATE.md`: records category, evidence, artifact identity, runtime
+  result, expected next marker, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the DSI/MIPITX debug selector writes
+and already restores selectors for the one-shot sweep, so the stats sampler
+must live there to preserve restore semantics and avoid open-coded MMIO in the
+parser. `ddp_dsi.h` is required for the existing debugfs control surface.
+`disp_debug.c` is the manual M6 control surface used by capture scripts. The
+state file is the durable M6 bring-up record required for this diagnostic
+patch.
+
+Expected next marker: manual
+`echo m6_dsi_debug_mux_stats:pXXX_base:12:1000 > /d/mtkfb` should log one begin
+line, 32 `M6 DSI mux_stats[pXXX_base]` selector rows, 16
+`M6 MIPITX mux_stats[pXXX_base]` selector rows, and restore lines with
+`dsi_debug_sel=0x0 mipitx_dbg=0x0`. Probe command
+`echo m6_dsi_lc_hs_probe:0:1200:1:2 > /d/mtkfb` should show
+`PHY_LCCON=0x0` during hold, 32 flat DSI mux rows if the p111 discriminator
+repeats, and `PHY_LCCON=0x1` after restore. Final truth should keep
+backlight proven and show no new OVL/RDMA/CMDQ wedge.
+
+Rollback condition: revert this patch if the stats sampler changes boot before
+manual debugfs use, fails to restore `DSI_DEBUG_SEL` or MIPITX debug selector,
+reintroduces `wait VSYNC timeout`, `RDMA0_EOF`, `M6 OVL irq diag`,
+`abnormal SOF`, `L1 not complete`, a boot hang, or leaves `TXRX` /
+`PHY_LCCON` altered after a restore-enabled probe. Do not revert only because
+the glass remains black; this patch is diagnostic.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260610-0220-m6-dsi-mux-stats-parserfix-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-2128-m6-111-mux-stats-parserfix-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/p111-analysis.txt"
+rg -n 'error to parse cmd|M6 DSI mux_stats\\[p111_base\\]|M6 DSI mux_stats\\[lc-hs-probe-0-muxstats\\]|M6 DSI clk_restore\\[p111_final\\]|M6 DISPLAY truth\\[p111_final\\]\\[(scanout-delta|backlight)\\]|wait VSYNC timeout|RDMA0_EOF|M6 OVL irq diag|abnormal SOF|L1 not complete' "$CAP/p111-summary-grep.txt"
+```
+
+Runtime result, **FACT**, 2026-06-09:
+- p110 on #108 proved the first implementation's manual parser was broken:
+  `m6_dsi_debug_mux_stats:p110_base:12:1000` logged `error to parse cmd`.
+  The `mux=2` probe path still worked and produced stats rows.
+- p111 on #109 fixed the parser: `parser errors: 0`.
+- FACT: p111 manual baseline stats completed with 32 DSI selector rows and 16
+  MIPITX selector rows. All 32 baseline DSI selector rows had sample-to-sample
+  word changes.
+- FACT: p111 CC-off stats completed with 32 DSI selector rows and 16 MIPITX
+  selector rows, and restored `TXRX` to `0x1003c`.
+- FACT: p111 LC-HS-off stats completed with 32 DSI selector rows and 16
+  MIPITX selector rows, and restored `PHY_LCCON` to `0x1`.
+- FACT: p111 LC-HS-off DSI rows were flat for all 32 selectors:
+  `word=294/294 minmax=294/294 changes=0` on every selector row.
+- FACT: p111 had proven brightness inside the window: backlight `bl=255`
+  before and after. The selected p111 window had zero `wait VSYNC timeout`,
+  `RDMA0_EOF`, `M6 OVL irq diag`, `abnormal SOF`, or `L1 not complete`
+  signatures.
+- INFERENCE: the stable discriminator is collapse of DSI mux word/time
+  variation when `PHY_LCCON.LC_HS_TX_EN` is forced off. CC-off does not collapse
+  the same way. This does not prove the panel sees HS; it gives a stable
+  software-visible proxy for clock-lane HS activity.
+
 ## 2026-06-09 #103 DSI/MIPITX write-order trace
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded DSI0/MIPITX
