@@ -257,6 +257,9 @@ extern "C" {
 	bool dsi_m6_capture_live_snapshot(struct m6_dsi_live_snapshot *snap);
 	void dsi_m6_dump_dcs_status(const char *tag);
 	void dsi_m6_dump_dcs_status_force(const char *tag);
+	void dsi_m6_wrtrace_dump(unsigned int limit);
+	void dsi_m6_wrtrace_reset(unsigned int enable);
+	void dsi_m6_wrtrace_enable(unsigned int enable);
 	void DSI_LFR_UPDATE(DISP_MODULE_ENUM module, cmdqRecHandle cmdq);
 	void DSI_Set_LFR(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, unsigned int mode,
 			 unsigned int type, unsigned int enable, unsigned int skip_num);

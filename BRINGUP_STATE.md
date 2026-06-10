@@ -1,5 +1,143 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #103 DSI/MIPITX write-order trace
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: add a bounded DSI0/MIPITX
+write-order trace around the existing DSI/MIPITX register write macros, plus
+manual debugfs controls:
+
+- `m6_dsi_wrtrace_dump[:limit]`;
+- `m6_dsi_wrtrace_reset[:enable]`;
+- `m6_dsi_wrtrace_enable:<0|1>`.
+
+The trace records only writes already issued by the driver. It does not add
+new register programming, alter DSI timing, change MIPITX values, change LCM
+commands, touch OVL/RDMA, or change backlight policy. It auto-stops when the
+2048-entry ring fills.
+
+Hypothesis: FACT from #95: final Linux DSI0/MIPITX/MMSYS register state can be
+word-identical to the working LK handoff while the panel remains black.
+FACT from #101/#102: Linux now boots, suspends, and resumes the digital display
+pipe without the old OVL/RDMA wedge, and manual clock-lane probes are live.
+HYPOTHESIS: if the remaining bug is a hidden DSI/MIPITX dynamic side effect,
+the next useful evidence is the ordered Linux write sequence for boot and for a
+Linux-owned stop/start cycle, including offsets, values, old values where
+available, caller task, timestamp, and CMDQ ownership.
+
+Evidence:
+- #103 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-1935-m6-dsi-wrtrace-bootonly/boot-m6-dsi-wrtrace-20260609.img`.
+- #103 boot image sha256:
+  `b433de09c2bde87b1fdfb967856752d628a4609d69d3fa3b2dd51f4b2d51d590`.
+- #103 `Image.gz-dtb` sha256:
+  `0f791bf1fe583bfefa7c3b931363bb82f53f5149259b747de1ce14f6e306271b`.
+- #103 `System.map` sha256:
+  `54c424757ee206ef7002114553ba444e11452d9bc8c6c93c792b5602b82a687d`.
+- #103 `vmlinux` sha256:
+  `bc3eb0ccd864e2926cf661ad1ee27d19404aab766bd4a43bfff09964d937e44a`.
+- Build/packaging verification: `git diff --check` passed, `make
+  Image.gz-dtb` completed, `strings vmlinux` contains all `M6 DSI wrtrace`
+  markers, artifact `sha256sum -c SHA256SUMS` passed, and unpacked
+  `zImage` / `initrd.img` match packaged inputs.
+- Runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-1938-m6-103-dsi-wrtrace-711HEBSR277K5/`.
+- Runtime capture `sha256sum -c SHA256SUMS` passed. Flash readback changed
+  from #102
+  `56c9ce2185772be0e8cd4c29cbf0624735676c006804c3f896fba70bf82ae5bb`
+  to #103
+  `b433de09c2bde87b1fdfb967856752d628a4609d69d3fa3b2dd51f4b2d51d590`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: records DSI0
+  and MIPITX register writes from the existing DSI/MIPITX write macros into a
+  bounded ring, preserving value, mask, old value where available, task name,
+  local clock timestamp, offset, block, op type, and CMDQ handle.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exposes the
+  trace dump/reset/enable helpers to the debug parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  debugfs commands and help text.
+- `BRINGUP_STATE.md`: records category, evidence, artifact identity, runtime
+  result, expected next marker, rollback condition, and verification commands.
+
+Why each file changed: `ddp_dsi.c` owns the low-level register write helpers
+that define the actual DSI/MIPITX programming order, so trace collection must
+be there to avoid missing writes hidden behind macros. `ddp_dsi.h` is required
+for the existing debugfs parser to call owner-local trace helpers.
+`disp_debug.c` is the manual M6 control surface used by the capture scripts.
+The state file is the durable M6 bring-up record required for this diagnostic
+patch.
+
+Expected next marker: after boot, `echo m6_dsi_wrtrace_dump:2048 > /d/mtkfb`
+should log `M6 DSI wrtrace dump: enabled=1 count=<n> dropped=0` and ordered
+`M6 DSI wrtrace[%04u]` entries. After
+`echo m6_dsi_wrtrace_reset:1 > /d/mtkfb` plus a power-key off/on cycle, a
+second dump should start again at sequence 0 and show Linux-owned DSI/MIPITX
+stop/start writes from `surfaceflinger`. The existing truth windows should
+still show live scanout and no OVL/RDMA wedge signatures.
+
+Rollback condition: revert this patch if the trace changes boot/resume timing
+enough to reintroduce `M6 OVL irq diag`, `L1 not complete until EOF`,
+`abnormal SOF`, `wait VSYNC timeout`, a boot hang, or if the trace lock itself
+shows up as a latency/lockdep problem. Do not revert only because the glass
+remains black; this patch is read-only with respect to hardware programming.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-1935-m6-dsi-wrtrace-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-1938-m6-103-dsi-wrtrace-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+sed -n '1,220p' "$CAP/wrtrace-summary.txt"
+rg -n 'M6 DSI wrtrace dump|M6 DSI wrtrace reset|M6 LCM suspend|M6 LCM resume|M6 DISPLAY truth\\[p103_after_(wrtrace|cycle)\\]\\[(scanout-delta|backlight)\\]|M6 OVL irq diag|L1 not complete|abnormal SOF|wait VSYNC timeout|RDMA0_EOF' "$CAP"/dmesg-after-*.txt "$CAP/final-health.txt"
+```
+
+Runtime result, **FACT**, 2026-06-09:
+- #103 booted to Android root on `711HEBSR277K5`: `sys.boot_completed=1`,
+  bootanim stopped, `mWakefulness=Awake`, `mDisplayReady=true`,
+  `Display Power: state=ON`, and boot partition hash matched #103.
+- FACT: the boot dump contains `count=763 dropped=0`; the extracted
+  `wrtrace-boot.tsv` has 763 entries.
+- FACT: the power-key cycle after `m6_dsi_wrtrace_reset:1` reached real panel
+  callbacks: `M6 LCM suspend start/end`, `primary state: ALIVE -> SLEPT`,
+  `M6 LCM resume start/end`, and `primary state: SLEPT -> ALIVE`.
+- FACT: the cycle dump contains `count=329 dropped=0`; the extracted
+  `wrtrace-cycle.tsv` has 329 entries.
+- FACT: the cycle trace shows a real Linux-owned DSI/MIPITX power-down and
+  re-enable sequence. Early cycle entries include `DSI_MODE_CTRL` going to
+  command/off state, `DSI_PHY_LCCON` going low, `DSI_TXRX_CTRL` changing from
+  `0x0001003c` to `0x00010000`, MIPITX lane registers moving to `0x600`,
+  PLL/top/BG power-down writes, then a later full MIPITX/DSI reprogramming
+  back to final video state (`MODE=0x3`, `TXRX=0x1003c`,
+  `PHY_LCCON=0x1`, MIPITX lanes `0x603/0x601/...`,
+  PLL `0x9/0x46c4ec4e/0x101`).
+- FACT: post-boot truth has proven backlight `bl=255` and DCS brightness
+  `dcs51=0xff` before the boot trace dump. After the off/on cycle, lights HAL
+  again races brightness state: it writes `dcs51=0xff`, but a later truth
+  window sees `bl=201` and sysfs can fall back to `10`. Treat visual tests
+  after power cycling as brightness-sensitive unless the capture proves the
+  exact backlight value inside the optical window.
+- FACT: #103 did not reintroduce the #100/#98 digital wedge. The captured
+  windows have no `M6 OVL irq diag`, no `L1 not complete`, no `abnormal SOF`,
+  no `wait VSYNC timeout`, and no `RDMA0_EOF` storm. Truth windows still show
+  active DSI video mode and moving RDMA/DSI state.
+
+INFERENCE: #103 closes the simple dynamic-sequence suspicion that Linux never
+does a complete DSI/MIPITX stop/start or silently leaves MIPITX/DSI in a
+dead/ULPS-like state after resume. Linux does perform a full stop/start and
+returns to the expected final video register state while scanout remains live.
+The remaining black-glass frontier is below or beyond DSI host programming:
+MIPITX pad/electrical lane behavior, lane polarity/map outside the documented
+registers, panel HS acceptance, or a missing analog side effect that is not
+visible in DSI0/MIPITX final values.
+
 ## 2026-06-09 #102 DSI clock-lane / DCS-force diagnostic probes
 
 PATCH HISTORY, **DIAGNOSTIC / ISOLATION**, 2026-06-09: add manual debugfs

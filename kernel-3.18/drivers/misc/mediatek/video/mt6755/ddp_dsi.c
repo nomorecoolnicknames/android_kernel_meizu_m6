@@ -22,6 +22,7 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
+#include <linux/spinlock.h>
 #include <linux/io.h>
 #include <mach/irqs.h>
 #include <linux/types.h>
@@ -58,14 +59,30 @@
 #include "ddp_reg.h"
 #endif
 
-#define DSI_OUTREG32(cmdq, addr, val) DISP_REG_SET(cmdq, addr, val)
+static void dsi_m6_wrtrace_record(char op, unsigned long addr, unsigned int val,
+				  unsigned int mask, unsigned int old,
+				  unsigned int old_valid, void *cmdq);
+
+#define DSI_OUTREG32(cmdq, addr, val) \
+	do { \
+		unsigned int __m6_val = (unsigned int)(val); \
+		dsi_m6_wrtrace_record('W', (unsigned long)(addr), __m6_val, \
+				      0xffffffff, 0, 0, (void *)(cmdq)); \
+		DISP_REG_SET(cmdq, addr, __m6_val); \
+	} while (0)
 #define DSI_BACKUPREG32(cmdq, hSlot, idx, addr) DISP_REG_BACKUP(cmdq, hSlot, idx, addr)
 #define DSI_POLLREG32(cmdq, addr, mask, value) DISP_REG_CMDQ_POLLING(cmdq, addr, value, mask)
 #define DSI_INREG32(type, addr) INREG32(addr)
 #define DSI_READREG32(type, dst, src) mt_reg_sync_writel(INREG32(src), dst)
 
 static int dsi_reg_op_debug;
-#define DSI_MASKREG32(cmdq, REG, MASK, VALUE)	DISP_REG_MASK((cmdq), (REG), (VALUE), (MASK))
+#define DSI_MASKREG32(cmdq, REG, MASK, VALUE) \
+	do { \
+		dsi_m6_wrtrace_record('R', (unsigned long)(REG), \
+				      (unsigned int)(VALUE), (unsigned int)(MASK), \
+				      0, 0, (void *)(cmdq)); \
+		DISP_REG_MASK((cmdq), (REG), (VALUE), (MASK)); \
+	} while (0)
 
 #define DSI_OUTREGBIT(cmdq, TYPE, REG, bit, value)  \
 	{\
@@ -77,10 +94,17 @@ static int dsi_reg_op_debug;
 				r.bit = ~(r.bit);  \
 				*(unsigned int *)(&v) = ((unsigned int)0x00000000); \
 				v.bit = value; \
+				dsi_m6_wrtrace_record('M', (unsigned long)(&REG), \
+						      AS_UINT32(&v), AS_UINT32(&r), \
+						      0, 0, (void *)(cmdq)); \
 				DISP_REG_MASK(cmdq, &REG, AS_UINT32(&v), AS_UINT32(&r)); \
 			} else { \
-				mt_reg_sync_writel(INREG32(&REG), &r); \
+				unsigned int __m6_old = INREG32(&REG); \
+				mt_reg_sync_writel(__m6_old, &r); \
 				r.bit = (value); \
+				dsi_m6_wrtrace_record('B', (unsigned long)(&REG), \
+						      AS_UINT32(&r), 0xffffffff, \
+						      __m6_old, 1, (void *)(cmdq)); \
 				DISP_REG_SET(cmdq, &REG, INREG32(&r)); \
 			} \
 		} while (0);\
@@ -135,10 +159,13 @@ static int dsi_reg_op_debug;
 })
 
  #define MIPITX_OUTREG32(addr, val) {\
+		unsigned int __m6_val = (unsigned int)(val); \
+		dsi_m6_wrtrace_record('W', (unsigned long)(addr), __m6_val, \
+				      0xffffffff, 0, 0, NULL); \
 		if (dsi_reg_op_debug) \
-			DISPMSG("[mipitx/reg]%p=0x%08x\n", (void *)addr, val); \
+			DISPMSG("[mipitx/reg]%p=0x%08x\n", (void *)addr, __m6_val); \
 		if (0) \
-			mt_reg_sync_writel(val, addr); \
+			mt_reg_sync_writel(__m6_val, addr); \
 	}
 
 #define MIPITX_OUTREGBIT(TYPE, REG, bit, value) {\
@@ -164,10 +191,13 @@ static int dsi_reg_op_debug;
 #define MIPITX_OUTREG32(addr, val) \
 	{\
 		do {	\
+			unsigned int __m6_val = (unsigned int)(val); \
+			dsi_m6_wrtrace_record('W', (unsigned long)(addr), __m6_val, \
+					      0xffffffff, 0, 0, NULL); \
 			if (dsi_reg_op_debug) {	\
-				DISPMSG("[mipitx/reg]%p=0x%08x\n", (void *)addr, val);\
+				DISPMSG("[mipitx/reg]%p=0x%08x\n", (void *)addr, __m6_val);\
 			} \
-			mt_reg_sync_writel(val, addr);\
+			mt_reg_sync_writel(__m6_val, addr);\
 		} while (0);\
 	}
 
@@ -245,6 +275,146 @@ unsigned int data_lane3 = 0;/*MIPITX_DSI_DATA_LANE3*/
 unsigned int data_lane2 = 0;/*MIPITX_DSI_DATA_LANE2*/
 unsigned int data_lane1 = 0;/*MIPITX_DSI_DATA_LANE1*/
 unsigned int data_lane0 = 0;/*MIPITX_DSI_DATA_LANE0*/
+
+#define M6_DSI_WRTRACE_MAX 2048
+
+struct m6_dsi_wrtrace_entry {
+	unsigned int seq;
+	unsigned int val;
+	unsigned int mask;
+	unsigned int old;
+	unsigned int old_valid;
+	unsigned int off;
+	unsigned long addr;
+	unsigned long jiffies;
+	unsigned long long ns;
+	void *cmdq;
+	char op;
+	char blk;
+	char comm[TASK_COMM_LEN];
+};
+
+static DEFINE_SPINLOCK(m6_dsi_wrtrace_lock);
+static struct m6_dsi_wrtrace_entry m6_dsi_wrtrace[M6_DSI_WRTRACE_MAX];
+static unsigned int m6_dsi_wrtrace_count;
+static unsigned int m6_dsi_wrtrace_dropped;
+static unsigned int m6_dsi_wrtrace_enabled = 1;
+
+static char dsi_m6_wrtrace_classify(unsigned long addr, unsigned int *off)
+{
+	unsigned long dsi_base = (unsigned long)DDP_REG_BASE_DSI0;
+	unsigned long mipitx_base = (unsigned long)MIPITX_BASE;
+
+	if (addr >= dsi_base && addr <= dsi_base + M6_LKGOLD_DSI_LAST) {
+		*off = (unsigned int)(addr - dsi_base);
+		return 'D';
+	}
+	if (addr >= mipitx_base && addr <= mipitx_base + M6_LKGOLD_MIPITX_LAST) {
+		*off = (unsigned int)(addr - mipitx_base);
+		return 'M';
+	}
+	return 0;
+}
+
+static void dsi_m6_wrtrace_record(char op, unsigned long addr, unsigned int val,
+				  unsigned int mask, unsigned int old,
+				  unsigned int old_valid, void *cmdq)
+{
+	struct m6_dsi_wrtrace_entry *e;
+	unsigned long flags;
+	unsigned int off = 0;
+	char blk;
+
+	if (!m6_dsi_wrtrace_enabled)
+		return;
+
+	blk = dsi_m6_wrtrace_classify(addr, &off);
+	if (!blk)
+		return;
+
+	spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+	if (m6_dsi_wrtrace_count >= M6_DSI_WRTRACE_MAX) {
+		m6_dsi_wrtrace_dropped++;
+		m6_dsi_wrtrace_enabled = 0;
+		spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+		return;
+	}
+
+	e = &m6_dsi_wrtrace[m6_dsi_wrtrace_count];
+	e->seq = m6_dsi_wrtrace_count++;
+	e->val = val;
+	e->mask = mask;
+	e->old = old;
+	e->old_valid = old_valid ? 1 : 0;
+	e->off = off;
+	e->addr = addr;
+	e->jiffies = jiffies;
+	e->ns = local_clock();
+	e->cmdq = cmdq;
+	e->op = op;
+	e->blk = blk;
+	strlcpy(e->comm, current->comm, sizeof(e->comm));
+	spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+}
+
+void dsi_m6_wrtrace_reset(unsigned int enable)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+	m6_dsi_wrtrace_count = 0;
+	m6_dsi_wrtrace_dropped = 0;
+	m6_dsi_wrtrace_enabled = enable ? 1 : 0;
+	spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+
+	DISPERR("M6 DSI wrtrace reset: enable=%u max=%u\n",
+		m6_dsi_wrtrace_enabled, M6_DSI_WRTRACE_MAX);
+}
+
+void dsi_m6_wrtrace_enable(unsigned int enable)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+	m6_dsi_wrtrace_enabled = enable ? 1 : 0;
+	spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+
+	DISPERR("M6 DSI wrtrace enable=%u count=%u dropped=%u max=%u\n",
+		m6_dsi_wrtrace_enabled, m6_dsi_wrtrace_count,
+		m6_dsi_wrtrace_dropped, M6_DSI_WRTRACE_MAX);
+}
+
+void dsi_m6_wrtrace_dump(unsigned int limit)
+{
+	struct m6_dsi_wrtrace_entry e;
+	unsigned long flags;
+	unsigned int count;
+	unsigned int dropped;
+	unsigned int enabled;
+	unsigned int i;
+
+	spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+	count = m6_dsi_wrtrace_count;
+	dropped = m6_dsi_wrtrace_dropped;
+	enabled = m6_dsi_wrtrace_enabled;
+	spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+
+	if (limit == 0 || limit > count)
+		limit = count;
+
+	DISPERR("M6 DSI wrtrace dump: enabled=%u count=%u dropped=%u limit=%u max=%u\n",
+		enabled, count, dropped, limit, M6_DSI_WRTRACE_MAX);
+
+	for (i = 0; i < limit; i++) {
+		spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+		e = m6_dsi_wrtrace[i];
+		spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+
+		DISPERR("M6 DSI wrtrace[%04u]: blk=%c off=0x%03x op=%c cmdq=%p old_valid=%u old=0x%08x val=0x%08x mask=0x%08x j=%lu ns=%llu comm=%s addr=0x%lx\n",
+			e.seq, e.blk, e.off, e.op, e.cmdq, e.old_valid,
+			e.old, e.val, e.mask, e.jiffies, e.ns, e.comm, e.addr);
+	}
+}
 
 static void dsi_m6_dump_irq_decode(const char *tag, uint32_t start, uint32_t status,
 				   uint32_t inten, uint32_t intsta)

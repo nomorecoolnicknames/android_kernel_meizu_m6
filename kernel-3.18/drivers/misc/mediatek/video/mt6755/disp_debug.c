@@ -139,6 +139,12 @@ char MTKFB_STR_HELP[] =
 	"             Meizu M6 isolation toggle for TXRX HSTX_CKLP_EN with snapshots\n"
 	"        m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore]]\n"
 	"             Meizu M6 isolation toggle for PHY LC_HS_TX_EN with snapshots\n"
+	"        m6_dsi_wrtrace_dump[:limit]\n"
+	"             Meizu M6 dump first DSI0/MIPITX register write-order trace\n"
+	"        m6_dsi_wrtrace_reset[:enable]\n"
+	"             Meizu M6 clear DSI0/MIPITX write-order trace and set capture state\n"
+	"        m6_dsi_wrtrace_enable:<0|1>\n"
+	"             Meizu M6 enable/disable DSI0/MIPITX write-order capture\n"
 	"        m6_dsi_hsa_wc:<value>[:hold_ms]\n"
 	"             Meizu M6 isolation override for DSI_HSA_WC with snapshots\n"
 	"        m6_dsi_bist_profile:<profile>:<rgb>[:hold_ms]\n"
@@ -717,6 +723,53 @@ void mtkfb_process_dbg_opt(const char *opt)
 		primary_display_manual_unlock();
 		DISPERR("M6 DSI lc_hs_probe command: value=%u hold=%u restore=%u\n",
 			value, hold_ms, restore ? 1 : 0);
+	} else if (0 == strncmp(opt, "m6_dsi_wrtrace_dump",
+				sizeof("m6_dsi_wrtrace_dump") - 1)) {
+		const unsigned int prefix = sizeof("m6_dsi_wrtrace_dump") - 1;
+		unsigned int limit = 256;
+
+		if (opt[prefix] == ':') {
+			ret = kstrtouint(opt + prefix + 1, 0, &limit);
+			if (ret) {
+				pr_err("error to parse cmd %s ret=%d\n",
+				       opt, ret);
+				return;
+			}
+		}
+		dsi_m6_wrtrace_dump(limit);
+		DISPERR("M6 DSI wrtrace dump command: limit=%u\n", limit);
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_wrtrace_reset",
+				sizeof("m6_dsi_wrtrace_reset") - 1)) {
+		const unsigned int prefix = sizeof("m6_dsi_wrtrace_reset") - 1;
+		unsigned int enable = 1;
+
+		if (opt[prefix] == ':') {
+			ret = kstrtouint(opt + prefix + 1, 0, &enable);
+			if (ret) {
+				pr_err("error to parse cmd %s ret=%d\n",
+				       opt, ret);
+				return;
+			}
+		}
+		dsi_m6_wrtrace_reset(enable);
+		DISPERR("M6 DSI wrtrace reset command: enable=%u\n",
+			enable ? 1 : 0);
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_wrtrace_enable:",
+				sizeof("m6_dsi_wrtrace_enable:") - 1)) {
+		unsigned int enable = 0;
+
+		ret = kstrtouint(opt + sizeof("m6_dsi_wrtrace_enable:") - 1,
+				 0, &enable);
+		if (ret) {
+			pr_err("error to parse cmd %s ret=%d\n", opt, ret);
+			return;
+		}
+		dsi_m6_wrtrace_enable(enable);
+		DISPERR("M6 DSI wrtrace enable command: enable=%u\n",
+			enable ? 1 : 0);
+		return;
 	} else if (0 == strncmp(opt, "m6_dsi_hsa_wc:", 14)) {
 		int value_arg = 0;
 		unsigned int value = 0;
