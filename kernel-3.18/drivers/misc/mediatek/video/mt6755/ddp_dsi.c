@@ -3205,6 +3205,9 @@ struct dsi_m6_mipitx_probe_field {
 	unsigned int max;
 };
 
+#define M6_MIPITX_PHY_SEL_MASK 0x00777777U
+#define M6_MIPITX_PHY_SEL_FIELD(_raw, _idx) (((_raw) >> ((_idx) * 4)) & 0x7U)
+
 static const struct dsi_m6_mipitx_probe_field dsi_m6_mipitx_probe_fields[] = {
 	{ "lptx_clmp", 0x000, 1U << 11, 11, 1 },
 	{ "c_b1", 0x004, 1U << 1, 1, 1 },
@@ -3231,6 +3234,42 @@ dsi_m6_mipitx_find_probe_field(const char *name)
 	}
 
 	return NULL;
+}
+
+static bool dsi_m6_phy_sel_valid(unsigned int value)
+{
+	unsigned int used = 0;
+	unsigned int lane;
+	unsigned int i;
+
+	if (value & ~M6_MIPITX_PHY_SEL_MASK)
+		return false;
+
+	for (i = 0; i < 6; i++) {
+		lane = M6_MIPITX_PHY_SEL_FIELD(value, i);
+		if (lane > 5)
+			return false;
+		if (i < 5) {
+			if (used & (1U << lane))
+				return false;
+			used |= 1U << lane;
+		}
+	}
+
+	return true;
+}
+
+static void dsi_m6_log_phy_sel(const char *tag, unsigned int raw)
+{
+	DISPERR("M6 DSI phy_sel[%s]: raw=0x%x d0/d1/d2/d3/c/lprx=%u/%u/%u/%u/%u/%u valid=%u\n",
+		tag ? tag : "unknown", raw,
+		M6_MIPITX_PHY_SEL_FIELD(raw, 0),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 1),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 2),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 3),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 4),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 5),
+		dsi_m6_phy_sel_valid(raw) ? 1 : 0);
 }
 
 static unsigned int dsi_m6_bound_pad_samples(unsigned int samples)
@@ -3398,6 +3437,78 @@ void dsi_m6_mipitx_pad_probe(const char *field_name, unsigned int value,
 	DISPERR("M6 DSI mipitx_pad_probe: end field=%s value=%u old=0x%x final=0x%x restore=%u mux=%u\n",
 		field->name, value, old_raw,
 		INREG32(MIPITX_BASE + field->offset),
+		restore ? 1 : 0, sample_mux);
+}
+
+void dsi_m6_mipitx_phy_sel_probe(unsigned int value, unsigned int hold_ms,
+				 unsigned int restore, unsigned int sample_mux)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old_raw;
+	unsigned int after_raw;
+	unsigned int restored_raw;
+
+	if (!DSI_REG[0])
+		return;
+
+	if (!dsi_m6_phy_sel_valid(value)) {
+		DISPERR("M6 DSI phy_sel_probe: invalid value=0x%x mask=0x%x fields must be <=5 and d0/d1/d2/d3/c unique\n",
+			value, M6_MIPITX_PHY_SEL_MASK);
+		dsi_m6_log_phy_sel("invalid", value);
+		return;
+	}
+
+	old_raw = INREG32(MIPITX_BASE + 0x07c);
+	DISPERR("M6 DSI phy_sel_probe: begin value=0x%x old=0x%x restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		value, old_raw, restore ? 1 : 0, sample_mux, bounded,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_log_phy_sel("old", old_raw);
+	dsi_m6_log_phy_sel("new", value);
+	dsi_m6_dump_snapshot("phy-sel-probe-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("phy-sel-probe-before");
+
+	MIPITX_OUTREG32(MIPITX_BASE + 0x07c, value);
+	udelay(1);
+	after_raw = INREG32(MIPITX_BASE + 0x07c);
+	DISPERR("M6 DSI phy_sel_probe: after-set value=0x%x live=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+		value, after_raw, INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_log_phy_sel("after-set", after_raw);
+	dsi_m6_dump_snapshot("phy-sel-probe-after-set", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("phy-sel-probe-after-set");
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "phy-sel-0x%x-mux", value);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux == 2) {
+		snprintf(tag, sizeof(tag), "phy-sel-0x%x-muxstats", value);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	} else if (sample_mux >= 3) {
+		snprintf(tag, sizeof(tag), "phy-sel-0x%x-window", value);
+		dsi_m6_mipitx_pad_window(tag, 4, 50);
+	}
+
+	snprintf(tag, sizeof(tag), "phy-sel-0x%x-hold", value);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		MIPITX_OUTREG32(MIPITX_BASE + 0x07c, old_raw);
+		udelay(1);
+		restored_raw = INREG32(MIPITX_BASE + 0x07c);
+		DISPERR("M6 DSI phy_sel_probe: after-restore old=0x%x live=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+			old_raw, restored_raw, INREG32(MIPITX_BASE + 0x094),
+			INREG32(MIPITX_BASE + 0x098), dsi_m6_txrx_ctrl_raw(),
+			dsi_m6_phy_lccon_raw());
+		dsi_m6_log_phy_sel("after-restore", restored_raw);
+		dsi_m6_dump_snapshot("phy-sel-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+		dsi_m6_dump_mipitx_decode("phy-sel-probe-after-restore");
+	}
+
+	DISPERR("M6 DSI phy_sel_probe: end value=0x%x old=0x%x final=0x%x restore=%u mux=%u\n",
+		value, old_raw, INREG32(MIPITX_BASE + 0x07c),
 		restore ? 1 : 0, sample_mux);
 }
 

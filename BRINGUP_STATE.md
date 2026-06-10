@@ -1,5 +1,107 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-09 #114 restore-safe MIPITX PHY_SEL lane-map probes
+
+PATCH HISTORY, **ISOLATION / DIAGNOSTIC**, 2026-06-09: add a bounded manual
+debugfs command to write `MIPITX_DSI_PHY_SEL`, sample the DSI/MIPITX state
+during the hold, and restore the previous value. New command:
+`m6_dsi_mipitx_phy_sel_probe:<value>[:hold_ms[:restore[:mux]]]`.
+
+Hypothesis: FACT from #113: LP DCS acceptance, static DSI/MIPITX registers,
+early LK-handoff muxstats, documented pad bits, and current DDP/SMI digital
+state do not explain black glass. HYPOTHESIS: if the HS-video failure is a
+software-visible lane-map mismatch, temporarily applying high-value donor or
+reversed `MIPITX_DSI_PHY_SEL` maps while scanout is live should either create
+visible glass activity or produce a distinct DSI/MIPITX signature, and the
+test must restore the stock `0x43210` state afterward.
+
+Evidence:
+- #114 boot-only artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260609-2259-m6-dsi-phy-sel-probe-bootonly/`.
+- #114 boot image sha256:
+  `9d3ba09bb17c6d65d5cfed054103362db85cbd94a6fdecf422108e8bf21d321a`.
+- #114 `Image.gz-dtb` sha256:
+  `d6d2c9547f58522872587ef606f12f4aba9e79f929f664b1d5b3e944701faefd`.
+- #114 `System.map` sha256:
+  `76df27c9b9dd6b607ab3a99940e9107d0d4aa6b8c59c07c502afe86c36642eea`.
+- #114 `vmlinux` sha256:
+  `17f889e5f03c35e0b8892444cd1ef092d2823aae164e060e3a30193c0e6328df`.
+- #114 `.config` sha256:
+  `698b6764b989ef0bab75c0e6d6c291706e6a4a8d527d6a59347ad8c966d1fdd1`.
+- #114 runtime capture:
+  `/srv/forge/android/meizu_m6/captures/20260609-2304-m6-114-phy-sel-probes-711HEBSR277K5/`.
+- Capture-local analysis:
+  `/srv/forge/android/meizu_m6/captures/20260609-2304-m6-114-phy-sel-probes-711HEBSR277K5/analysis.md`.
+- Capture `sha256sum -c SHA256SUMS` passed after adding `analysis.md`.
+- Runtime identity/readback: `Linux localhost 3.18.140 #114 SMP PREEMPT Tue
+  Jun 9 22:56:17 CDT 2026 aarch64`, boot partition readback matched
+  `9d3ba09bb17c6d65d5cfed054103362db85cbd94a6fdecf422108e8bf21d321a`,
+  `sys.boot_completed=1`, bootanim stopped, final backlight `255`.
+- Tested live maps: no-op `0x43210`, common MTK donor `0x110324`, reversed
+  data with stock clock `0x40123`, r63419 port0-style `0x330124`, and r63419
+  port1-style `0x401342`.
+- FACT: every probe wrote the requested live value and restored `final=0x43210`
+  with `TXRX=0x1003c` and `PHY_LCCON=0x1`.
+- FACT: final truth `p114_phy_final` showed `MIPITX_DSI_PHY_SEL=0x43210`,
+  `lane_swap_en=0`, video mode `MODE=0x3`, moving scanout
+  `in=518/900->176/903`, `out=676/896->332/899`, `dsi0_eof=1`, `dsi0_sof=1`,
+  `te=1`, and `bl=255`.
+- FACT: no new current `DEVAPC`, `wait VSYNC`, `abnormal SOF`, `s_w_rst`, or
+  `L1 not complete` signature was present in the final grep set.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: validates,
+  logs, writes, samples, and restore-checks `MIPITX_DSI_PHY_SEL`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exposes the
+  helper to the display debug parser.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds help
+  text and parser entry for the manual command.
+- `BRINGUP_STATE.md`: records patch category, evidence, expected next marker,
+  rollback, and verification commands.
+- `docs/run_reports/2026-06-09_m6_display_closed_layers_external_audit_result.md`:
+  records the #114 result and interpretation.
+- `captures/20260609-2304-m6-114-phy-sel-probes-711HEBSR277K5/analysis.md`:
+  capture-local FACT/INFERENCE summary.
+
+Why each file changed: `ddp_dsi.c` owns the existing M6 MIPITX register
+decoders and restore-safe pad/clock probes, so `PHY_SEL` writes must stay
+owner-local and snapshot the same state. `ddp_dsi.h` and `disp_debug.c` are
+the established manual debugfs command surface. The state/report/capture files
+preserve identity and result boundaries so the optical conclusion is not
+mistaken for a boot-time behavior change.
+
+Expected next marker: if a human saw no image, stripes, or flicker during all
+four non-stock #114 windows, mark these high-value visible `PHY_SEL` lane-map
+candidates REJECTED and move to hidden polarity/analog drive/termination or
+LP-to-HS transition probes. If any candidate produced visible activity, rerun
+only that value with a longer hold, `bl=255`, and `m6_display_truth_window`
+before/after to prove repeatability.
+
+Rollback condition: revert this patch if it changes boot behavior before
+manual debugfs use, accepts invalid lane maps, fails to restore the old
+`MIPITX_DSI_PHY_SEL`, leaves `TXRX` or `PHY_LCCON` changed after `restore=1`,
+creates a new OVL/RDMA/CMDQ wedge, or regresses ADB/SurfaceFlinger/backlight.
+Do not revert only because the glass remains black; this is a diagnostic /
+isolation command.
+
+Verification commands:
+```sh
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+export ARCH=arm64
+export CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+export CCACHE_DIR=/srv/forge/android/ccache
+make -C kernel-3.18 O=/srv/forge/work/m6-source-kernel-manual-20260520/out -j8 Image.gz-dtb
+
+ART=/srv/forge/android/export/meizu_m6_artifacts/20260609-2259-m6-dsi-phy-sel-probe-bootonly
+(cd "$ART" && sha256sum -c SHA256SUMS)
+
+CAP=/srv/forge/android/meizu_m6/captures/20260609-2304-m6-114-phy-sel-probes-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/analysis.md"
+sed -n '1,220p' "$CAP/concise-key-lines.txt"
+```
+
 ## 2026-06-09 #113 LK handoff MIPITX muxstats cache
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-09: cache early LK-handoff MIPITX
