@@ -3223,6 +3223,8 @@ static const struct dsi_m6_mipitx_probe_field dsi_m6_mipitx_probe_fields[] = {
 	{ "d2_b1", 0x010, 1U << 1, 1, 1 },
 	{ "d3_b1", 0x014, 1U << 1, 1, 1 },
 	{ "hs_bias", 0x040, 1U << 1, 1, 1 },
+	{ "imp_en", 0x040, 1U << 2, 2, 1 },
+	{ "imp", 0x040, 0xfU << 4, 4, 15 },
 	{ "aio", 0x040, 0x7U << 8, 8, 7 },
 	{ "pad_low", 0x040, 1U << 11, 11, 1 },
 };
@@ -3409,7 +3411,7 @@ void dsi_m6_mipitx_pad_probe(const char *field_name, unsigned int value,
 
 	field = dsi_m6_mipitx_find_probe_field(field_name);
 	if (!field) {
-		DISPERR("M6 DSI mipitx_pad_probe: unknown field=%s allowed=lptx_clmp,c_b1,d0_b1,d1_b1,d2_b1,d3_b1,hs_bias,aio,pad_low\n",
+		DISPERR("M6 DSI mipitx_pad_probe: unknown field=%s allowed=lptx_clmp,c_b1,d0_b1,d1_b1,d2_b1,d3_b1,hs_bias,imp_en,imp,aio,pad_low\n",
 			field_name ? field_name : "null");
 		return;
 	}

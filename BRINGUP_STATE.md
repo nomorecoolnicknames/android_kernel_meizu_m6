@@ -14840,3 +14840,121 @@ INFERENCE: if the human visual result for the #115 windows was still no
 image/stripe/flicker/change, those all-lane analog fields are rejected. The
 next useful low-level candidate is top-level MIPITX impedance enable/code
 (`imp_en` / `imp`) or external PHY evidence.
+
+## Patch history: #116 M6 MIPITX top impedance probes
+
+Patch category: **DIAGNOSTIC / ISOLATION**. The source change is boot-inert:
+it only extends the existing manual `m6_dsi_mipitx_pad_probe` debugfs command
+with two top-level MIPITX fields, `imp_en` and `imp`.
+
+Hypothesis: #115 rejected or deprioritized the documented per-lane MIPITX
+analog fields (`RT_CODE`, `LPTX`, `LPCD`) if the human saw no physical change.
+The remaining nearby Linux-visible analog candidate was
+`MIPITX_DSI_TOP_CON` impedance control: enable bit 2 and code bits 4..7. If a
+top impedance mismatch prevents HS video acceptance while LP DCS remains alive,
+temporarily changing `imp_en` or `imp` under live video could produce a visible
+image, stripe, flicker, or brightness/scanout change.
+
+Evidence:
+- Artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0255-m6-dsi-imp-probe-bootonly/`.
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0258-m6-116-mipitx-imp-probes-711HEBSR277K5/`.
+- Capture-local analysis:
+  `/srv/forge/android/meizu_m6/captures/20260610-0258-m6-116-mipitx-imp-probes-711HEBSR277K5/analysis.md`.
+- #116 boot image sha256:
+  `76654618775df21018b5c19a97815dc6dfabc0a5880d58ab5bbb8c8c30273b61`.
+- #116 `Image.gz-dtb` sha256:
+  `805b4506202d5f8019ae935094a60384c66906c609ae6ae247f3189d07b84fe3`.
+- #116 `System.map` sha256:
+  `f9ac1cafa073f4c6594b764eb4ba630495802cf9edabb5985cdfabe9dc9a43ed`.
+- #116 `vmlinux` sha256:
+  `09765aab9c4cd2211f4999b9c030e7fa2431ebf6415b632ea4f3a93efa000b10`.
+- Runtime identity/readback matched #116:
+  `Linux localhost 3.18.140 #116 SMP PREEMPT Wed Jun 10 01:13:14 CDT 2026 aarch64`,
+  `sys.boot_completed=1`, `dev.bootcomplete=1`, bootanim stopped, and boot
+  partition readback equal to the boot image hash.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: adds
+  `imp_en` and `imp` entries to the existing M6 MIPITX pad-probe field table
+  and updates the allowed-field error string.
+- `BRINGUP_STATE.md`: records this artifact, capture, interpretation, rollback,
+  and verification commands.
+
+Why each file changed: `ddp_dsi.c` already owns MIPITX register offsets and the
+existing manual write/restore pad-probe command. Adding these two fields there
+keeps the probe owner-local, bounded, and boot-inert. The state file records
+the exact image/capture identity so future agents do not retest top impedance
+without a contradictory visual report.
+
+Result:
+- FACT: baseline top word was `0x82`, decoded as `hs_bias=1`, `imp_en=0`,
+  `imp=0x8`, `aio=0`, `pad_low=0`.
+- FACT: baseline had moving scanout and brightness 255:
+  `in=464/593->379/596`, `out=626/589->536/592`, `dsi_eof=1`,
+  `dsi_sof=1`, `te=1`, `bl=255`.
+- FACT: the probe wrote/restored:
+  `imp_en=1`: `0x82 -> 0x86 -> 0x82`;
+  `imp=0`: `0x82 -> 0x86 -> 0x06 -> 0x86 -> 0x82`;
+  `imp=4`: `0x82 -> 0x86 -> 0x46 -> 0x86 -> 0x82`;
+  `imp=12`: `0x82 -> 0x86 -> 0xc6 -> 0x86 -> 0x82`;
+  `imp=15`: `0x82 -> 0x86 -> 0xf6 -> 0x86 -> 0x82`.
+- FACT: final restore returned to top `0x82`, `TXRX=0x1003c`,
+  `PHY_LCCON=0x1`, moving final scanout
+  `in=662/1134->411/1137`, `out=68/1131->568/1133`, and `bl=255`.
+- FACT: capture regression grep found zero `wait VSYNC`, `abnormal`, `DEVAPC`,
+  `s_w_rst`, `L1 not complete`, `RDMA0_EOF`, unknown/invalid probe command,
+  `Oops`, or `panic` matches.
+- FACT: no human visual observation was available when this entry was written.
+- INFERENCE: if the human saw no image/stripe/flicker/change during the #116
+  windows, top-level MIPITX `imp_en`/`imp` should be marked REJECTED as the
+  optical root candidate.
+
+Expected next marker: if #116 is repeated or extended, the capture should show
+`M6 DSI mipitx_pad_probe` changing `MIPITX_DSI_TOP_CON` to `0x86`, `0x06`,
+`0x46`, `0xc6`, or `0xf6`, then restoring final `0x82`, with final
+`TXRX=0x1003c`, `PHY_LCCON=0x1`, moving scanout, `dsi_eof=1`, `dsi_sof=1`,
+and `bl=255`. A human visual report is required to accept or reject this as an
+optical candidate.
+
+Rollback condition: revert #116 if the command changes boot behavior before
+manual invocation, leaves `MIPITX_DSI_TOP_CON` different from `0x82` after the
+final restore, leaves `TXRX` or `PHY_LCCON` disabled, creates a new
+OVL/RDMA/CMDQ/DEVAPC wedge, or regresses ADB, SurfaceFlinger, boot completion,
+or backlight. Do not revert just because the glass remains black; this is
+diagnostic/isolation-only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-0255-m6-dsi-imp-probe-bootonly
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack.tmp/zImage
+abootimg -i boot-m6-dsi-imp-probe-20260610.img
+
+CAP=/srv/forge/android/meizu_m6/captures/20260610-0258-m6-116-mipitx-imp-probes-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/identity.txt" "$CAP/final-health.txt"
+grep -E 'M6 DSI mipitx_pad_probe|M6 DSI clk_restore|M6 DISPLAY truth\\[p116_imp' "$CAP/probe-summary.txt"
+cat "$CAP/regression-grep.txt"
+```
+
+## Latest pointer: #116 top impedance probes
+
+The latest validated M6 display boot/capture is #116:
+
+- artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0255-m6-dsi-imp-probe-bootonly/`;
+- capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0258-m6-116-mipitx-imp-probes-711HEBSR277K5/`;
+- boot image sha256:
+  `76654618775df21018b5c19a97815dc6dfabc0a5880d58ab5bbb8c8c30273b61`;
+- final state:
+  top `0x82`, `TXRX=0x1003c`, `PHY_LCCON=0x1`, moving scanout, `bl=255`.
+
+If the human visual result for #116 was no image/stripe/flicker/change, the
+decoded MIPITX impedance fields are rejected together with #115's lane analog
+fields. The next display work should stop looping through visible MIPITX
+register fields and move to hidden PHY/electrical evidence or stock-LK side
+effects outside the currently decoded register set.
