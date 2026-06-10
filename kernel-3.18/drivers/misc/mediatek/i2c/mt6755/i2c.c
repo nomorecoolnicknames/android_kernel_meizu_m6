@@ -82,6 +82,38 @@ static struct mt_i2c_msg g_msg[2];
 static struct mt_i2c_t *g_i2c[2];
 #define I2C_DRV_NAME        "mt-i2c"
 #endif
+
+static unsigned int m6_i2c_diag_budget[I2C_NR];
+
+static void m6_i2c_diag_fail(struct mt_i2c_t *i2c, const char *stage,
+			     s32 ret, s32 return_value, u16 msg_addr,
+			     u16 msg_len, u16 msg_flags, u32 msg_ext,
+			     u32 msg_timing)
+{
+	u16 id;
+
+	if (!i2c)
+		return;
+
+	id = i2c->id;
+	if (id >= I2C_NR)
+		return;
+
+	if (m6_i2c_diag_budget[id]++ >= 32)
+		return;
+
+	I2CERR("[M6_I2C] fail stage=%s id=%u ret=%d rv=%d msg_addr=0x%x msg_len=%u msg_flags=0x%x msg_ext=0x%x msg_timing=0x%x addr=0x%x speed=%u mode=%u op=%u rd=%u dma=%u poll=%u filter=%u irq=0x%x stop=%u comp=%u err=%u reg_intr=0x%x reg_dbg=0x%x reg_fifo=0x%x reg_timing=0x%x reg_hs=0x%x reg_io=0x%x\n",
+	       stage, id, ret, return_value, msg_addr, msg_len, msg_flags,
+	       msg_ext, msg_timing, i2c->addr, i2c->speed, i2c->mode,
+	       i2c->op, i2c->read_flag, i2c->dma_en, i2c->poll_en,
+	       i2c->filter_msg, i2c->irq_stat,
+	       atomic_read(&i2c->trans_stop), atomic_read(&i2c->trans_comp),
+	       atomic_read(&i2c->trans_err), i2c_readl(i2c, OFFSET_INTR_STAT),
+	       i2c_readl(i2c, OFFSET_DEBUGSTAT), i2c_readl(i2c, OFFSET_FIFO_STAT),
+	       i2c_readl(i2c, OFFSET_TIMING), i2c_readl(i2c, OFFSET_HS),
+	       i2c_readl(i2c, OFFSET_IO_CONFIG));
+}
+
 /***********************************i2c debug**********************************/
 /* #define I2C_DEBUG_FS */
 #ifdef I2C_DEBUG_FS
@@ -1001,6 +1033,9 @@ static s32 mt_i2c_start_xfer(struct mt_i2c_t *i2c, struct mt_i2c_msg *msg)
 		I2CERR(" addr is invalid.\n");
 		I2C_BUG_ON(i2c->addr == NULL);
 		ret = -EINVAL_I2C;
+		m6_i2c_diag_fail(i2c, "mt_addr0", ret, ret, msg->addr,
+				  msg->len, msg->flags, msg->ext_flag,
+				  msg->timing);
 		goto err;
 	}
 
@@ -1008,11 +1043,17 @@ static s32 mt_i2c_start_xfer(struct mt_i2c_t *i2c, struct mt_i2c_msg *msg)
 		I2CERR(" data buffer is NULL.\n");
 		I2C_BUG_ON(msg->buf == NULL);
 		ret = -EINVAL_I2C;
+		m6_i2c_diag_fail(i2c, "mt_nullbuf", ret, ret, msg->addr,
+				  msg->len, msg->flags, msg->ext_flag,
+				  msg->timing);
 		goto err;
 	}
 	if (g_i2c[0] == i2c || g_i2c[1] == i2c) {
 		I2CERR("mt-i2c%d: Current I2C Adapter is busy.\n", i2c->id);
 		ret = -EINVAL_I2C;
+		m6_i2c_diag_fail(i2c, "mt_busy", ret, ret, msg->addr,
+				  msg->len, msg->flags, msg->ext_flag,
+				  msg->timing);
 		goto err;
 	}
 	/* start=========================translate msg to mt_i2c=============================== */
@@ -1033,6 +1074,9 @@ static s32 mt_i2c_start_xfer(struct mt_i2c_t *i2c, struct mt_i2c_msg *msg)
 		mt_i2c_clock_disable(i2c);
 	if (return_value < 0) {
 		ret = -EINVAL_I2C;
+		m6_i2c_diag_fail(i2c, "mt_transfer", ret, return_value,
+				  msg->addr, msg->len, msg->flags,
+				  msg->ext_flag, msg->timing);
 		goto err;
 	}
 err:
@@ -1125,6 +1169,9 @@ static s32 standard_i2c_start_xfer(struct mt_i2c_t *i2c, struct i2c_msg *msg)
 		I2CERR(" addr is invalid.\n");
 		I2C_BUG_ON(i2c->addr == NULL);
 		ret = -EINVAL_I2C;
+		m6_i2c_diag_fail(i2c, "std_addr0", ret, ret, msg->addr,
+				  msg->len, msg->flags, msg_ext.ext_flag,
+				  msg_ext.timing);
 		goto err;
 	}
 
@@ -1133,12 +1180,18 @@ static s32 standard_i2c_start_xfer(struct mt_i2c_t *i2c, struct i2c_msg *msg)
 		I2CERR(" data buffer is NULL.\n");
 		I2C_BUG_ON(msg->buf == NULL);
 		ret = -EINVAL_I2C;
+		m6_i2c_diag_fail(i2c, "std_nullbuf", ret, ret, msg->addr,
+				  msg->len, msg->flags, msg_ext.ext_flag,
+				  msg_ext.timing);
 		goto err;
 	}
 
 	if (g_i2c[0] == i2c || g_i2c[1] == i2c) {
 		I2CERR("mt-i2c%d: Current I2C Adapter is busy.\n", i2c->id);
 		ret = -EINVAL_I2C;
+		m6_i2c_diag_fail(i2c, "std_busy", ret, ret, msg->addr,
+				  msg->len, msg->flags, msg_ext.ext_flag,
+				  msg_ext.timing);
 		goto err;
 	}
 	/* start=========================translate msg to mt_i2c=============================== */
@@ -1158,6 +1211,9 @@ static s32 standard_i2c_start_xfer(struct mt_i2c_t *i2c, struct i2c_msg *msg)
 		mt_i2c_clock_disable(i2c);
 	if (return_value < 0) {
 		ret = -EINVAL_I2C;
+		m6_i2c_diag_fail(i2c, "std_transfer", ret, return_value,
+				  msg->addr, msg->len, msg->flags,
+				  msg_ext.ext_flag, msg_ext.timing);
 		goto err;
 	}
 err:

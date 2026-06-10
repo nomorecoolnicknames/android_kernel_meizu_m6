@@ -1,5 +1,111 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-10 #128 M6 camera main-socket I2C failure diagnostic
+
+PATCH HISTORY, **DIAGNOSTIC**, 2026-06-10: add bounded low-level MTK I2C
+failure markers around the I2C transfer error path and capture a root
+camera-provider restart window. This patch is diagnostic only: it does not
+change camera power, pinctrl, I2C timing, sensor IDs, HAL ABI, userspace
+metadata, or device enumeration.
+
+Hypothesis: FACT: #127 fixed the kernel/HAL sensor-list ABI order and proved
+the physical sub camera as `OV8856JSL`/`0x885a` on socket 2 / bus 2. FACT:
+`dumpsys media.camera` still reports one camera and IMX278 remains absent.
+HYPOTHESIS: the remaining kernel-frontier camera failure is a real main-socket
+board-port problem: main camera socket power/GPIO/MCLK/I2C2 mapping, not
+missing camera blobs and not the old sensor-list index mismatch. The I2C
+diagnostic should expose whether `ret=-22` is a bus/controller failure,
+invalid input, busy adapter, or ACK/timeout after the main sensor power window.
+
+Evidence:
+- Artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-1118-m6-camera-i2c2-faildiag-bootonly/`.
+- #128 boot image sha256:
+  `7489e6f8e233b05b30f401fe282f2848a8c67368e86242e9ffa83d2cf632c38e`.
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-1127-m6-128-camera-i2c2-faildiag-711HEBSR277K5/`.
+- #128 identity:
+  `Linux localhost 3.18.140 #128 SMP PREEMPT Wed Jun 10 10:52:30 CDT 2026 aarch64`,
+  `sys.boot_completed=1`, `bootanim=stopped`, root ADB after `adb root`.
+- Capture `SHA256SUMS` verified after excluding the checksum file itself.
+- Root camera-provider restart:
+  `camera-provider-2-4` stopped, restarted as pid `3091`, then sensor search
+  reran.
+- `logcat-after-camera-provider-restart.txt` shows only the sub camera is
+  found:
+  `found <0x885a/ov8856mipiraw/SENSOR_DRVNAME_OV8856_MIPI_RAW>` and
+  `SENSOR search end: 0x2 /[0xffffff][255]/[0xffffff][255]/[0x885a][2]`.
+- `dmesg-after-camera-provider-restart-open.txt` proves the main socket
+  failure is not IMX278-specific:
+  `imx278trulymipiraw`, `imx278mipiraw`, and even `ov8856mipiraw` all fail on
+  socket 1 / `pinSetIdx=0` / adapter 2 with repeated `I2C_ACKERR` and
+  `i2c send fail bus=0 client=main adapter=2 addr=0x20/0x40 reg=0x0a28/0x0a29 ret=-22`.
+- The same dmesg proves the sub socket is healthy:
+  `ov8856mipiraw` on socket 2 / `pinSetIdx=1` reads
+  `reg=0x300b first=0x88`, `reg=0x300c first=0x5a`,
+  accepts alternate `0x885a`, and returns `sensorID=0x0000885a`.
+- Stock OTA boot DTB extracted from
+  `/home/n8n/forge-work/temp/sources/llm/7.1.2.0G..zip` exposes stock camera
+  DT facts: `camera_sub@10` under `i2c1`, `camera_main@10` and
+  `camera_main_af@0c` under `i2c2`, and `kd_camera_hw1` pinctrl states ending
+  in `cam_ldo_sub_vcamd_0/1`, not current-tree `cam_ldo_vcama_0/1`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/i2c/mt6755/i2c.c`: adds a bounded
+  `[M6_I2C]` diagnostic helper and calls it from invalid address, null buffer,
+  busy adapter, and transfer error branches in both MTK and standard I2C
+  transfer paths.
+- `BRINGUP_STATE.md`: records the #128 artifact, root capture, blob-audit
+  closure, and the new camera frontier.
+
+Why each file changed: `i2c.c` owns the MTK I2C adapter failure path that maps
+the camera driver's visible `ret=-22` into lower-level ACK/timeout/controller
+state. The state file is updated because #128 changes the active camera
+frontier: sensor-list ABI and missing-camera-blob hypotheses are now closed
+for the kernel path; the next patch should target stock-DTB/current-DTS camera
+power/pinctrl parity and main-socket I2C2 reachability.
+
+Observed result:
+- FACT: #128 boots and the provider can be restarted without reboot.
+- FACT: `dumpsys media.camera` remains `Number of camera devices: 1`.
+- FACT: the new root window shows main socket ACK errors on adapter 2 while the
+  sub socket reads its chip ID successfully on adapter 1.
+- FACT: no camera files from `camera-minimal` or the adjacent blob-audit
+  profiles are missing from the active vendor tree; copying blobs again is not
+  the current evidence-backed fix.
+- INFERENCE: the next likely camera fix is to restore stock camera DT/power
+  behavior: current DTS added `cam_ldo_vcama_0/1`, while stock boot DTB uses
+  `cam_ldo_sub_vcamd_0/1`; current `kd_camera_hw.c` routes main `AVDD` through
+  `cam_ldo_vcama` instead of the stock `vcama` regulator path when
+  `pinSetIdx == 0`.
+
+Expected next marker: after a stock-DTB/power-parity patch, a clean
+camera-provider restart should make at least one main-socket probe stop failing
+with `I2C_ACKERR` on adapter 2. Success is `IMX278` reading `0x0278` on
+socket 1 / bus 0 and `dumpsys media.camera` increasing to two devices. If
+adapter 2 still ACKERRs while stock power/pinctrl parity is restored, the next
+frontier is main I2C2 pinmux/pad state during the power window.
+
+Rollback condition: revert this diagnostic patch if it causes boot regression,
+camera-provider crash before sensor search, dmesg flooding that hides useful
+camera logs, or I2C regressions outside camera probing. Do not revert it
+because the physical main camera remains absent; this patch is not a camera
+fix.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-1118-m6-camera-i2c2-faildiag-bootonly
+sha256sum -c SHA256SUMS
+
+CAP=/srv/forge/android/meizu_m6/captures/20260610-1127-m6-128-camera-i2c2-faildiag-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+grep -E 'Linux localhost 3\.18\.140 #128|uid=0|sys.boot_completed|bootanim' "$CAP/identity-root-recapture.txt"
+grep -E 'found <0x885a|SENSOR search end' "$CAP/logcat-after-camera-provider-restart.txt"
+grep -E 'I2C_ACKERR|i2c send fail bus=0 client=main adapter=2|i2c recv ok bus=2 client=bus2 adapter=1|sensorID=0x0000885a' "$CAP/dmesg-after-camera-provider-restart-open.txt"
+grep -E 'Number of camera devices' "$CAP/dumpsys-media-camera-after-provider-restart-open.txt"
+```
+
 ## 2026-06-10 #127 M6 camera stock sensor-list ABI alignment
 
 PATCH HISTORY, **PROPER-FIX**, 2026-06-10: align the kernel imgsensor list
@@ -15861,9 +15967,42 @@ grep -E 'M6 DSI raw_block\[raw126\]|M6 DSI mipitx_block\[raw126\].*(0e0|100=)|M6
 grep -E 'LCM Driver|State=Alive|PathMode|Current display driver status|RDMA0 Transfer' "$CAP/mtkfb.txt"
 ```
 
-## Latest multi-subsystem pointer: #125
+## Latest multi-subsystem pointer: #128 camera / #126 display / #125 WCN
 
-The latest validated M6 multi-subsystem boot/capture is #125:
+The latest validated M6 camera boot/capture is #128:
+
+- artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-1118-m6-camera-i2c2-faildiag-bootonly/`;
+- capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-1127-m6-128-camera-i2c2-faildiag-711HEBSR277K5/`;
+- boot image sha256:
+  `7489e6f8e233b05b30f401fe282f2848a8c67368e86242e9ffa83d2cf632c38e`;
+- runtime:
+  `Linux localhost 3.18.140 #128 SMP PREEMPT Wed Jun 10 10:52:30 CDT 2026 aarch64`;
+- closed camera layers:
+  camera blob-copy completeness for the audited profiles, stock sensor-list
+  ABI order, and sub OV8856JSL detection on socket 2 / bus 2;
+- current camera frontier:
+  main camera socket, not blobs: socket 1 / `pinSetIdx=0` / adapter 2 produces
+  repeated `I2C_ACKERR` for IMX278 and also for OV8856 probes, while socket 2 /
+  `pinSetIdx=1` / adapter 1 reads `0x88 0x5a` successfully. The next patch
+  should restore stock camera DT/power behavior and then inspect main I2C2
+  pinmux/pad state if ACKERR remains.
+
+The latest validated M6 display boot/capture is #126:
+
+- artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0936-m6-dsi-rawblock-diag-bootonly/`;
+- capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0939-m6-126-dsi-rawblock-diag-711HEBSR277K5/`;
+- current display frontier:
+  physical glass remains black while scrcpy is valid; decoded LCM/DSI/MIPITX
+  static state, raw DSI block, visible MIPITX tail, DDP/RDMA scanout, panel ID,
+  and brightness are closed as simple fixes. Continue below decoded
+  MIPITX/HWC/RDMA layers with indirect PHY/electrical/panel-HS acceptance
+  evidence.
+
+The latest validated M6 WiFi/BT/RIL/battery multi-subsystem boot/capture is #125:
 
 - artifact:
   `/srv/forge/android/export/meizu_m6_artifacts/20260610-m6-wifi-irq-fallback-bootonly/`;
@@ -15877,14 +16016,8 @@ The latest validated M6 multi-subsystem boot/capture is #125:
   WCN WiFi IRQ DT lookup now resolves to `wifi_irq=270 valid=1`;
 - current WiFi/BT frontier:
   SDIO CMD5 returns `ocr=0x0` even after CONSYS power-on and valid IRQ;
-- current camera frontier:
-  HAL/provider reaches sensor discovery, but IMX278 static metadata/sensor info
-  is missing or corrupt and returns HIDL status `-32`;
 - current RIL frontier:
   modem asserts at `pcore/driver/devdrv/mdipc/src/cc_irq.c:1043`;
 - current battery frontier:
   charger is active, voltage is high, but raw FG/RTC SOC is stuck at impossible
   6 and needs calibration/NVRAM/fuel-gauge repair;
-- current display frontier:
-  physical glass remains black while scrcpy is valid; continue below decoded
-  MIPITX/HWC/RDMA layers.
