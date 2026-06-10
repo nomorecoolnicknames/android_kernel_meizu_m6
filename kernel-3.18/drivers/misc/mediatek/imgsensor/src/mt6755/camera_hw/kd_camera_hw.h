@@ -183,8 +183,10 @@ typedef struct {
 	PowerInformation PowerInfo[12];
 } PowerSequence;
 
+#define MAX_NUM_OF_POWER_SEQUENCE 32
+
 typedef struct {
-	PowerSequence PowerSeq[MAX_NUM_OF_SUPPORT_SENSOR + 1];
+	PowerSequence PowerSeq[MAX_NUM_OF_POWER_SEQUENCE];
 } PowerUp;
 
 typedef struct {

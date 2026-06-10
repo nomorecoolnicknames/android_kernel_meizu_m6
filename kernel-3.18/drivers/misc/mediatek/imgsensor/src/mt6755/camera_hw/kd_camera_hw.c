@@ -133,6 +133,19 @@ PowerCust PowerCustList = {
 PowerUp PowerOnList = {
 	{
 		/*jijin .wang add 1st main camera power seq start*/
+		{SENSOR_DRVNAME_IMX278_TRULY_MIPI_RAW,
+			{
+				{SensorMCLK, Vol_High, 0},
+				{PDN, Vol_Low, 0},
+				{RST, Vol_Low, 0},
+				{DOVDD, Vol_1800, 0},
+				{AVDD, Vol_2800, 0},
+				{DVDD, Vol_1200, 0},
+				{AFVDD, Vol_2800, 1},
+				{PDN, Vol_High, 0},
+				{RST, Vol_High, 2},
+			},
+		},
 		{SENSOR_DRVNAME_IMX278_MIPI_RAW,
 			{
 				{SensorMCLK, Vol_High, 0},
@@ -143,6 +156,18 @@ PowerUp PowerOnList = {
 				{DVDD, Vol_1200, 0},
 				{AFVDD, Vol_2800, 1},
 				{PDN, Vol_High, 0},
+				{RST, Vol_High, 2},
+			},
+		},
+		{SENSOR_DRVNAME_OV8856_MIPI_RAW,
+			{
+				{SensorMCLK, Vol_High, 0},
+				{PDN, Vol_Low, 0},
+				{RST, Vol_Low, 0},
+				{DOVDD, Vol_1800, 1},
+				{AVDD, Vol_2800, 1},
+				{DVDD, Vol_1200, 5},
+				{PDN, Vol_High, 1},
 				{RST, Vol_High, 2},
 			},
 		},

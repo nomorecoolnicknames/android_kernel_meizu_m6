@@ -1,5 +1,131 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-10 #127 M6 camera stock sensor-list ABI alignment
+
+PATCH HISTORY, **PROPER-FIX**, 2026-06-10: align the kernel imgsensor list
+indices with the stock M6 `libcameracustom.so` camera sensor order. This is a
+real HAL/kernel contract fix for the sub-camera path, not a fake-ready camera
+shim and not a claim that both cameras are fixed.
+
+Hypothesis: FACT: the stock blob set needed by the audit profiles is already
+present in `rom-meizu_M6-lineage-cm-14.1/vendor/meizu/meizu_m6/proprietary`.
+The requested cross-check extracted every candidate profile from
+`/home/n8n/meizu_m6_blob_audit/` against
+`/home/n8n/forge-work/temp/sources/export/meizu_m6_stock_7.1.2.0G/system.raw.img`:
+`camera-minimal` matched `103/103`, `radio-basic` matched `48/48`,
+`sensors-minimal` matched `6/6`, `boot-display-minimal` matched `47/47`, and
+`boot-display-audio-camera` matched `201/202` with only stock-missing
+`vendor/lib/hw/audio.a2dp.blueangel.so` already present in the active vendor
+tree. FACT: stock `libcameracustom.so` strings show the userspace sensor-list
+order `imx278trulymipiraw`, `imx278mipiraw`, `ov8856mipiraw`,
+`ov8856jslmipiraw`. FACT: #126 live camera logs show HAL probing indices
+`0..3`, but the kernel list only exposed `imx278mipiraw`,
+`ov8856jslmipiraw`, then null entries. The same live window shows `raw=0x20001`
+reaches kernel list index 1 and physically probes `ov8856jslmipiraw` on
+socket 2 / bus 2, while userspace reports it as `imx278mipiraw` and then
+builds IMX278 metadata with corrupt sensor dimensions. INFERENCE: the first
+camera blocker was a kernel/userspace sensor-list ABI index mismatch, not
+missing camera blobs.
+
+Evidence:
+- Stock OTA zip: `/home/n8n/forge-work/temp/sources/llm/7.1.2.0G..zip`.
+- Extracted stock system image:
+  `/home/n8n/forge-work/temp/sources/export/meizu_m6_stock_7.1.2.0G/system.raw.img`.
+- Blob audit lists:
+  `/home/n8n/meizu_m6_blob_audit/proprietary-files.camera-minimal.txt` and
+  the other adjacent `proprietary-files.*.txt` profiles.
+- Blob comparison result: no missing vendor files and no SHA diffs for camera,
+  radio, sensors, boot-display, or boot-display-audio-camera profiles; the only
+  stock-missing entry is `vendor/lib/hw/audio.a2dp.blueangel.so`.
+- #126 camera capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0958-m6-126-camera-open-live-711HEBSR277K5/`.
+- #126 `logcat-after-open.txt` shows userspace order/probe symptoms:
+  `set sensor driver id =10000..10003`, `search to sub`, `set sensor driver id
+  =20001`, then `found <0x278/imx278mipiraw/SENSOR_DRVNAME_IMX278_MIPI_RAW>`
+  and corrupt `getInfo2` dimensions.
+- #126 `dmesg-after-open.txt` shows the kernel side of the mismatch:
+  list[0] is `imx278mipiraw`, list[1] is `ov8856jslmipiraw`, list[2]/[3] are
+  null, and `raw0=0x00020001` selects `ov8856jslmipiraw`, bus 2, pinSetIdx 1,
+  then reads physical `sensorID=0x0000885a`.
+- #127 flashed boot identity:
+  `/srv/forge/android/meizu_m6/captures/20260610-1034-m6-127-camera-stock-sensorlist-abi-711HEBSR277K5/identity.txt`
+  reports kernel `#127`, `sys.boot_completed=1`, `bootanim=stopped`, and boot
+  partition SHA256
+  `e339499d34617e06838a5bb45fbe59ecd10ce2ae1f541b65f5fdec15b7aba9c3`.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/inc/kd_imgsensor.h`: adds the
+  stock driver-name constants `imx278trulymipiraw` and `ov8856mipiraw`.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/kd_sensorlist.h`:
+  exposes the stock ABI order as indices 0..3:
+  `imx278trulymipiraw`, `imx278mipiraw`, `ov8856mipiraw`,
+  `ov8856jslmipiraw`. The `ov8856mipiraw` ABI name deliberately aliases the
+  already compiled `OV8856JSLMIPIRAW_SensorInit`; compiling generic
+  `ov8856_mipi_raw` produced duplicate OTP/global symbols with the JSL driver.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/camera_hw/kd_camera_hw.c`:
+  adds matching power-sequence aliases for the stock IMX278_TRULY and OV8856
+  names so list alignment does not lose rails/reset handling.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/camera_hw/kd_camera_hw.h`
+  and `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/camera_hw/tb_kd_camera_hw.h`:
+  split the board power-table capacity from `MAX_NUM_OF_SUPPORT_SENSOR` by
+  adding `MAX_NUM_OF_POWER_SEQUENCE=32`; the existing board table already
+  needs more power aliases than the 16-entry sensor-list ABI.
+- `BRINGUP_STATE.md`: records the evidence, expected next markers, rollback,
+  and verification commands.
+
+Why each file changed: `kd_imgsensor.h` owns the cross-driver sensor-name
+constants used by both the sensor list and the power table. `kd_sensorlist.h`
+is the kernel list that userspace selects by packed driver index, so it must
+match the stock HAL order exactly. `kd_camera_hw.c` owns the MTK legacy
+rail/reset/MCLK sequence lookup by driver name. The two `kd_camera_hw.h`
+headers own the static array bound for the board power table; without the
+larger bound, adding stock aliases trips `excess elements in array initializer`
+before the kernel image can build.
+
+Expected next marker: after rebuild/flash, clean camera-provider startup should
+log kernel `list[0] imx278trulymipiraw`, `list[1] imx278mipiraw`,
+`list[2] ov8856mipiraw`, and `list[3] ov8856jslmipiraw`. HAL probing
+`0x20002` should map to kernel `ov8856mipiraw`, read physical `0x885a` on
+socket 2 / bus 2, and no longer report the sub camera as IMX278. The remaining
+front camera/main-camera frontier is IMX278 reachability: if IMX278 still
+returns `sensorID=0xffffffff` with `i2c send fail ... ret=-22`, the next patch
+must inspect socket/bus/pinctrl/power/I2C mapping, not copy blobs.
+
+Observed #127 result: the ordered list appeared exactly as expected, and
+`ov8856mipiraw` on socket 2 / bus 2 read `0x88 0x5a` and returned
+`sensorID=0x0000885a`. `dumpsys media.camera` still reports one camera.
+IMX278 remains absent on the tested main/front paths with `ret=-22` I2C send
+failures and `sensorID=0xffffffff`. Userspace still lacks many
+`constructCustStaticMetadata_*SENSOR_DRVNAME_OV8856_MIPI_RAW` symbols, so the
+provider can still time out after `am start` even though the kernel/HAL
+sensor-list ABI mismatch is fixed.
+
+Rollback condition: revert this patch if the exact flashed build regresses
+camera provider from one device to zero without producing the new ordered
+kernel list markers, if OV8856 no longer reads `0x885a` on socket 2 / bus 2,
+if boot/ADB/display startup regress, or if the build omits any of the four
+ordered sensor entries.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140
+git diff --check
+env CCACHE_DIR=/srv/forge/android/ccache make -C kernel-3.18 \
+  O=/srv/forge/work/m6-source-kernel-manual-20260520/out \
+  ARCH=arm64 \
+  CROSS_COMPILE=/srv/forge/android/meizu_m6/rom-meizu_M6-lineage-cm-14.1/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android- \
+  meizu_m6_defconfig Image.gz-dtb -j8
+
+A='adb -H 127.0.0.1 -P 15038 -s 711HEBSR277K5'
+$A root
+$A wait-for-device
+$A shell 'logcat -c; dmesg -c >/dev/null 2>&1 || true; stop camera-provider-2-4; start camera-provider-2-4; sleep 6'
+$A shell 'dmesg | grep -E "M6_CAM|CAM_SENSOR_LIST|raw0=0x|raw1=0x|sensorID=|i2c .*fail|i2c .*ok" | tail -320'
+$A shell 'logcat -b all -d -v threadtime | grep -E "ImgSensorDrv|HalSensorList|MetadataProvider|CameraProviderManager|camera devices|found <" | tail -260'
+$A shell 'dumpsys media.camera | head -80'
+```
+
 ## 2026-06-10 #124 DSI VM_CMD_CON restore-safe isolation probe
 
 PATCH HISTORY, **DIAGNOSTIC / ISOLATION**, 2026-06-10: add a manual
