@@ -13768,3 +13768,116 @@ $A shell dmesg > "$NEXT/dmesg-after-rgb-bist.txt"
 $A shell 'cat /d/mtkfb 2>&1' > "$NEXT/mtkfb.txt"
 $A shell 'dumpsys display; dumpsys SurfaceFlinger; dumpsys power' > "$NEXT/dumpsys-display-sf-power.txt"
 ```
+
+## 2026-06-10 #104 manual DSI/MIPITX debug mux sweep
+
+Patch category: **DIAGNOSTIC / ISOLATION**. The patch is inert during boot and
+adds one manual debugfs command: `m6_dsi_debug_mux[:tag]`.
+
+Hypothesis: #103 proved that Linux performs a complete DSI/MIPITX stop/start
+and returns to active video register state, but the glass is still black. The
+next open machine-visible hole was that previous snapshots read
+`MIPITX_DSI_DBG_OUT` only with default `MIPITX_DSI_DBG_CON=0`, producing
+`dbg=0x0/apb=0x0`. This patch tests whether the MIPITX debug mux itself is
+alive and which selector groups expose lane/PHY state, without changing the
+boot path or retaining selector changes after the manual command.
+
+Evidence:
+- Artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-0015-m6-dsi-debug-mux-manual-bootonly/`.
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-0055-m6-104-debug-mux-711HEBSR277K5/`.
+- Boot image sha256:
+  `67ef7a721cd1cc577312295b46b835e571756ad705be3b7c0fb248ad46d00a7e`.
+- `Image.gz-dtb` sha256:
+  `ba9e878f45a3894a60b245fcc4279f61f6c6b66ec67f0fe6b729138c5370c270`.
+- `System.map` sha256:
+  `3912ef88320e015db72bb1cb4a889091e80e7a8934c79f679a8c3495449690b7`.
+- `vmlinux` sha256:
+  `3084a9d42631643fca2a1e2c442c7c71c1bebc175a622ca05c6aa79b51a09cb1`.
+- Artifact `sha256sum -c SHA256SUMS` passed. Flash chain matched locally,
+  in `/data/local/tmp`, in boot-partition readback, and after reboot.
+- Capture `sha256sum -c SHA256SUMS` passed. Identity shows
+  `sys.boot_completed=1`, bootanim stopped, root shell, and #104 boot hash.
+- Brightness was proven inside the window:
+  `screen_brightness_mode=0`, `screen_brightness=255`, and
+  `/sys/class/leds/lcd-backlight/brightness=255` before and after the mux
+  sweep.
+- `m6-lines.txt:122-191`: manual command begins with
+  `dsi_debug_sel=0x0 mipitx_dbg=0x0 out=0x0 apb=0x0`, dumps snapshots, sweeps
+  DSI selectors 0x0..0x1f, sweeps MIPITX selectors, restores both selectors,
+  and ends with `dsi_debug_sel=0x0 mipitx_dbg=0x0 out=0x0 apb=0x0`.
+- `m6-lines.txt:165-180`: with `MIPITX_DSI_DBG_CON=0x10|sel`, MIPITX debug
+  output is live. Non-zero examples include `sel=0x0 out=0xe8e1001d`,
+  `sel=0x3 out=0xff1e0cf2`, `sel=0x4 out=0x55e10011`, `sel=0x9 out=0xff1d0cf9`,
+  and `sel=0xc out=0x55e10011`. `apb=0x0` for all sampled selectors.
+- `m6-lines.txt:72-121` and `m6-lines.txt:193-242`: before/after truth
+  windows remain active DSI video with `MODE=0x3`, MIPITX lanes
+  `0x603/0x601/0x601/0x601/0x601`, moving RDMA/DSI counters, `dsi_eof=1`,
+  `dsi_sof=1`, `te=1`, and `bl=255`.
+- The DDP dump labels are still printed as `M6 DDP timeout[...]` from the
+  truth-window dump path, but the sampled OVL state is `eng_act`, not the old
+  #98 `s_w_rst` reset wedge, and RDMA in/out counters continue moving.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: refactors the
+  existing limited debug mux sweeps into direct helpers, adds the manual
+  restore-bounded `dsi_m6_debug_mux_sweep()`, and wraps the sweep with
+  before/after DSI/MIPITX snapshots.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: exports the new
+  manual helper to `disp_debug.c`.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: adds the
+  `m6_dsi_debug_mux[:tag]` debugfs command and help text.
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_reg.h`: fixes the stale
+  comment for `MIPITX_DSI_DBG_OUT` from `0x084` to the actual struct offset
+  `0x094`. The code was already reading `0x094`; this prevents future offset
+  confusion.
+
+Why each file changed: `ddp_dsi.c` owns DSI/MIPITX snapshots and the existing
+selector sweeps, so it is the narrowest place to expose a manual sweep without
+duplicating register knowledge. `ddp_dsi.h` and `disp_debug.c` wire that helper
+to the existing manual display debugfs surface. `ddp_reg.h` corrects a
+documentation trap observed while comparing the struct order against live
+register reads.
+
+Result:
+- FACT: previous `MIPITX dbg=0x0/apb=0x0` snapshots at selector 0 do not prove
+  the MIPITX debug fabric is dead. The mux has live, changing non-zero output
+  once the selector group bit `0x10` is used.
+- FACT: the manual sweep restores both `DSI_DEBUG_SEL` and `MIPITX_DSI_DBG_CON`
+  to zero and does not regress the #101/#103 digital scanout path.
+- INFERENCE: the next useful work is to decode or compare the non-zero MIPITX
+  debug words against stock/LK or MTK references, and to correlate them with
+  lane electrical state. This is still below DSI host programming and above any
+  human optical observation.
+
+Expected next marker: add a bounded **DIAGNOSTIC** decoder/compare pass for the
+active MIPITX mux words. At minimum record repeated samples for the non-zero
+selectors (`0x10`, `0x11`, `0x12`, `0x13`, `0x14`, `0x18`, `0x19`, `0x1a`,
+`0x1b`, `0x1c`) at boot, steady video, BIST, and after clean suspend/resume.
+If stock LK can be sampled, compare the same selector words there. A useful
+next capture should say whether clock/data lane HS/LP state, lane polarity,
+termination, or PLL lock differs between LK-visible working logo and Linux
+black glass.
+
+Rollback condition: revert #104 if the manual command leaves
+`DSI_DEBUG_SEL`/`MIPITX_DSI_DBG_CON` non-zero, creates a new OVL/RDMA/CMDQ
+wedge, changes boot-time display behavior before the command is invoked, or
+causes ADB/SurfaceFlinger/backlight regression. Do not revert merely because
+the glass remains black; the patch is diagnostic-only.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-0015-m6-dsi-debug-mux-manual-bootonly
+sha256sum -c SHA256SUMS
+cmp Image.gz-dtb verify-unpack.tmp/zImage
+cmp initrd.img verify-unpack.tmp/initrd.img
+abootimg -i boot-m6-dsi-debug-mux-manual-20260610.img
+
+CAP=/srv/forge/android/meizu_m6/captures/20260610-0055-m6-104-debug-mux-711HEBSR277K5
+sha256sum -c "$CAP/SHA256SUMS"
+grep -E 'M6 DSI debug_mux|M6 DSI dbg_mux|M6 MIPITX dbg_mux|M6 DSI snapshot\[debugmux' "$CAP/m6-lines.txt"
+grep -E 'M6 DISPLAY truth\[p104_|M6 DISPLAY scanout\[p104_|M6 DSI phy_truth\[p104_' "$CAP/m6-lines.txt"
+cat "$CAP/identity.txt" "$CAP/final-health.txt"
+```

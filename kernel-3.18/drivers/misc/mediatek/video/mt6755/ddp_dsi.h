@@ -249,6 +249,7 @@ extern "C" {
 	void dsi_m6_dump_takeover(const char *tag);
 	void dsi_m6_dump_hs_window(const char *tag, unsigned int hold_ms);
 	void dsi_m6_dump_phy_truth(const char *tag);
+	void dsi_m6_debug_mux_sweep(const char *tag);
 	void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms);
 	void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
 				   unsigned int restore);

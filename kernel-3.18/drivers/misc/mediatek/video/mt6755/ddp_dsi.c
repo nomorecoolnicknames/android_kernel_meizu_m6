@@ -2371,19 +2371,16 @@ static void dsi_m6_dump_vm_payload_marker(const char *tag,
 		INREG32(DDP_REG_BASE_DSI0 + 0x170));
 }
 
-static void dsi_m6_dump_debug_mux_sweep(const char *tag,
-					DISP_MODULE_ENUM module)
+static void dsi_m6_dump_debug_mux_sweep_direct(const char *tag,
+					       unsigned int sweep_id)
 {
-	static unsigned int sweep_count;
 	uint32_t orig;
 	uint32_t restored;
 	unsigned int sel;
 
-	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL ||
-	    !dsi_m6_should_dump_debug_mux(tag) || sweep_count >= 3)
+	if (DSI_REG[0] == NULL)
 		return;
 
-	sweep_count++;
 	orig = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
 	for (sel = 0; sel < 32; sel++) {
 		uint32_t debug_sel = (orig & ~0x1f) | sel;
@@ -2399,7 +2396,7 @@ static void dsi_m6_dump_debug_mux_sweep(const char *tag,
 		state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
 		state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
 		DISPERR("M6 DSI dbg_mux[%s]#%u sel=0x%x orig=0x%x now=0x%x st=0x%x/0x%x/0x%x/0x%x cksm=0x%x int=0x%x vm=0x%x word=%u line=%u\n",
-			tag, sweep_count, sel, orig,
+			tag, sweep_id, sel, orig,
 			INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
 			state6, state7, state8, state9,
 			INREG32(DDP_REG_BASE_DSI0 + 0x144),
@@ -2412,22 +2409,32 @@ static void dsi_m6_dump_debug_mux_sweep(const char *tag,
 	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_DEBUG_SEL, orig);
 	restored = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
 	DISPERR("M6 DSI dbg_mux[%s]#%u restore orig=0x%x now=0x%x\n",
-		tag, sweep_count, orig, restored);
+		tag, sweep_id, orig, restored);
 }
 
-static void dsi_m6_dump_mipitx_debug_mux_sweep(const char *tag,
-					       DISP_MODULE_ENUM module)
+static void dsi_m6_dump_debug_mux_sweep(const char *tag,
+					DISP_MODULE_ENUM module)
 {
 	static unsigned int sweep_count;
-	uint32_t orig;
-	uint32_t restored;
-	unsigned int sel;
 
 	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL ||
 	    !dsi_m6_should_dump_debug_mux(tag) || sweep_count >= 3)
 		return;
 
 	sweep_count++;
+	dsi_m6_dump_debug_mux_sweep_direct(tag, sweep_count);
+}
+
+static void dsi_m6_dump_mipitx_debug_mux_sweep_direct(const char *tag,
+						      unsigned int sweep_id)
+{
+	uint32_t orig;
+	uint32_t restored;
+	unsigned int sel;
+
+	if (DSI_REG[0] == NULL)
+		return;
+
 	orig = INREG32(MIPITX_BASE + 0x090);
 	for (sel = 0; sel < 16; sel++) {
 		uint32_t debug_sel = (orig & ~0x1f) | 0x10 | sel;
@@ -2439,7 +2446,7 @@ static void dsi_m6_dump_mipitx_debug_mux_sweep(const char *tag,
 		state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
 		state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
 		DISPERR("M6 MIPITX dbg_mux[%s]#%u sel=0x%x orig=0x%x now=0x%x out=0x%x apb=0x%x lanes=0x%x/0x%x/0x%x/0x%x/0x%x top=0x%x pll=0x%x/0x%x/0x%x dsi=0x%x/0x%x st=0x%x/0x%x word=%u line=%u\n",
-			tag, sweep_count, sel, orig,
+			tag, sweep_id, sel, orig,
 			INREG32(MIPITX_BASE + 0x090),
 			INREG32(MIPITX_BASE + 0x094),
 			INREG32(MIPITX_BASE + 0x098),
@@ -2462,8 +2469,47 @@ static void dsi_m6_dump_mipitx_debug_mux_sweep(const char *tag,
 	mt_reg_sync_writel(orig, MIPITX_BASE + 0x090);
 	restored = INREG32(MIPITX_BASE + 0x090);
 	DISPERR("M6 MIPITX dbg_mux[%s]#%u restore orig=0x%x now=0x%x out=0x%x apb=0x%x\n",
-		tag, sweep_count, orig, restored,
+		tag, sweep_id, orig, restored,
 		INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098));
+}
+
+static void dsi_m6_dump_mipitx_debug_mux_sweep(const char *tag,
+					       DISP_MODULE_ENUM module)
+{
+	static unsigned int sweep_count;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL ||
+	    !dsi_m6_should_dump_debug_mux(tag) || sweep_count >= 3)
+		return;
+
+	sweep_count++;
+	dsi_m6_dump_mipitx_debug_mux_sweep_direct(tag, sweep_count);
+}
+
+void dsi_m6_debug_mux_sweep(const char *tag)
+{
+	static unsigned int manual_count;
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int n;
+
+	if (DSI_REG[0] == NULL) {
+		DISPERR("M6 DSI debug_mux[%s]: DSI_REG0 missing\n", safe_tag);
+		return;
+	}
+
+	n = ++manual_count;
+	DISPERR("M6 DSI debug_mux[%s]#%u: begin dsi_debug_sel=0x%x mipitx_dbg=0x%x out=0x%x apb=0x%x\n",
+		safe_tag, n, INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+		INREG32(MIPITX_BASE + 0x090), INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098));
+	dsi_m6_dump_snapshot("debugmux-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_debug_mux_sweep_direct(safe_tag, n);
+	dsi_m6_dump_mipitx_debug_mux_sweep_direct(safe_tag, n);
+	dsi_m6_dump_snapshot("debugmux-after", DISP_MODULE_DSI0, NULL);
+	DISPERR("M6 DSI debug_mux[%s]#%u: end dsi_debug_sel=0x%x mipitx_dbg=0x%x out=0x%x apb=0x%x\n",
+		safe_tag, n, INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+		INREG32(MIPITX_BASE + 0x090), INREG32(MIPITX_BASE + 0x094),
 		INREG32(MIPITX_BASE + 0x098));
 }
 

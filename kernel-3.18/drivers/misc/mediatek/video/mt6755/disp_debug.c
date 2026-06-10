@@ -135,6 +135,8 @@ char MTKFB_STR_HELP[] =
 	"             Meizu M6 bounded DSI HS-video IRQ/VM/window sampler\n"
 	"        m6_dsi_phy_truth[:tag]\n"
 	"             Meizu M6 read-only DSI/MIPITX/LCM lane and PHY truth dump\n"
+	"        m6_dsi_debug_mux[:tag]\n"
+	"             Meizu M6 bounded DSI/MIPITX debug mux sweep; restores selectors\n"
 	"        m6_dsi_cc_probe:<0|1>[:hold_ms[:restore]]\n"
 	"             Meizu M6 isolation toggle for TXRX HSTX_CKLP_EN with snapshots\n"
 	"        m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore]]\n"
@@ -687,6 +689,17 @@ void mtkfb_process_dbg_opt(const char *opt)
 		dsi_m6_dump_phy_truth(safe_tag);
 		primary_display_manual_unlock();
 		DISPMSG("m6 dsi phy truth: tag=%s\n", safe_tag);
+	} else if (0 == strncmp(opt, "m6_dsi_debug_mux", 16)) {
+		const char *tag = "manual";
+		char safe_tag[32];
+
+		if (opt[16] == ':')
+			tag = opt + 17;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+		primary_display_manual_lock();
+		dsi_m6_debug_mux_sweep(safe_tag);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI debug_mux command: tag=%s\n", safe_tag);
 	} else if (0 == strncmp(opt, "m6_dsi_cc_probe:", sizeof("m6_dsi_cc_probe:") - 1)) {
 		int value_arg = 0;
 		unsigned int value = 0;
