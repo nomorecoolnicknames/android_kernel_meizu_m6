@@ -14906,10 +14906,14 @@ Result:
 - FACT: capture regression grep found zero `wait VSYNC`, `abnormal`, `DEVAPC`,
   `s_w_rst`, `L1 not complete`, `RDMA0_EOF`, unknown/invalid probe command,
   `Oops`, or `panic` matches.
-- FACT: no human visual observation was available when this entry was written.
-- INFERENCE: if the human saw no image/stripe/flicker/change during the #116
-  windows, top-level MIPITX `imp_en`/`imp` should be marked REJECTED as the
-  optical root candidate.
+- FACT: human visual report after #116: the physical glass still shows no
+  image. Short stripes/flickers were not assessed in that observation window.
+- FACT: scrcpy shows a valid picture for the same boot, so framebuffer,
+  SurfaceFlinger/HWC composition, and Android-side image production are not the
+  frontier for this failure.
+- INFERENCE: top-level MIPITX `imp_en`/`imp` did not restore visible scanout.
+  Since stripes/flickers were not tracked, #116 rejects `imp_en`/`imp` as a
+  full-image fix but not as a possible transient analog-effect source.
 
 Expected next marker: if #116 is repeated or extended, the capture should show
 `M6 DSI mipitx_pad_probe` changing `MIPITX_DSI_TOP_CON` to `0x86`, `0x06`,
@@ -14953,8 +14957,9 @@ The latest validated M6 display boot/capture is #116:
 - final state:
   top `0x82`, `TXRX=0x1003c`, `PHY_LCCON=0x1`, moving scanout, `bl=255`.
 
-If the human visual result for #116 was no image/stripe/flicker/change, the
-decoded MIPITX impedance fields are rejected together with #115's lane analog
-fields. The next display work should stop looping through visible MIPITX
-register fields and move to hidden PHY/electrical evidence or stock-LK side
-effects outside the currently decoded register set.
+Human visual result for #116: no physical image, while scrcpy has a valid
+picture. Short stripes/flickers were not assessed. The decoded MIPITX
+impedance fields are therefore rejected as a full-image fix together with
+#115's lane analog fields. The next display work should stop looping through
+visible MIPITX register fields and move to hidden PHY/electrical evidence or
+stock-LK side effects outside the currently decoded register set.
