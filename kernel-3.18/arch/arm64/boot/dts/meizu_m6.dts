@@ -410,7 +410,7 @@ hw-dev-detect@0{
 			output-high;
 		};
 	};
-  /*camera_pins_sub_vcamd0: cam1@4 {
+	camera_pins_sub_vcamd0: cam1@4 {
 		pins_cmd_dat {
 			pins = <PINMUX_GPIO82__FUNC_GPIO82>;
 			slew-rate = <1>;
@@ -420,20 +420,6 @@ hw-dev-detect@0{
 	camera_pins_sub_vcamd1: cam1@5 {
 		pins_cmd_dat {
 			pins = <PINMUX_GPIO82__FUNC_GPIO82>;
-			slew-rate = <1>;
-			output-high;
-		};
-	};*/
-	camera_pins_cam_ldo_vcama_0: cam@vcama0 {
-		pins_cmd_dat {
-			pins = <PINMUX_GPIO13__FUNC_GPIO13>;
-			slew-rate = <1>;
-			output-low;
-		};
-	};
-	camera_pins_cam_ldo_vcama_1: cam@vcama1 {
-		pins_cmd_dat {
-			pins = <PINMUX_GPIO13__FUNC_GPIO13>;
 			slew-rate = <1>;
 			output-high;
 		};
@@ -447,7 +433,7 @@ hw-dev-detect@0{
 	pinctrl-names = "default",
 			"cam0_rst0", "cam0_rst1", "cam0_pnd0", "cam0_pnd1",
 			"cam1_rst0", "cam1_rst1", "cam1_pnd0", "cam1_pnd1",
-			"cam_ldo_vcama_0", "cam_ldo_vcama_1";
+			"cam_ldo_sub_vcamd_0", "cam_ldo_sub_vcamd_1";
 	pinctrl-0 = <&camera_pins_default>;
 	pinctrl-1 = <&camera_pins_cam0_rst0>;
 	pinctrl-2 = <&camera_pins_cam0_rst1>;
@@ -462,9 +448,9 @@ hw-dev-detect@0{
 	pinctrl-10 = <&camera_pins_cam2_rst1>;
 	pinctrl-11 = <&camera_pins_cam2_pnd0>;
 	pinctrl-12 = <&camera_pins_cam2_pnd1>;*/
-	/* for ldo control by gpio */
-	pinctrl-9 = <&camera_pins_cam_ldo_vcama_0>;
-	pinctrl-10 = <&camera_pins_cam_ldo_vcama_1>;
+	/* stock boot DTB exposes these as the camera GPIO LDO states. */
+	pinctrl-9 = <&camera_pins_sub_vcamd0>;
+	pinctrl-10 = <&camera_pins_sub_vcamd1>;
 	status = "okay";
 
 };

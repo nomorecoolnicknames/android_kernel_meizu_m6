@@ -15967,27 +15967,153 @@ grep -E 'M6 DSI raw_block\[raw126\]|M6 DSI mipitx_block\[raw126\].*(0e0|100=)|M6
 grep -E 'LCM Driver|State=Alive|PathMode|Current display driver status|RDMA0 Transfer' "$CAP/mtkfb.txt"
 ```
 
-## Latest multi-subsystem pointer: #128 camera / #126 display / #125 WCN
+## Patch history: #129 camera stock DTB/power parity
 
-The latest validated M6 camera boot/capture is #128:
+Patch category: **PROPER-FIX**. This is a behavior change, but it is not a
+fake-ready or skip patch: it restores stock boot-DTB pinctrl naming for the
+camera GPIO LDO states and removes the M6-only main-camera AVDD shortcut that
+routed main AVDD through a non-stock GPIO path while the DTB exposes the
+regulator supply.
+
+Hypothesis: #128 proved that the camera userspace blobs and kernel sensor-list
+ABI were sufficient for the sub OV8856JSL path, but the main socket still
+failed before sensor ID read with adapter-2 `I2C_ACKERR`. Stock boot DTB does
+not expose the current `cam_ldo_vcama_0/1` GPIO13 states; it exposes
+`cam_ldo_sub_vcamd_0/1` on GPIO82, while `kd_camera_hw1` has a real
+`vcama-supply`. Therefore the main-camera-only AVDD GPIO shortcut was a
+non-stock power-routing bug that left IMX278 unresponsive on I2C2.
+
+Evidence:
+- Stock OTA:
+  `/home/n8n/forge-work/temp/sources/llm/7.1.2.0G..zip`.
+- Stock boot image sha256:
+  `8c0f2a4886b3b681f8275192e07fd529c62e7f37538e58f81f6466301db99915`.
+- Stock boot DTB sha256:
+  `ce11a8482466619fb9c70bcce10125f5040f839088e36a1c87aa282e2bbc74cd`.
+- Stock DTB fact: `kd_camera_hw1@15008000` has `vcama-supply`,
+  `vcamd-supply`, `vcamio-supply`, `vcamaf-supply`, and pinctrl names ending
+  in `cam_ldo_sub_vcamd_0`, `cam_ldo_sub_vcamd_1`; no
+  `cam_ldo_vcama_0/1` states exist in the stock boot DTB.
+- Pre-patch capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-1127-m6-128-camera-i2c2-faildiag-711HEBSR277K5/`.
+- #128 FACT: sub OV8856JSL on socket 2 / adapter 1 reads ID
+  `0x88 0x5a`, while main socket 1 / adapter 2 repeatedly returns
+  `I2C_ACKERR` for IMX278 ID registers `0x0a28/0x0a29`.
+- #128 FACT: main AVDD did not go through the `CAM_RAIL_ON type=AVDD(4)`
+  regulator marker because the main-only shortcut called `mtkcam_gpio_set()`
+  instead.
+- Artifact:
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-1220-m6-camera-stock-power-parity-bootonly/`.
+- #129 boot image sha256:
+  `f598d0220bdb834525b927503a14b9d04e2f1a94a17931b8a1bbca6957f888b5`.
+- #129 `Image.gz-dtb` sha256:
+  `92c997721d104d324955656212ba2e7e14d75da238c98ebd9bb880e90a5290d4`.
+- Capture:
+  `/srv/forge/android/meizu_m6/captures/20260610-1228-m6-129-camera-stock-power-parity-711HEBSR277K5/`.
+- Runtime identity:
+  `Linux localhost 3.18.140 #129 SMP PREEMPT Wed Jun 10 11:16:52 CDT 2026 aarch64`.
+- Boot partition readback matched the local boot image sha256.
+- #129 generated DTB contains `cam_ldo_sub_vcamd_0/1` in `kd_camera_hw1`;
+  the old `cam_ldo_vcama_0/1` states are absent.
+
+Files changed:
+- `kernel-3.18/arch/arm64/boot/dts/meizu_m6.dts`: restores stock
+  `cam_ldo_sub_vcamd_0/1` pinctrl states on GPIO82 and wires them into
+  `kd_camera_hw1` instead of the non-stock GPIO13 `cam_ldo_vcama_0/1` states.
+- `kernel-3.18/drivers/misc/mediatek/imgsensor/src/mt6755/camera_hw/kd_camera_hw.c`:
+  removes the main-camera-only AVDD GPIO shortcut so all sockets use the
+  regulator path when `CUST_AVDD.Gpio_Pin == GPIO_UNSUPPORTED`.
+- `BRINGUP_STATE.md`: records the artifact, capture, result, current
+  userspace camera frontier, rollback condition, and verification commands.
+
+Why each file changed: `meizu_m6.dts` must match the stock boot DTB because
+the camera power GPIO names are firmware-facing device-tree contract, not an
+API-only donor detail. `kd_camera_hw.c` owns the camera power sequence and was
+the only place bypassing the already-declared `vcama` regulator for main
+camera AVDD. The state file preserves the exact proof and prevents future
+agents from chasing missing camera blobs or sub-camera-only theories.
+
+Result:
+- FACT: #129 boots and reaches Android userspace:
+  `sys.boot_completed=1`, `bootanim=stopped`, `camera-provider-2-4=running`.
+- FACT: both physical sensors are now detected by the HAL:
+  `found <0x279/imx278trulymipiraw/SENSOR_DRVNAME_IMX278_TRULY_MIPI_RAW>`,
+  `found <0x885a/ov8856mipiraw/SENSOR_DRVNAME_OV8856_MIPI_RAW>`,
+  `SENSOR search end: 0x3 /[0x279][0]/[0xffffff][255]/[0x885a][2]`.
+- FACT: `dumpsys media.camera` now reports `Number of camera devices: 2`, with
+  camera 0 facing back/orientation 90 and camera 1 facing front/orientation
+  270.
+- FACT: main IMX278 now powers AVDD through the regulator:
+  `CAM_RAIL_ON enter type=AVDD(4) uV=2800000` and
+  `CAM_RAIL_ON exit type=AVDD(4) ... enabled=1`.
+- FACT: the main sensor ID read is fixed:
+  `i2c recv ok bus=0 client=main adapter=2 addr=0x20 reg=0x0a28 first=0x27`,
+  `reg=0x0a29 first=0x8c`, and `sensorID=0x00000278`.
+- FACT: residual `I2C_ACKERR` lines in #129 are from negative probes of IMX278
+  on the sub socket (`bus=2 client=bus2 adapter=1`) before OV8856 is accepted,
+  not from the main socket.
+- FACT: launching `com.android.camera2` still crashes, but the first current
+  failure is now userspace:
+  `java.lang.IllegalArgumentException: Could not find supported video qualities`
+  in `SettingsUtil.getSelectedVideoQualities()` /
+  `PictureSizeLoader.computeQualitiesForCamera()`. `CameraService` can connect
+  and open camera ID 1 before the app crash.
+- FACT: camera blob-copy completeness for the audited camera/radio/sensor/
+  display profiles was checked against stock `7.1.2.0G..zip`; no camera blobs
+  are missing from the current vendor tree.
+
+Expected next marker:
+- The next camera patch should be in the ROM/app or media-profile layer, not in
+  sensor power: `com.android.camera2` should stop crashing in
+  `SettingsUtil.getSelectedVideoQualities()`, and `am start -W -a
+  android.media.action.STILL_IMAGE_CAMERA` should return normally with
+  `CameraService` leaving an active preview client or clean close.
+- If app launch is fixed but preview remains black/corrupt in scrcpy, then the
+  next frontier is ISP/preview stream configuration, not sensor ID probing.
+
+Rollback condition: revert this patch only if it causes boot regression,
+camera-provider crash before sensor enumeration, loss of root ADB, or main
+sensor ID regression back to adapter-2 `I2C_ACKERR`. Do not revert it merely
+because the stock Camera2 app still crashes; that is the next userspace layer
+exposed by this fix.
+
+Verification commands:
+
+```bash
+cd /srv/forge/android/export/meizu_m6_artifacts/20260610-1220-m6-camera-stock-power-parity-bootonly
+sha256sum -c SHA256SUMS
+
+CAP=/srv/forge/android/meizu_m6/captures/20260610-1228-m6-129-camera-stock-power-parity-711HEBSR277K5
+(cd "$CAP" && sha256sum -c SHA256SUMS)
+cat "$CAP/identity.txt" "$CAP/battery.txt"
+grep -E 'Number of camera devices|Facing:|Orientation:' "$CAP/dumpsys-media-camera-after-open.txt"
+grep -E 'found <0x279|found <0x885a|SENSOR search end' "$CAP/logcat-after-camera-provider-restart.txt"
+grep -E 'CAM_RAIL_ON.*AVDD|i2c recv ok bus=0 client=main adapter=2|sensorID=0x00000278' "$CAP/dmesg-after-camera-provider-restart.txt"
+grep -E 'Could not find supported video qualities|SettingsUtil|getSelectedVideoQualities|PictureSizeLoader' "$CAP/logcat-after-open.txt"
+```
+
+## Latest multi-subsystem pointer: #129 camera / #126 display / #125 WCN
+
+The latest validated M6 camera boot/capture is #129:
 
 - artifact:
-  `/srv/forge/android/export/meizu_m6_artifacts/20260610-1118-m6-camera-i2c2-faildiag-bootonly/`;
+  `/srv/forge/android/export/meizu_m6_artifacts/20260610-1220-m6-camera-stock-power-parity-bootonly/`;
 - capture:
-  `/srv/forge/android/meizu_m6/captures/20260610-1127-m6-128-camera-i2c2-faildiag-711HEBSR277K5/`;
+  `/srv/forge/android/meizu_m6/captures/20260610-1228-m6-129-camera-stock-power-parity-711HEBSR277K5/`;
 - boot image sha256:
-  `7489e6f8e233b05b30f401fe282f2848a8c67368e86242e9ffa83d2cf632c38e`;
+  `f598d0220bdb834525b927503a14b9d04e2f1a94a17931b8a1bbca6957f888b5`;
 - runtime:
-  `Linux localhost 3.18.140 #128 SMP PREEMPT Wed Jun 10 10:52:30 CDT 2026 aarch64`;
+  `Linux localhost 3.18.140 #129 SMP PREEMPT Wed Jun 10 11:16:52 CDT 2026 aarch64`;
 - closed camera layers:
   camera blob-copy completeness for the audited profiles, stock sensor-list
-  ABI order, and sub OV8856JSL detection on socket 2 / bus 2;
+  ABI order, sub OV8856JSL detection on socket 2 / bus 2, stock camera DTB
+  power/pinctrl parity, and main IMX278 detection on socket 1 / adapter 2;
 - current camera frontier:
-  main camera socket, not blobs: socket 1 / `pinSetIdx=0` / adapter 2 produces
-  repeated `I2C_ACKERR` for IMX278 and also for OV8856 probes, while socket 2 /
-  `pinSetIdx=1` / adapter 1 reads `0x88 0x5a` successfully. The next patch
-  should restore stock camera DT/power behavior and then inspect main I2C2
-  pinmux/pad state if ACKERR remains.
+  not sensor power or blobs: `dumpsys media.camera` reports two devices and
+  both sensors read IDs, but stock `com.android.camera2` crashes in
+  `SettingsUtil.getSelectedVideoQualities()` with
+  `Could not find supported video qualities`. Fix the ROM Camera2/media-profile
+  layer next; if that succeeds but preview is bad, move to ISP/stream config.
 
 The latest validated M6 display boot/capture is #126:
 

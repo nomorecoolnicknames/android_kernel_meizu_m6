@@ -747,20 +747,15 @@ int mtkcam_gpio_set(int PinIdx, int PwrType, int Val)
 BOOL hwpoweron(PowerInformation pwInfo, char *mode_name)
 {
 	if (pwInfo.PowerType == AVDD) {
-		if(pinSetIdx == 0){/*jijin.wang fix powerOn seq for main camera*/
-				if (mtkcam_gpio_set(pinSetIdx, pwInfo.PowerType,1-PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
-					PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");
-				}
-		}else{
-				if (PowerCustList.PowerCustInfo[CUST_AVDD].Gpio_Pin == GPIO_UNSUPPORTED) {
-					if (TRUE != _hwPowerOn(pwInfo.PowerType, pwInfo.Voltage)) {
-					PK_ERR("[CAMERA SENSOR] Fail to enable analog power\n");
-					return FALSE;
-					}
-				} else {
-					if (mtkcam_gpio_set(pinSetIdx, pwInfo.PowerType, PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
-					PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");
-				}
+		if (PowerCustList.PowerCustInfo[CUST_AVDD].Gpio_Pin == GPIO_UNSUPPORTED) {
+			if (TRUE != _hwPowerOn(pwInfo.PowerType, pwInfo.Voltage)) {
+				PK_ERR("[CAMERA SENSOR] Fail to enable analog power\n");
+				return FALSE;
+			}
+		} else {
+			if (mtkcam_gpio_set(pinSetIdx, pwInfo.PowerType,
+					    PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
+				PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");
 			}
 		}
 	} else if (pwInfo.PowerType == DVDD) {
@@ -885,21 +880,15 @@ BOOL hwpoweron(PowerInformation pwInfo, char *mode_name)
 BOOL hwpowerdown(PowerInformation pwInfo, char *mode_name)
 {
 	if (pwInfo.PowerType == AVDD) {
-		if(pinSetIdx == 0){/*jijin.wang add fix powerOff seq for main camera*/
-				if (mtkcam_gpio_set(pinSetIdx, AVDD, PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
-						PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");/* 1-voltage for reverse*/
-				}
-
-		}else{
-			if (PowerCustList.PowerCustInfo[CUST_AVDD].Gpio_Pin == GPIO_UNSUPPORTED) {
-				if (TRUE != _hwPowerDown(pwInfo.PowerType)) {
-					PK_ERR("[CAMERA SENSOR] Fail to disable analog power\n");
-					return FALSE;
-				}
-			} else {
-				if (mtkcam_gpio_set(pinSetIdx, AVDD, 1-PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
-						PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");/* 1-voltage for reverse*/
-				}
+		if (PowerCustList.PowerCustInfo[CUST_AVDD].Gpio_Pin == GPIO_UNSUPPORTED) {
+			if (TRUE != _hwPowerDown(pwInfo.PowerType)) {
+				PK_ERR("[CAMERA SENSOR] Fail to disable analog power\n");
+				return FALSE;
+			}
+		} else {
+			if (mtkcam_gpio_set(pinSetIdx, AVDD,
+					    1 - PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
+				PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");
 			}
 		}
 	} else if (pwInfo.PowerType == DVDD) {
