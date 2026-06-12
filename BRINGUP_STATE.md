@@ -17024,3 +17024,31 @@ PSM off (wmt_dbg 0x0 0) не помог. HYPOTHESIS на продолжение:
 несовместимость под BT-трафиком (WiFi data идёт по AHB, BT — первый тяжёлый
 STP-пользователь); сравнить stp/btif код с какой-нибудь рабочей mt6755 базой;
 или GORM (MTK HAL) vs AOSP stack двойная инициализация.
+
+---
+## 2026-06-12 (ИТОГ-3) — WiFi СТАБИЛЕН, лаги системы устранены
+
+**WiFi нестабильность — РЕШЕНО (FACT):** корень = init был ВТОРЫМ конкурентным
+писателем /dev/wmtWifi (мост on property:wlan.driver.status=ok -> write "1" /
+unloaded -> write "0"). Параллельные WMT func_on от HAL и init сталкивались в ядре
+("wmt_ctrl_ul_cmd: cmd buf is occupied by (srh_patch)") -> HAL write -EIO -> HAL
+ставил status=unloaded -> init писал "0" и сносил свежеподнятый драйвер -> вечный
+флап enable/teardown. Фикс: init больше НЕ пишет в /dev/wmtWifi, оставлен только
+chmod/chown/restorecon (HAL uid=wifi сам пишет 1/0/S/P/A). Проверено: Wi-Fi enabled
+весь 60с монитор + жив через ~10 мин, скан растёт 64->97->135, за весь бут
+0 x "turn on WIFI fail", 0 x "cmd buf is occupied".
+
+**Лаги системы — РЕШЕНО (FACT):** два периодических диаг-рефаера в display hot path:
+1. primary_m6_diag_sample(): `n<8 || (n & 0x3ff)==0` — рефаер каждые 1024 кадра
+   НАВСЕГДА, 9-11 printk строк на сэмплированный кадр (fence release, present update).
+2. m4u sample probe: `idx>=96 && (idx & 0xff)` — каждые 256 кадров m4u map/query +
+   скан 34KB буфера + огромный printk внутри OVL config пути.
+Замер ДО: 321 kernel-строк/10с steady-state. ПОСЛЕ: ~6/10с. Также ранее найден и убит
+дополнительный виновник: scrcpy-сервер крутил media.codec на 170% CPU (внешний).
+Замечание: loadavg ~11 при 749% idle — это 11 D-state MTK kernel-тредов
+(bat_routine, ccci, disp_idlemgr...), идиоматика этого BSP, НЕ реальная нагрузка.
+
+**Артефакт:** boot-m6-stable-20260612.img sha f550eb42 (ядро: все фиксы дня + jank-фикс;
+ramdisk v4: conn_launcher + supplicant path + confs + no-double-writer).
+**Запушено:** kernel 968105b (jank) поверх 4 утренних коммитов -> android_kernel_meizu_m6;
+ROM device tree 567cfee (wifi flap) поверх 95f31f4 -> m6-rom-lineage-15.1-bringup.
