@@ -168,7 +168,11 @@ static bool primary_m6_diag_sample(unsigned int *count)
 {
 	unsigned int n = (*count)++;
 
-	return n < 8 || ((n & 0x3ff) == 0);
+	/* M6: was `n < 8 || ((n & 0x3ff) == 0)` — the periodic refire kept
+	 * spamming 9-11 printk lines per sampled frame (fence release, present
+	 * update) forever, dragging the display hot path. Keep only the first
+	 * few boot-time samples. */
+	return n < 8;
 }
 
 /* dvfs */
@@ -2774,8 +2778,11 @@ static void m6_sample_primary_ovl_m4u_buffer(const char *stage,
 	    ovl->security != DISP_NORMAL_BUFFER || !ovl->addr)
 		return;
 	idx = m6_m4u_sample_count++;
-	/* The dmesg ring can start after the first 40+ OVL handoffs. */
-	if (idx >= 96 && (idx & 0xff))
+	/* M6: was `idx >= 96 && (idx & 0xff)` — the &0xff refire kept running
+	 * this m4u map + 34KB buffer scan + huge printk every 256 frames
+	 * forever, inside the OVL config hot path (user-visible jank). Keep
+	 * only the boot-time samples. */
+	if (idx >= 96)
 		return;
 
 	mva = (unsigned int)ovl->addr;
