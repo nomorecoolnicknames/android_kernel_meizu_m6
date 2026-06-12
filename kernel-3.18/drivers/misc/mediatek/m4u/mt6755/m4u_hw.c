@@ -2035,10 +2035,25 @@ irqreturn_t MTK_M4U_isr(int irq, void *dev_id)
 		m4u_port = m4u_get_port_by_tf_id(m4u_index, regval);
 
 		/* dump something quickly */
-		m4u_dump_rs_info(m4u_index, m4u_slave_id);
-		m4u_dump_invalid_main_tlb(m4u_index, m4u_slave_id);
-		m4u_dump_main_tlb(m4u_index, 0);
-		m4u_dump_pfh_tlb(m4u_index);
+		{
+			/* M6: these four dumps print THOUSANDS of printk lines per
+			 * fault (whole main+pfh TLB). Display OVL prefetch faults
+			 * (handled by the disp-TF bypass below) fire periodically
+			 * during normal scrolling; each unconditional dump froze
+			 * the frame pipeline for seconds — SurfaceFlinger "Timed
+			 * out waiting for hw vsync", screen black until wake.
+			 * Keep full dumps for the first couple of faults only;
+			 * the short one-line fault report below always prints. */
+			static unsigned int m6_full_dump_count;
+
+			if (m6_full_dump_count < 2) {
+				m6_full_dump_count++;
+				m4u_dump_rs_info(m4u_index, m4u_slave_id);
+				m4u_dump_invalid_main_tlb(m4u_index, m4u_slave_id);
+				m4u_dump_main_tlb(m4u_index, 0);
+				m4u_dump_pfh_tlb(m4u_index);
+			}
+		}
 
 		if (IntrSrc & F_INT_TRANSLATION_FAULT(m4u_slave_id)) {
 			int bypass_DISP_TF = 0;
