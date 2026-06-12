@@ -17052,3 +17052,27 @@ chmod/chown/restorecon (HAL uid=wifi сам пишет 1/0/S/P/A). Провер�
 ramdisk v4: conn_launcher + supplicant path + confs + no-double-writer).
 **Запушено:** kernel 968105b (jank) поверх 4 утренних коммитов -> android_kernel_meizu_m6;
 ROM device tree 567cfee (wifi flap) поверх 95f31f4 -> m6-rom-lineage-15.1-bringup.
+
+---
+## 2026-06-12 (ИТОГ-4) — чёрный экран при просмотре сетей: M4U TLB-дамп — РЕШЕНО
+
+**Репро юзера (FACT, по логам):** открыл Network/WiFi settings -> скролл -> экран
+чёрный (даже в scrcpy). Таймлайн 20:41:42-55: открытие настроек -> BT авто-retry
+(HCI timeout, шум) -> M4U translation fault на DISP_OVL0 (prefetch читает ровно
+одну страницу за концом валидного буфера, delta=0x0 — известная причуда, для
+которой уже есть disp-TF bypass) -> обработчик фолта БЕЗУСЛОВНО дампил весь
+main+pfh TLB: ТЫСЯЧИ printk-строк в interrupt-контексте -> конвейер кадров замер
+-> SurfaceFlinger "Timed out waiting for hw vsync" x2 -> SystemUI запросил сон ->
+экран в Doze (чёрный). Это и была «нестабильность дисплея».
+
+**Фикс (m4u_hw.c):** полные TLB-дампы только для первых 2 фолтов; дальше —
+однострочный fault-репорт + bypass. Kernel commit 8a209d2, запушен.
+
+**Верификация (FACT, то же репро на железе):** WiFi on -> WiFi settings -> 60с
+скролла: OVL-фолт случился 1 раз, bypass отработал (corr callback[0] + bypass[0],
+delta=0x0), 0 vsync-таймаутов, 0 sleep-запросов, mWakefulness=Awake все 6 замеров,
+WiFi жив (enabled, wlan0).
+
+Артефакт на устройстве: boot-m6-stable2-20260612.img sha c62b0982 (все фиксы дня).
+Открыто: BT HCI Reset timeout (loop предотвращён выключенным bluetooth_on=0);
+mBack (#13); постоянная ротация в ROM.
