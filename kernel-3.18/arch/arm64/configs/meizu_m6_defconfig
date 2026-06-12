@@ -321,7 +321,12 @@ CONFIG_INPUT_EVDEV=y
 # CONFIG_INPUT_MOUSE is not set
 CONFIG_INPUT_TOUCHSCREEN=y
 CONFIG_TOUCHSCREEN_MTK=y
-CONFIG_TOUCHSCREEN_MTK_GT9XX_HOTKNOT_PHONE=y
+# M6 panel is Focaltech FT5x46@0x38 (chip-id 0x54 read live), NOT Goodix.
+# GT9XX disabled (also avoids touch_irq/tpd_*_gpio multiple-definition link
+# error when two touch drivers compile together). FT5X26 enabled.
+# CONFIG_TOUCHSCREEN_MTK_GT9XX_HOTKNOT_PHONE is not set
+CONFIG_TOUCHSCREEN_MTK_FT5X26=y
+# CONFIG_TPD_AUTO_UPGRADE is not set
 # CONFIG_TOUCHSCREEN_MTK_FT5X0X is not set
 CONFIG_GT9XX_FIRMWARE="firmware_default"
 CONFIG_GT9XX_CONFIG="config_default"

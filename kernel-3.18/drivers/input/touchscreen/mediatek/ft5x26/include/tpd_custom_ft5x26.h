@@ -138,7 +138,8 @@ symbols using #define
 #define POINT_READ_BUF						(3 + FTS_TOUCH_STEP * CFG_MAX_TOUCH_POINTS)
 #define FT_FW_NAME_MAX_LEN				50
 #define TPD_DELAY							(2 * HZ / 100)
-#define TPD_RES_X							1200	/* 480 */
+/* M6: stock Flyme tpd-resolution = 1080x1920 (FT5x46 reports in this space) */
+#define TPD_RES_X							1080	/* 480 */
 #define TPD_RES_Y							1920	/* 800 */
 #define FT_PROXIMITY_ENABLE				0
 
