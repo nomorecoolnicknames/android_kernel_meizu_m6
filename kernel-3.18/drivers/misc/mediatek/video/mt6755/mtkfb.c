@@ -101,7 +101,8 @@ static bool no_update;
 #define M6_EARLY_FB_WHITE_MARKER_TRIGGER 0
 #define M6_EARLY_FB_CONST_LAYER_ISOLATION 0
 #define M6_EARLY_FB_DIAG_DELAY_MS 30000
-#define M6_EARLY_FB_DIAG_REPORT_LIMIT 10
+/* M6: 0 disables the periodic early-fb diag DISPERR flood (was 10). */
+#define M6_EARLY_FB_DIAG_REPORT_LIMIT 0
 #define M6_EARLY_FB_DIAG_PROC_NAME "m6_mtkfb_early_diag"
 #define M6_OVL_CONST_WHITE_MAGIC_KEY 0x006d3657
 struct m6_mtkfb_pipe_snapshot {
@@ -639,6 +640,13 @@ static int _convert_fb_layer_to_disp_input(struct fb_overlay_layer *src, disp_in
 
 static void m6_mtkfb_schedule_early_diag_report(void)
 {
+	/* M6: was an unconditional 30s x10 DISPERR flood that wrapped the dmesg
+	 * ring (hid early touch probe) and spammed logcat on a clean device.
+	 * Display is up now; gate it off. Re-enable by raising the LIMIT. */
+#if (M6_EARLY_FB_DIAG_REPORT_LIMIT == 0)
+	return;
+#endif
+
 	if (m6_early_fb_diag_started)
 		return;
 

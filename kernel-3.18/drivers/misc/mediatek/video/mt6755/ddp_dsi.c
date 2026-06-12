@@ -239,7 +239,10 @@ t_dsi_context _dsi_context[DSI_INTERFACE_NUM];
 #define M6_LKGOLD_DSI_WORDS ((M6_LKGOLD_DSI_LAST / 4) + 1)
 #define M6_LKGOLD_MIPITX_LAST 0x104
 #define M6_LKGOLD_MIPITX_WORDS ((M6_LKGOLD_MIPITX_LAST / 4) + 1)
-#define M6_LK_HANDOFF_TAKEOVER_HOLD_MS 15000
+/* M6: was 15000 — a diagnostic msleep() that froze the DSI takeover path 15s
+ * on first DSI0 handoff. Caused user-visible UI lag/stutter on the live
+ * device. Set 0 to disable (dsi_m6_takeover_hold_once early-returns on 0). */
+#define M6_LK_HANDOFF_TAKEOVER_HOLD_MS 0
 /*
  * PROPER-FIX: keep Linux-owned DSI config/start enabled. The old M6
  * isolation skip leaves DSI in CMD mode after any stop/restart sequence.
