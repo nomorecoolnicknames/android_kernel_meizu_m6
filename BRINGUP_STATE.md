@@ -16816,3 +16816,211 @@ github nomorecoolnicknames/android_kernel_meizu_m6 `5fcb6d9` ветка work/m6-
 
 **Статус экрана: РЕШЁН на уровне ядра.** Осталось: ротация в ROM (постоянно),
 надёжность bias (владеть пинами), bootanim-ассет. Тач — отдельно (GT9xx биндинг).
+
+---
+## 2026-06-12 — Тач GT9xx no-bind: i2c no-ACK на 0x5d (диагностика)
+
+**Батарея — РЕШЕНО (FACT):** voltage-tracking FG (`m6_fg_soc_by_voltage()` из
+battery_meter_fg_20.c) → `dumpsys battery: level=93 voltage=4348`, `raw cap=93`.
+Раньше был плоский 50%. Артефакт boot-m6-batt-fg-voltage-20260612.img sha 8396d322.
+Долгосрочно — сток battery profile.
+
+**Дисплей при выключении/блокировке (жалоба юзера, открыто):**
+- «при выключении ебашит 255 яркость» — backlight не гасится в power-off/suspend пути.
+- «после блокировки экрана дисплей больше не оживает» — resume из suspend не поднимает
+  панель (вероятно bias-рейлы/LCM resume; связано с тем, что bias-пины держатся через
+  отключённый NFC, а не через own LCM bias-path). HYPOTHESIS, не подтверждено прибором.
+- «дебаг-метки / пролагивания на пустом телефоне» — кандидаты: остаточные debug в
+  mtkfb/ddp + bootdiag-флуд (тот же, что обернул dmesg ring при диагностике тача).
+
+**Тач GT9xx (FACT, ранний dmesg, до оборота ring):**
+- tpd_probe стартует → tpd_power_on → gtp_reset_guitar «GTP RESET!» → КАЖДЫЙ i2c
+  transfer на addr 0x5d → I2C_ACKERR (ret=-22 EINVAL/rv=-121 EREMOTEIO),
+  `[M6_I2C] fail stage=mt_transfer ... addr=0x5d`. → `GTP i2c test failed` x5 →
+  `I2C communication ERROR!` → `tpd registration fail.` tpd_load_status=0. Тача нет.
+- Чип на 0x5d НЕ отвечает ACK. Это железный no-ACK, не «драйвер не грузится».
+
+**Гипотезы и проверки:**
+- H1 «тач без питания (vtouch EPROBE_DEFER занулён)» — REJECTED: PMIC = mt6351, на нём
+  НЕТ ни VTOUCH ни VGP1 LDO; сток cap_touch@5d вообще без supply-prop; VIO28=2.8V
+  enabled. Тач на постоянном рейле. `regulator_get(vtouch)` -517 — ожидаемо, не блокер.
+- H3 «шина i2c-0 мертва / SDA-SCL не туда» — REJECTED: на той же i2c-0 bias-чип
+  0x3e (i2c_lcd_bias) привязан и работает (экран светится) → шина живая.
+- H4 «RST pinctrl не дёргает GPIO42» — REJECTED: tpd_gpio_output(RST=0) выбирает
+  rst_output1→GPIO42 HIGH; live GPIO42=output-low это пост-fail состояние (tpd_power_off).
+- Pin-номера сверены со стоком (FACT): INT=GPIO1 (0x100), RST=GPIO42 (0x2a00), addr 0x5d
+  — байт-в-байт как stock.dts. tpd.h: GTP_RST_PORT=0/GTP_INT_PORT=1 (логические селекторы),
+  адрес-селект 0x5d (INT low в reset) корректен. H2 (чип на 0x14) — проверяется зондом.
+- ОТКРЫТО (H2/H5): чип реально молчит везде (нет панели/обрыв FPC/не запитан локальным
+  LDO которым владеет дисплей-бias) ИЛИ сидит на 0x14. Разрешает diag-зонд.
+
+**Diag-зонд (добавлен в gt9xx_driver.c tpd_power_on, после gtp_reset_guitar,
+reset_count==0):** скан i2c-0 0x03..0x77 1-байтным read, лог `FORGE I2C0 SCAN ACK:`.
+Лог-онли, удалить после привязки тача. Артефакт boot-m6-touch-i2cscan2-20260612.img.
+
+---
+## 2026-06-12 (cont) — ТАЧ: вендор панели = Focaltech FT5x46, НЕ Goodix (FACT)
+
+**Двухступенчатый разбор:**
+1. **Питание (FACT, исправлено):** &touch наследовал `vtouch-supply=<&mt_pmic_vtouch_ldo_reg>`
+   ("vtouch"), которого этот PMIC не регистрирует -> regulator_get вечно -EPROBE_DEFER ->
+   VLDO28 (реальный рейл тача) не включался -> чип обесточен -> i2c молчал ВЕЗДЕ (только
+   bias 0x3e ACK). Сток питает тач от vldo28. ФИКС: meizu_m6.dts &touch
+   `vtouch-supply=<&mt_pmic_vldo28_ldo_reg>`. Подтверждено живьём: `VLDO28 st=1 v=2800`.
+2. **После подачи питания** FORGE-скан показал НОВЫЙ чип на **0x38** (FORGE I2C0 SCAN ACK:
+   0x38 0x3e). 0x38 — дефолтный адрес Focaltech, НЕ Goodix (0x14/0x5d).
+3. **Vendor-регистры прочитаны живьём с 0x38 (FACT, decisive):**
+   FT@0x38 reg0xA3=0x54 (chip-id), 0xA6=0x07 (fw), 0xA8=0x80 (vendor), 0x9F=0x22.
+   `ft5x26_update.c:132 {0x54,...,"FT5x46"}` + `ft5x26_driver.c:1093 A3_REG_VALUE 0x54`.
+   => **Панель = Focaltech FT5x46 @ 0x38.**
+
+**ПРОТИВОРЕЧИЕ (charter §3.4):** сток DTB заявляет Goodix GT917D@0x5d (product="Jim",
+goodix,product_id="GT917D"), а железо отвечает FT5x46@0x38. Ground truth = чтение чипа.
+M6 выпускался мультивендорно; этот экземпляр — Focaltech. Поэтому Goodix-драйвер вечно
+бил в 0x5d -> no-ACK. (Донорский himax@0x48 был ещё дальше от истины — отсюда брик #158.)
+
+**План перехода на ft5x26 (драйвер уже в дереве):**
+- ft5x26 of_match="mediatek,ft5x26_touch"; пины — общий mtk_tpd (touch_of_match
+  "mediatek,mt6755-touch", уже есть GPIO42 RST/GPIO1 INT); regulator "vtouch" на &touch
+  (vldo28-фикс переносится). chip_id 0x54 распознаётся штатно.
+- **БРИК-РИСК локализован:** единственный flash-путь — fts_ctpm_auto_upgrade под
+  `#ifdef CONFIG_TPD_AUTO_UPGRADE`. НЕ включать этот CONFIG => авто-перепрошивки FW нет
+  => тач-IC в безопасности. (Вероятный механизм брика #158 — неверный драйвер+upgrade.)
+- Изменения: (a) DTS &i2c0 узел ft5x26@38 compatible="mediatek,ft5x26_touch" reg=0x38;
+  cap_touch@5d disabled. (b) defconfig: FT5X26=y, GT9XX_HOTKNOT_PHONE off, FT5X0X off,
+  TPD_AUTO_UPGRADE НЕ ставить. (c) TPD_RES_X/Y = 1080x1920 (стоковая tpd-resolution).
+- После биндинга: проверить ABS_MT input device, снять сырые коорд., калибровать; дисплей
+  смонтирован на 180° -> вероятно нужен флип X/Y тача.
+
+---
+## 2026-06-12 (ИТОГ) — ТАЧ РЕШЁН на уровне ядра (FACT)
+
+Артефакт: boot-m6-touch-ft5x46-20260612.img sha 7139fdd2. Ранний dmesg:
+- `mtk-tpd: tpd_probe, tpd_driver_name=ft5x26`
+- `BOOTPROF probe=i2c_device_probe drv=ft5x26 253ms` (успех, нет "add error touch panel")
+- getevent: `/dev/input/event6 name:"mtk-tpd"` c ABS_MT_POSITION_X(max720)/Y(max1280)
+- /proc/interrupts: `mt-eint 1 TOUCH_PANEL-eint` (IRQ на GPIO1 зарегистрирован)
+
+Изменения (всё в дереве, прошито одним образом one-at-a-time):
+1. meizu_m6.dts &i2c0: cap_touch@5d disabled; ft5x26@38 compatible="mediatek,ft5x26_touch"
+   reg=0x38 okay.
+2. meizu_m6.dts &touch: vtouch-supply=<&mt_pmic_vldo28_ldo_reg> (питание!),
+   interrupt-parent=<&eintc> interrupts=<1 2> debounce=<1 0>.
+3. defconfig: GT9XX_HOTKNOT_PHONE off, FT5X26=y, FT5X0X off, TPD_AUTO_UPGRADE НЕ ставить
+   (брик-гард — единственный fw-flash путь). ft5x26 TPD_RES_X/Y = 1080x1920.
+4. Дисплей-полировка в том же образе: M6_LK_HANDOFF_TAKEOVER_HOLD_MS 15000->0 (убрал
+   15с msleep — причина лагов); M6_EARLY_FB_DIAG_REPORT_LIMIT 10->0 (убрал diag-флуд).
+
+ОСТАЛОСЬ по тачу (нужно живое касание / руки юзера):
+- Снять реальные координаты касания (getevent при тапе) — подтвердить поток X/Y.
+- Дисплей смонтирован на 180° (hwrotation=180 компенсирует ТОЛЬКО вывод, не тач) =>
+  координаты тача вероятно надо флипнуть X/Y (драйвер TPD_WARP или IDC). Калибровать живьём.
+- Убрать мёртвый FORGE-диаг-скан из gt9xx_driver.c (сейчас не компилируется, GT9xx off).
+
+Статус: тач — РАБОТАЕТ на уровне драйвера (probe+input+IRQ). Был НЕ "донорский Goodix",
+а Focaltech FT5x46 — стоковый DTB вводил в заблуждение; ground truth = чтение чипа.
+
+---
+## 2026-06-12 — WiFi/BT: транспортный блокер ПРОБИТ, осталась userspace-цепь
+
+**Ядро (FACT, исправлено):** M6 WCN = integrated on-die CONSYS chip **0x0326**, транспорт
+AP<->CONSYS = **BTIF**, НЕ SDIO. Применён wifi-wmt-defer stash: wmt_lib_set_hif() приводит
+STP_SDIO->STP_BTIF_FULL под CONFIG_MTK_COMBO_CHIP_CONSYS_6755. Подтверждено живьём:
+`stp_init ... hif=2`, `mtk_wcn_btif_open: btif_open succeed`, `STP_OPEN ret=0`,
+`chip id(0x326) ver_check ok`. Старый блокер `SDIO CMD5 ocr=0x0` устранён.
+Артефакт boot-m6-wifi-btif-20260612.img sha b1419498.
+
+**Firmware-патч (FACT):** при ЗАПУЩЕННОМ launcher патч качается:
+`patch dwn:0 frag(64,284) ok`, `frag(133,432) ok`, `soc_sw_init: co-clock enabled`.
+Файлы на месте: /vendor/firmware/ROMv2_lm_patch_1_1_hdr.bin, WIFI_RAM_CODE_6755, WMT_SOC.cfg.
+
+**Корень оставшегося блокера = userspace ROM (НЕ ядро), 2 регрессии LineageOS vs сток:**
+1. **conn_launcher не стартует.** init.project.rc:209 наш: service conn_launcher
+   `/vendor/bin/wmt_launcher -m 3 -p /vendor/firmware` + **`disabled`** + `oneshot`.
+   Сток (reversed initrd, captures/20260601-.../init.project.rc:207): БЕЗ `disabled`,
+   `class core` (стартует через class_start core), и с патчем:
+   `-p /system/vendor/firmware/ -n .../ROMv2_lm_patch_1_1_hdr.bin`.
+   => наш демон не запускается -> kernel WMT висит на srh_patch timeout ->
+   `wmt_ctrl_ul_cmd fail(-1)` -> `sw_init fail -6` -> `WMT turn on WIFI/BT fail`.
+   Ручной запуск launcher с `-n patch` -> srh_patch result(0), патч качается. FACT.
+2. **HAL wlan fw-path.** android.hardware.wifi@1.0-service: `Failed to write/open wlan fw
+   path param: I/O error / Permission denied` -> WifiNative: `Failed to start HAL`.
+   wlan0 создаётся записью 'S'/'P'/'A' в /dev/wmtWifi (major 153 mtk_wmt_wifi_chrdev,
+   wmt_chrdev_wifi.c WIFI_write) -> gen2 wlanProbe/register_netdev. HAL не доходит.
+
+**План фикса (userspace, boot.img ramdisk + возможно vendor HAL):**
+- init.project.rc: conn_launcher убрать `disabled`+`oneshot`, добавить
+  `-n /vendor/firmware/ROMv2_lm_patch_1_1_hdr.bin` (как сток). Гарантировать
+  class_start core его поднимает.
+- Разобрать HAL fw-path param: какой sysfs-узел wifi@1.0-service пишет; в стоке он есть.
+- Наш initrd: captures .../20260611-m6-display-force-config-fix/unpack/initrd.img
+  (48 файлов, init.project.rc внутри). Править там -> пересобрать boot.img.
+- Транспорт/ядро трогать НЕ нужно — оно исправно. Это ROM-сторона.
+
+---
+## 2026-06-12 (cont) — WiFi: launcher стабилизирован, осталась userspace-гонка blob
+
+**Прогресс (FACT):** init.project.rc conn_launcher исправлен -> `-m 3 -p /vendor/firmware`
+(БЕЗ `-n`: наш LineageOS wmt_launcher CRASHИТ на `-n <patch>`, печатает usage, exit 1;
+стоковый бинарь его принимал). Без disabled/oneshot + `on boot start conn_launcher`.
+Артефакт boot-m6-wifi-launcher2-20260612.img sha 3fba0619 (ядро all-fixes + init).
+Launcher теперь СТАБИЛЕН: `init.svc.conn_launcher: running`, pid не меняется,
+рестарт-цикл исчез. srh_patch result(0), patch dwn frag ok, co-clock, STP set ready(1),
+[AF FUNC ON] b:2 (BT функция включается!).
+
+**Оставшийся блокер (FACT) — userspace-гонка тайминга, НЕ ядро:**
+- `write /dev/wmtWifi 1` -> `opfunc_func_on(1180): func(3=WIFI) pwr_on fail(-2)`.
+- `-2` = wmt_core_stp_init() fail внутри opfunc_pwr_on (wmt_core.c:1070). При
+  WiFi-инициируемом power-on STP реинициализируется, но patch-handshake к launcher
+  не успевает: STP циклит set ready(1)->ready(0) каждые ~5-8с. К моменту func_on
+  STP уже ready(0) -> patch info perpare fail -> pwr_on -2.
+- BT (func b) включается (`b:2`), WiFi (func 3) — нет. То есть CONSYS жив, транспорт
+  рабочий, но WiFi-функция не успевает за циклом STP open/close launcher'а.
+- HAL: `wifi@1.0-service: Failed to write wlan fw path param: I/O error` -> это СЛЕДСТВИЕ
+  (WIFI_write вернул -EIO из-за func_on -2), не причина. libwifi-hal.so — MTK-вариант
+  (содержит /dev/wmtWifi), пишет S/P/A корректно.
+
+**Гипотезы на продолжение (не проверены):**
+1. launcher STP open/close циклит, потому что HAL дёргает on/off быстрее, чем
+   завершается patch. Возможно нужен co_clock_flag / WMT_SOC.cfg тюнинг
+   (co_clock_flag=3 сейчас) или больший srh_patch timeout (2000ms в ядре, launcher
+   отвечает ~до 46с под нагрузкой).
+2. launcher отвечает медленно -> возможно неверный BTIF baud/конфиг -> patch upload
+   через BTIF идёт, но handshake затянут. Проверить BTIF скорость vs стоковую.
+3. Возможно нужен ещё один userspace-демон (stp_dump/wmt_concurrency) или верная
+   последовательность init: stock init.mt6755.rc держит wlan.driver.status иначе.
+
+**Что РЕШЕНО окончательно:** транспорт BTIF (ядро), conn_launcher стабильность (init.rc),
+firmware-файлы. Что осталось: WiFi func_on -2 гонка (userspace blob/timing). BT ближе
+к рабочему (func включается) — стоит проверить BT отдельно (hcitool/bt enable).
+
+---
+## 2026-06-12 (ИТОГ-2) — WiFi РАБОТАЕТ end-to-end; BT частично
+
+**WiFi — РЕШЕНО (FACT, скан 32-59 сетей):** полная цепь из 5 фиксов:
+1. Ядро: BTIF override (wmt_lib.c, SDIO->BTIF для integrated CONSYS 0x0326).
+2. Ядро: IRQ 270 конфликт — mtk_wcn_stub_alps.c SDIO-combo путь хватал wifi@180f0000
+   IRQ (GIC_SPI 238 = AHB WiFi-HIF data) как "WIFI-eint" раньше gen2 wlanProbe ->
+   genirq flags mismatch -> probe fail. Фикс: под CONSYS_6755 не захватывать.
+   После фикса: `wmt call wlan probe ok`, wlan0+p2p0 созданы.
+3. Ramdisk: conn_launcher без disabled/oneshot + on boot start (наш wmt_launcher
+   крашится на -n, корректные арги: -m 3 -p /vendor/firmware).
+4. Ramdisk: init.mt6750/6755.rc supplicant path /system/bin/wpa_supplicant ->
+   /system/vendor/bin/hw/wpa_supplicant (init: "cannot find ... disabling").
+5. /system/etc/wifi/{wpa_supplicant.conf,wpa_supplicant_overlay.conf,
+   p2p_supplicant_overlay.conf} — отсутствовали, supplicant умирал на overlay,
+   до того wificond не находил conf. Созданы live + добавлены в device tree
+   (configs/ + PRODUCT_COPY_FILES) для будущих сборок.
+Артефакт: boot-m6-wifi-supplicant-20260612.img sha 120cdb32 (= ядро со ВСЕМИ фиксами
+дня + ramdisk v3). Wi-Fi is enabled, numTotalScanResults=59 (32 на чистом буте).
+
+**BT — частично (открыто):** BT_open OK -> STP ready -> GORM FW init идёт (NVRAM
+BD addr пишется после фикса прав /data/nvram/.../BT_Addr root:system 0664; было
+group 3008 -> errno 13) -> OnFirmwareConfigured result 0 -> но первый HCI Reset
+(0xc03) от AOSP-стека timeout 2s -> STP tx timeout, rxack застрял (чип перестаёт
+ACK'ать) -> fw assert reason 33 -> whole chip reset -> BLE_TURNING_ON -> OFF.
+Firmware побайтово = сток (ROMv2 patches, WIFI_RAM_CODE, WMT_SOC.cfg сверены sha1).
+PSM off (wmt_dbg 0x0 0) не помог. HYPOTHESIS на продолжение: BTIF-уровневая
+несовместимость под BT-трафиком (WiFi data идёт по AHB, BT — первый тяжёлый
+STP-пользователь); сравнить stp/btif код с какой-нибудь рабочей mt6755 базой;
+или GORM (MTK HAL) vs AOSP stack двойная инициализация.
