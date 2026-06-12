@@ -239,7 +239,8 @@ hw-dev-detect@0{
 	goodix,special_raw_data_limit = <>;
 	goodix,shortcircut-threshold = <0>;
 	fw_upgrade_delay = <30000>;
-	tpd-resolution = <720 1280>;
+	/* stock Flyme DTB value (chip outputs 1080x1920-space coords) */
+	tpd-resolution = <1080 1920>;
 	use-tpd-button = <0>;
 	tpd-key-num = <3>;
 	tpd-key-local= <139 172 158 0>;
@@ -285,14 +286,15 @@ hw-dev-detect@0{
 	};
 	ctp_pins_rst_output0: rstoutput0 {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO79__FUNC_GPIO79>;
+			/* stock Flyme DTB: touch RST = GPIO42 (donor had GPIO79) */
+			pins = <PINMUX_GPIO42__FUNC_GPIO42>;
 			slew-rate = <1>;
 			output-low;
 		};
 	};
 	ctp_pins_rst_output1: rstoutput1 {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO79__FUNC_GPIO79>;
+			pins = <PINMUX_GPIO42__FUNC_GPIO42>;
 			slew-rate = <1>;
 			output-high;
 		};
@@ -300,10 +302,15 @@ hw-dev-detect@0{
 };
 
 &i2c0 {
+	/* donor (Honor "Jim") himax addr 0x48 from drvgen cust.dtsi — real M6 has no chip there */
 	cap_touch@48 {
-		rst-gpio = <&pio 79 0>;
-		int-gpio = <&pio 1 0>;
-		vtouch-supply = <&mt_pmic_vtouch_ldo_reg>;
+		status = "disabled";
+	};
+	/* stock Flyme 7.1.2.0G DTB: cap_touch@5d on i2c0 (Goodix GT9xx family) */
+	cap_touch@5d {
+		compatible = "mediatek,cap_touch";
+		reg = <0x5d>;
+		status = "okay";
 	};
 };
 /* TOUCH end */
@@ -950,7 +957,11 @@ hw-dev-detect@0{
 	pinctrl-5 = <&nfc_eint_high>;
 	pinctrl-6 = <&nfc_eint_low>;
 	pinctrl-7 = <&nfc_irq_init>;
-	status = "okay";
+	/* M6 SCREEN FIX (stock DTB/LK reverse 2026-06-12): GPIO27 is the TPS65132
+	 * ENN bias rail on this board (stock lcd_bias_enn), NOT an NFC eint.
+	 * mt6605 probe drove GPIO27 low at ~1.4s -> VSN(-5.5V) off -> black panel.
+	 * Donor (Honor) wiring; real M6 NFC eint is GPIO15 per stock DTS. */
+	status = "disabled";
 };
 /* NFC end */
 /* add by changjingyang */

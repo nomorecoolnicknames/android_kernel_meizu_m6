@@ -248,8 +248,20 @@ t_dsi_context _dsi_context[DSI_INTERFACE_NUM];
 /*
  * ISOLATION: #73 proves the first Linux takeover can skip the DSI timing/VM
  * programming path when LK left MIPITX enabled. Replay it once, with markers.
+ *
+ * FIX 2026-06-11 (root cause of lit-black panel): set to 0. With this = 1, the
+ * first boot takeover (LK's MIPITX live, PMaster=0) calls DSI_PHY_clk_setting()
+ * in ddp_dsi_config() -> it POWER-CYCLES the MIPITX PLL/PHY (MPLL off->on, BG
+ * re-enable, PAD_TIE_LOW toggle, ~250ms settle) on LK's LIVE link, then
+ * reconfigures it. That transient breaks the panel's HS-video lock (LK logo OK
+ * -> image goes black ~3s into Linux boot; even DSI-internal BIST is invisible)
+ * while the FINAL registers still match the working LK reference (so every
+ * register dump looked fine). Stock/pristine ddp_dsi_config preserves the
+ * LK-initialized link here (goto done) instead of re-cycling the PHY. Resume is
+ * unaffected: after suspend MIPITX is off (else-branch reconfigures) or
+ * dsi_force_config=1, so a real resume still reconfigures.
  */
-#define M6_FORCE_FIRST_DSI_CONFIG_ON_LK_MIPITX 1
+#define M6_FORCE_FIRST_DSI_CONFIG_ON_LK_MIPITX 0
 
 PDSI_REGS DSI_REG[2] = {0};
 PDSI_PHY_REGS DSI_PHY_REG[2] = {0};

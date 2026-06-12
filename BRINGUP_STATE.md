@@ -1,5 +1,326 @@
 # Meizu M6 Source Kernel Bring-up State
 
+## 2026-06-11 #132 analysis: LP-works / HS-not-accepted verdict + continuous-clock as the leading untried fix
+
+Patch category: **ANALYSIS / EXPERIMENT-PREP**. No boot image built or flashed in
+this entry. It consolidates the existing capture evidence into one falsifiable
+chain and names the cheapest untried fix, plus two background reverse/research
+legs that are still running. Flash steps remain human-confirmed (AGENTS.md §8 /
+CLAUDE.md §7).
+
+### What is proven (FACT, with artifacts)
+
+- FACT: Linux `lcm_init()` runs fully and succeeds. Capture
+  `captures/20260610-0110-m6-104-mux-bist-resume-711HEBSR277K5/dmesg-after.txt`:
+  `M6 LCM init start seq=1 ... table_count=72`, `tps_client=ffffffc07acde000`,
+  `M6 LCM tps65132 write addr=0x00 value=0x0f ret=2 client=0x3e/i2c_lcd_bias adapter=0`,
+  `addr=0x01 value=0x0f ret=2`, reset `1/0/1` with logged delays, then
+  `push init table start` ... `end`. So bias (TPS65132 ±, regs 0x00/0x01=0x0F),
+  reset, and the LP DCS init all replicate stock at runtime.
+- FACT: the active `init_setting[]` (driver lines 528-601) is **byte-identical**
+  to the stock-LK init table decoded in
+  `captures/20260530-stock-lk-boot-reverse-inputs/lk-ili9881p-init-table-decode.txt`
+  (72 entries, pages 1/5/6/2/0, `0x11`+120ms, `0x29`+20ms). Init table is not the
+  divergence.
+- FACT: the panel reports itself fully ON. DCS `0x0A` power-mode reads `0x9c`
+  (= Booster on | Sleep-out | Normal | Display-on) in healthy-boot captures
+  (e.g. `...stock_pages`/`ATA dcs ... name=power_mode ... read=9c`). LP DCS reads
+  (compare_id `0xF2`, page reads, status) succeed. The panel is alive on the link
+  in LP escape mode.
+- FACT: the live DSI/MIPITX state is healthy and self-consistent in the black
+  condition. `captures/20260610-0939-m6-126-dsi-rawblock-diag-711HEBSR277K5`:
+  `MODE=0x3` (burst video), `TXRX=0x1003c`, `PS=0x30870` (wc=0x870=720*3, 24bpp),
+  `PHY_LCCON=0x1`, D-PHY `TIM=0x5080404/0x8140610/0x6160100/0x80e03`, lanes
+  `0x603/0x601/0x601/0x601/0x601`, MIPITX `sw=0x43210` (identity), `lane_swap_en=0`,
+  `pll=230/230/230`, `ssc=1/0`, **`cont=0`**, and the DSI FSM cycles
+  `STATE7=Video data period`/`Hsync front porch`. PLL 230 MHz is exactly right for
+  720x1280@60 4-lane RGB888 (≈460 Mbps/lane). Nothing in the host register set is
+  wrong relative to stock parity.
+- FACT: DSI BIST self-pattern (`dsipattern` red/green/blue) latches while the
+  panel is awake and powered: `BIST_PATTERN=0xff0000`, `BIST_CON=0x200040/0x200446`,
+  `self_pat=1`, `bist_en=1`, `fix=1`, `lane=4`, DSI still in video data period
+  (`#67` verdict + `2026-06-06 awake DCS and DSI BIST screen markers`, taken with
+  `Display Power: state=ON`, `mScreenBrightness=180`, `power_mode=9c`).
+- FACT (user obs, 2026-06-10): under stock **LK the boot logo is visible**, then
+  the glass goes black within the first seconds of Linux boot.
+
+### What it means (INFERENCE)
+
+- INFERENCE (strong): the failure is **MIPI HS-video acceptance**, not content,
+  composition, power, reset, LP transport, or the DCS init table. BIST removes
+  every upstream variable (OVL/RDMA/HWC/framebuffer) by making the DSI controller
+  itself emit solid pixels in HS; the post-#67 investigation is entirely
+  predicated on the human seeing the glass stay **black during latched BIST with
+  `power_mode=9c`** at brightness 180. Meanwhile LK drives the *same* panel over
+  HS (logo) successfully. So the hardware can do HS; Linux's HS D-PHY/clock-lane
+  programming is what the panel is rejecting.
+- INFERENCE: the prior 130 iterations searched the *visible* MIPITX register
+  fields (PHY_SEL lane-map, RT_CODE/LPTX/LPCD, imp_en/imp, PLL_TOP) by poking them
+  live under video and looking for an optical change. That is the wrong axis if the
+  panel never locks HS in the first place: a live poke cannot reveal a boot-time
+  clock-lane mode the panel needs from the very first burst.
+
+### Mechanism for the leading hypothesis (FACT from source)
+
+- FACT: `drivers/misc/mediatek/video/mt6755/ddp_dsi.c:1546`
+  `bool hstx_cklp_en = dsi_params->cont_clock ? false : true;` and line 1575 writes
+  `HSTX_CKLP_EN` into `DSI_TXRX_CTRL`. With `cont_clock=0` (current; the active LCM
+  driver never sets it) `HSTX_CKLP_EN=1` → the **clock lane returns to LP between
+  HS bursts (non-continuous clock)**. The live `TXRX=0x1003c` has bit16
+  (`0x10000`=HSTX_CKLP_EN) set — non-continuous confirmed in hardware.
+- INFERENCE: if the ILI9881P/TXD receiver cannot re-lock its HS clock per burst
+  (common on cheap panels) it shows black while still ACKing LP and reporting
+  display-on — exactly the observed signature. Setting `params->dsi.cont_clock = 1`
+  clears HSTX_CKLP_EN (predicted `TXRX: 0x1003c -> 0x0003c`) for a continuous HS
+  clock.
+
+### CORRECTION (post-audit read of docs/run_reports/2026-06-09_..._external_audit_result.md)
+
+The `cont_clock=1` lead below is **demoted**, and the "matches stock" framing in
+the earlier part of this entry is partly wrong. Newly-read FACTs:
+
+- FACT: stock LK `get_params` (VA 0x46025ccc) is fully decoded and leaves
+  `cont_clock=0` / everything-else-memset. So **LK drives this panel with
+  non-continuous clock too** (`hstx_cklp=1`). `cont_clock=1` therefore *diverges*
+  from LK rather than matching it — it is at best a "panel needs more than LK
+  provides" long-shot, not a parity fix.
+- FACT: the #95 "lkgold" runtime diff captured LK's live DSI0 (`0x000-0x1B0`) +
+  MIPITX (`0x000-0x104`) + MMSYS state *while the LK logo was still on screen* and
+  found it **word-identical** to Linux's running state (only non-config deltas:
+  `DSI_INTEN` 0x03 vs 0x4b, `STATE_DBG` sampling). Static LK-vs-Linux register
+  parity is CLOSED. `M6_LKGOLD_MIPITX_LAST=0x104`; the MT6755 MIPITX map does not
+  extend past 0x104, and lane mux `sw=0x43210` / `lane_swap_en=0` already match LK.
+- FACT: booting with LK's exact `CLK_HS_POST=36` (`TIMCON3=0x00082403`, #94) was
+  already tested -> still black. `CLK_HS_POST` is conclusively not the fix.
+- FACT: #103 write-order trace shows Linux performs a complete, clean
+  DSI/MIPITX stop -> power-down -> reprogram back to the exact final video state;
+  "simple destructive sequence" is closed.
+- FACT (decisive reference): the **stock Flyme kernel drives this exact panel/board
+  fine**. So the bug is a SW delta between this source kernel and stock Flyme /
+  LK, not a hardware defect — but every *captured* register/param/init/sequence
+  already matches. The true open frontier per the audit is therefore: (a) a
+  divergence in a register OUTSIDE the dumped ranges or in LK's reset/PLL/power
+  *timing*, only visible by reversing the LK binary (in flight); or (b) a
+  genuinely analog/electrical lane behavior needing external measurement; plus a
+  separable digital bug — the DIRECT_LINK `RDMA0_EOF` CMDQ-event resume wedge
+  (failure mode B), which is register-observable and reproducible without a flash.
+
+### Hypotheses (ranked; each with a disconfirming test) — REVISED
+
+0. CONTEXT: static register/param/init/sequence parity vs LK is already CLOSED
+   (#95/#103). Any remaining fix is either out-of-dump-range, timing/analog, or a
+   source-vs-stock-Flyme code delta.
+
+1. HYPOTHESIS (now primary) — **LK programs something Linux doesn't, outside the
+   dumped register ranges or in reset/PLL/power timing.** Test: the LK binary
+   reverse (in flight) — look for any MIPITX/DSI write beyond 0x104 / 0x1B0, a
+   different reset pulse width or post-reset settle, or a PLL/clock bring-up order
+   Linux doesn't replicate. Disconfirm if LK touches only the already-matched
+   registers in the same order/timing.
+
+2. HYPOTHESIS — **resume-path RDMA0_EOF CMDQ wedge (failure mode B)**: in
+   DIRECT_LINK mode `CMDQ_EVENT_DISP_RDMA0_EOF` never pulses, so any stop/flush
+   that waits it wedges (READY=0, RDMA in=0). Stock likely waits MUTEX0_EOF/DSI0_EOF
+   or runs decoupled. Test (no flash, no human): `input keyevent 26` off/on, bisect
+   where arming diverges; then a bounded patch switching the direct-mode wait to
+   MUTEX0_EOF/DSI0_EOF. This is the cheapest path and "plausibly explains A".
+
+3. HYPOTHESIS (demoted) — **non-continuous clock**: panel needs continuous HS
+   clock even though LK doesn't provide it. Cheap to try (`cont_clock=1`,
+   predicted `TXRX 0x1003c->0x0003c`), but low prior because LK=0 works. Only worth
+   bundling into a multi-toggle experiment image. Disconfirm: BIST still black with
+   `cont_clock=1` + pinned brightness 255 + human look.
+2. HYPOTHESIS — **lane map / polarity**: board routes D-PHY lanes swapped or
+   P/N-inverted; LK hardcodes it, Linux uses identity (`sw=0x43210`,
+   `lane_swap_en=0`). Disconfirm if LK lane mux/polarity is also identity.
+3. HYPOTHESIS — **HS PHY timing / drive strength** divergence (TIMECON or MIPITX
+   RT drive) between LK and Linux. Disconfirm if LK's written PHY values match the
+   live `TIM=0x5080404/0x8140610/0x6160100/0x80e03` and lane drive `0x601`.
+4. HYPOTHESIS — **PLL/data-rate fine divider**: MIPITX `PLL_CON2=0x46c4ec4e`
+   encodes a data rate the panel can't sample. Disconfirm if LK's PLL CON words
+   match the live values.
+5. HYPOTHESIS — **takeover clock glitch**: LK→Linux handoff momentarily desyncs
+   the panel CDR and the Linux reset does not fully recover it. Disconfirm: a full
+   cold boot is also black (it is), which argues this is steady-state config, not a
+   one-shot glitch; #131 takeover-hold further localizes.
+
+### In-flight verification legs (background, started 2026-06-11)
+
+- Reverse leg: rizin extraction of stock-LK DSI host + MIPITX + PLL programming
+  (continuous-clock bit, lane map/polarity, TIMECON, PLL CON dividers, drive
+  strength) to diff against the live values above. Output ->
+  `captures/20260530-stock-lk-boot-reverse-inputs/lk-dsi-host-phy-reverse-20260611.md`.
+  This is the decisive discriminator for H1-H4.
+- Research leg: whether ILI9881P 720p video on MT6750/55 requires `cont_clock=1`,
+  plus any public `ili9881p_hd_dsi_txd` tree to diff, plus donor `params->dsi.*`
+  comparison (note: local ref `lct_ili9881c_dijing_720p_vdo` uses PLL=230,
+  `cont_clock=0`).
+
+### Planned experiment (built/flashed only after the reverse leg confirms, human-confirmed flash)
+
+- One image bundling: `params->dsi.cont_clock = 1` (predicted `TXRX -> 0x0003c`)
+  plus any LK-confirmed lane/PHY delta. Verify by: boot with backlight pinned 255,
+  human look; then `dsipattern:0x00ff0000` BIST window. SUCCESS = visible image or
+  visible red. This is the definitive gate that has never been run with
+  `cont_clock=1`.
+
+
+
+### LK BINARY REVERSE COMPLETE — entire software space closed; the decisive untested gate (2026-06-11)
+
+The rizin reverse of stock LK's DSI host + MIPITX/PLL programming is done. Report:
+`captures/20260530-stock-lk-boot-reverse-inputs/lk-dsi-host-phy-reverse-20260611.md`.
+
+- FACT: LK DSI0 base `0x14012000`, MIPITX base `0x10215000` (offset layout = Linux
+  mt65xx). PLL/PHY/TIMCON0..3/SSC are all COMPUTED from the panel data-rate
+  (`PLL_CLOCK<<1`) using the same constants Linux uses (SDM PCW via `0x4ec4ec4f`
+  → Linux's live `0x46c4ec4e`). LK `get_params` `PLL_CLOCK=230` = Linux 230.
+  Continuous clock: LK also non-continuous (`PHY_LCCON` bit1 never forced) = Linux.
+- FACT: the one mechanism LK has that Linux's source visibly omits is per-lane
+  RT_CODE (D-PHY termination impedance, bits[8:12] of MIPITX `+0x04..+0x14`)
+  derived from the chip calibration word at phys `0x10206190`. Linux's efuse path
+  is `#if 0` disabled (ddp_dsi.c ~4483) and it instead save/restores the live lane
+  RT codes; it programs `RG_DSI_LNT*_RT_CODE = (lane_var>>8)&0xf` (ddp_dsi.c 4494).
+- FACT (ON-DISK, DECISIVE): the team's own `M6 DSI rtcal[...]` dump already
+  resolves this. Across all windows: `raw=0x6666699` →
+  `lk_eff c/d3/d2/d1/d0 = 6/6/6/6/6`, `live_rt = 6/6/6/6/6`, `saved_rt = 6/6/6/6/6`.
+  **Linux's programmed termination impedance EQUALS LK's calibrated value.** RT
+  impedance is matched, not divergent. (The reverse's "lane swap from 0x10206190"
+  candidate resolves to this RT_CODE field, which is matched.)
+
+CONCLUSION: with the LK binary reverse — the last software avenue — closed, EVERY
+software-determinable quantity matches stock LK: registers (DSI `0x000-0x1B0` +
+MIPITX `0x000-0x104` per #95), init table (byte-identical), all LCM params,
+`PLL=230`, D-PHY TIMCON incl. the once-suspect `CLK_HS_POST`, SSC, continuous
+clock=0, lane map, and the efuse RT-impedance calibration. The "logo OK in LK,
+black in Linux" delta is NOT in any software-visible value, in LK's binary intent,
+or in the takeover-vs-reinit choice (both already black, BRINGUP §2026-06-03).
+rizin / donor / deep code-analysis are exhausted and converge on: the residual is
+analog/electrical (signal integrity / PLL lock / board-level) or a non-register
+dynamic — OR the foundational "optical" premise is itself unreliable (next point).
+
+THE LOAD-BEARING WEAKNESS (highest-value untested gate): the entire
+"optical / HS-not-accepted" direction rests on the verdict that DSI BIST
+solid-color is invisible on the glass. But this project's own brightness-landmine
+FACTs (the lights HAL repeatedly drops backlight to 10/180/201 mid-window) mean the
+BIST-invisible verdict was taken under compromised brightness. A clean DSI BIST
+solid-color test with backlight HARD-pinned at 255 (`dcs51=0xff` verified for the
+whole window) plus a careful human look has arguably never been done. This one
+cheap test REDIRECTS everything:
+- If BIST red/green/blue IS visible at `bl=255` → panel + HS transport WORK; the
+  bug is the CONTENT path (OVL memory-layer fetch / the "end-of-valid-MVA" OVL
+  faults seen in current runtime), which is DIGITAL and software-fixable.
+- If BIST is confirmed black at `bl=255` → HS/panel acceptance is genuinely broken
+  with all SW matched → external electrical measurement (scope/LA on the MIPI
+  lanes) is the only remaining avenue.
+
+NEXT EXPERIMENTS (human-confirmed flash + human look; device must be on ADB):
+1. (decisive, cheap) Clean BIST-255 verdict. Boot a normal image;
+   `svc power stayon true; settings put system screen_brightness_mode 0;
+   settings put system screen_brightness 255;
+   echo 255 > /sys/class/leds/lcd-backlight/brightness`; verify `dcs51=0xff` in
+   dmesg; then `echo dsipattern:0x00ff0000 > /d/mtkfb` (red) hold 8s + human look;
+   repeat green/blue/white. Record `bl`/`dcs51` inside the window.
+2. (parallel, digital) If BIST visible: chase the OVL/M4U "end-of-valid-MVA" fault
+   (real composited buffer never reaching DSI) and the DIRECT_LINK `RDMA0_EOF`
+   CMDQ-event resume wedge (switch the direct-mode stop/flush wait to
+   `MUTEX0_EOF`/`DSI0_EOF`).
+3. (if BIST confirmed black) External measurement: scope the 4 MIPI data lanes +
+   clock lane at the panel connector under LK (logo) vs Linux; compare HS
+   amplitude/eye/clock continuity. No further SW avenue.
+
+Claude cannot flash or observe the glass; (1)-(3) require the human + hardware. All
+software-side reverse/analysis the request named (rizin, donor, deep code) is now
+complete and documented here and in the linked report.
+
+### 2026-06-11 live-device session (device up, full flash permission)
+
+Device `711HEBSR277K5` (reverse ADB 127.0.0.1:15038) is up on #129; user granted
+full autonomous flash/patch/capture permission and clarified the symptom.
+
+- FACT (user, 2026-06-11): the **backlight works** ("hacked but works"); the glass
+  is **lit-black** = backlight ON, NO image. "Disappears at ~3s" = the IMAGE goes
+  black at Linux takeover, not the backlight; BIST showed no colors visually.
+  → bug is video/image not reaching pixels on a lit, powered, display-on panel.
+  Backlight / `led_mode` is NOT the cause (REJECTED): `led_mode=4`=CUST_LCM (panel
+  DCS 0x51 backlight) is correct for this device and works.
+- FACT (live): rtcal re-confirmed on device: `raw=0x6666699
+  lk_eff=live_rt=saved_rt=6/6/6/6/6`. RT impedance matches LK. `power_mode=0x9C`.
+- FACT (live): continuous clock tested via `m6_dsi_cc_probe:0` (TXRX 0x1003c->0x3c,
+  HSTX_CKLP_EN cleared = continuous HS clock); `ata` readback stayed `00 00 00 00`
+  unchanged. CAVEAT: ATA 0x2A/0x2B readback is optional for pure video panels, so
+  this is NOT a clean oracle; cont_clock unverified-by-eye but unlikely (LK=0 too).
+  Restored TXRX=0x1003c.
+- FACT: NO eyes-free oracle exists for "is an image visible" (ATA unreliable; no
+  GRAM in video mode; TE pulses regardless of content). A visual fix needs the
+  user's eyes; candidate fixes can be prepared but not auto-verified.
+- IN FLIGHT: stock Flyme KERNEL reverse (user-requested) — the only un-examined
+  working reference (LK already matches). Report ->
+  `captures/20260530-stock-lk-boot-reverse-inputs/stock-kernel-dsi-reverse-20260611.md`.
+  Goal: find what the stock kernel's DSI/MIPITX bring-up does differently from this
+  heavily-hacked source tree (user notes "many crutches/hacks") — a hack-induced
+  regression in the video path is the leading remaining SW cause.
+
+### 2026-06-11 DISPROVEN (was "ROOT CAUSE"): force-first-config hypothesis + decisive BIST-black verdict
+
+**UPDATE — the hypothesis below is DISPROVEN.** Built + flashed
+`M6_FORCE_FIRST_DSI_CONFIG_ON_LK_MIPITX=0` (kernel #157, boot sha
+`409b55fc938cb719da755c9690511641c6187a8b64a38193dda02fdd66d8c5bf`). User visual:
+the image still goes black at the SAME takeover point. Then a clean **full DSI BIST
+red** (`m6_dsi_bist_full:0xff0000` -> `BIST_CON=0x200446 bist_en=1 fix=1 lane=4
+self_pat=1`, `STATE7=Video data period`, all 4 lanes, video mode) with brightness
+hard-pinned (`dcs51=0xff`) was ALSO **black on the glass (user-confirmed, 2026-06-11)**.
+
+DECISIVE CONSEQUENCES:
+- The panel does NOT display HS video even from the DSI controller's own pattern
+  generator, which bypasses OVL/RDMA/content/PQ entirely. So the **content path
+  (OVL/RDMA memory-fetch) is RULED OUT** as the cause - the earlier "maybe BIST was
+  never tested cleanly" doubt is closed; BIST is genuinely invisible at bl=255.
+- Preserving LK's live PHY at config (the fix below) did NOT help -> the force-config
+  PLL power-cycle was NOT the (sole) cause. The `=0` change is kept (stock-faithful,
+  harmless) but is not the fix.
+- Frontier: HS-video electrical/PHY/panel-acceptance, with content now excluded and
+  NO eyes-free oracle (ATA unreliable, BIST needs eyes, user now asleep). Next SW
+  ideas: true no-touch takeover (is_lcm_inited=1 + skip config AND start, UNTESTED in
+  combination with =0); deeper source-vs-stock-KERNEL register diff via devmem on a
+  stock-boot flash; or a fundamental display config/clock mismatch (à la the WiFi
+  SDIO-vs-BTIF finding). Display likely needs external (scope) measurement to close.
+
+Original (now-rejected) hypothesis follows:
+
+### 2026-06-11 ROOT CAUSE candidate (REJECTED): force-first-config PLL power-cycle on LK's live link
+
+FACT (source): `ddp_dsi.c:252 #define M6_FORCE_FIRST_DSI_CONFIG_ON_LK_MIPITX 1`. In
+`ddp_dsi_config()` (~line 6537), on the FIRST boot takeover (MIPITX already enabled by LK,
+`PMaster=0`, `!dsi_force_config`) this hack calls `DSI_PHY_clk_setting()` (line 6550) then
+`goto force_config`. `DSI_PHY_clk_setting` POWER-CYCLES the MIPITX PLL/PHY (MPLL off->on,
+BG core re-enable, PAD_TIE_LOW toggle, ~250ms settle) on LK's LIVE link, then re-runs
+TXRX/PS/TIMCONFIG/VDO_Timing/VM_CMD.
+
+FACT (pristine/stock): unmodified `ddp_dsi_config` takes `else -> goto done` here (line 6558)
+- it PRESERVES LK's live DSI link, does NOT re-cycle the PHY. The code's own comment (line
+248) says "#73 proves the first Linux takeover CAN SKIP the DSI timing/VM programming path
+when LK left MIPITX enabled"; the team chose to "replay it once, with markers" (the force) as
+a diagnostic and left it on.
+
+INFERENCE (explains the WHOLE bug): power-cycling the host MIPITX PLL on the live link
+mid-takeover breaks the panel's HS-video lock. Hence: LK logo OK then image black ~3s into
+Linux boot (the takeover); even DSI-internal BIST (same PHY HS link) invisible; yet every
+FINAL register matches LK (the reconfigure writes identical values) - the damage is the
+TRANSIENT, invisible to register dumps (which is why 130 register-parity iterations missed
+it); backlight works (lit-black) because panel power/DCS is untouched, only HS lock breaks.
+Matches history #73/#74 ("force first config restores registers but panel stays black") and
+#65/#66 ("skip harmful after restart" - that earlier skip also hit resume; the correct fix
+skips ONLY the first boot takeover).
+
+FIX APPLIED (`ddp_dsi.c:252` -> 0): first boot takeover preserves LK's live PHY (`goto done`),
+like stock. Resume unaffected (MIPITX off after suspend -> else-branch reconfigures, or
+`dsi_force_config=1`). Evidence: `captures/.../source-display-hack-audit-20260611.md`;
+stock-kernel reverse corroborated (RT/registers match; the delta is the takeover sequence).
+PENDING: build + flash 711HEBSR277K5 + USER VISUAL CONFIRM (no eyes-free oracle for "image
+visible"). If still black: next try skip-only-`DSI_PHY_clk_setting` (keep reconfigure), then
+full pristine `goto done` incl. start.
+
 ## 2026-06-10 #128 M6 camera main-socket I2C failure diagnostic
 
 PATCH HISTORY, **DIAGNOSTIC**, 2026-06-10: add bounded low-level MTK I2C
@@ -16289,3 +16610,180 @@ $A root
 $A shell dmesg > /tmp/m6-131-dmesg.txt
 grep -E 'M6 DSI takeover_hold|takeover-hold-(begin|end)' /tmp/m6-131-dmesg.txt
 ```
+
+## 2026-06-12 — Touch brick root cause + REAL touch chip (corrected)
+
+**Context:** Overnight, the touchscreen task switched defconfig to GT1151-only
+(removed FT5x0x). Combined image #158 (touch+battery+disp) was flashed and
+**bricked** (early-boot hang, no adbd). Device recovered to #129.
+
+**FACT — the "fresh touch-only" rebuild == bricked #158, byte-identical.**
+- new img sha256 `30d07d56a5cf1ae8e5abb60f9abf1f348a4bb3bdd0b8785b9917e9e222700891`
+  == #158 `boot-m6-touch-battery-disp-20260611.img`.
+- new kernel sha256 `e58a14eb...` == #158 kernel. cmdline identical.
+- Implication: battery (`battery_meter_fg_20.c`) and wifi (`wmt_lib.c`) changes
+  are **NOT in #158's binary** — stashing them produced a byte-identical image.
+  => battery & wifi are ruled out as the brick cause (not present in the binary).
+
+**FACT — boots-vs-bricks delta is the touch driver set.**
+- #157 `boot-m6-display-force-config-fix.img` (kernel `ebea104b...`) BOOTS;
+  touch strings: Focaltech + goodix, 57×`mtk-tpd`.
+- #158 (kernel `e58a14eb...`) BRICKS; touch strings: Goodix only (no Focaltech),
+  30×`mtk-tpd`. Display force-config=0 in BOTH. Only touch differs.
+- INFERENCE (strong): GT1151-only config hangs early boot. Mechanism HYPOTHESIS:
+  GT1151 `tpd_local_init` blocks (reset/I2C poll) when the real chip isn't a
+  GT1151 and there's no FT5x0x fallback registered. (auto-update was already OFF
+  in #158 — verified out/.config — so NOT the firmware-flash hang.)
+
+**FACT — the REAL touch controller is Himax HX8527 @ I2C0 0x48, NOT GT1151.**
+- Live #129: `/sys/bus/i2c/devices/0-0048 = cap_touch` (bus0, addr 0x48),
+  no touch input device in /proc/bus/input/devices => touch broken on #129.
+- `arch/arm64/boot/dts/meizu_m6.dts:303`: `cap_touch@48 { rst-gpio=GPIO79;
+  int-gpio=GPIO1; vtouch-supply=mt_pmic_vtouch_ldo_reg; }` on `&i2c0`.
+- `drivers/input/touchscreen/mediatek/hx8527/himax_852xES.h:72`:
+  `#define HIMAX_I2C_ADDR 0x48` (exact match).
+- Panel-matched Himax fw blob present: `hx8527/DJN_L9830_LQ_C31_2017-03-13_1847.i`.
+- GT1151 default addr = 0x5d (`cust_i2c.dtsi:30 cap_touch@5d`); Focaltech = 0x38.
+  Neither matches 0x48. => GT1151 diagnosis was WRONG: it bricked boot AND could
+  never have driven the Himax chip.
+
+**Corrected fix path (touch, low prio):** defconfig `CONFIG_TOUCHSCREEN_MTK_HX8527=y`
+(drop GT1151 and FT5x0x), keep `HX_AUTO_UPDATE_FW` undefined (no fw-flash at probe).
+Build, verify BOOT first (fallback #157 `409b55fc`, NOT old #129), then verify a
+touch input device with ABS_MT appears + getevent. If it hangs: capture pstore
+from recovery BEFORE restoring #157.
+
+**Restore-point policy (user directive 2026-06-12):** roll back to latest WORKING
+build = #157 `409b55fc938cb719da755c9690511641c6187a8b64a38193dda02fdd66d8c5bf`,
+not the old #129. (#129 f598d022 remains a deeper fallback.)
+
+**Quarantined:** `export/.../20260612-m6-touch-gt1151-noautoupdate-disp/` image
+renamed `BRICKDUP-identical-to-158-DO-NOT-FLASH.img` + README warning.
+
+## 2026-06-12 — НАЙДЕН ЗАВОДСКОЙ СТОК Flyme 7.1.2.0G: тач = Goodix GT9xx @0x5d (донорский DTS лгал)
+
+**FACT — настоящий сток на диске.** /srv/forge/work/meizu_M6/update.zip (подписанная OTA,
+sha256 6b6594a2...; юзер перезалил тот же файл — хеши совпали) → boot.img
+(sha256 8c0f2a48...) → ядро `Linux 3.18.35+ (flyme@Mz-Builder-l10) Mon Apr 8 2019` —
+официальный билд Meizu. Артефакты + README: captures/20260612-m6-stock-flyme-7120G-kernel/
+(vmlinux.bin 19,240,264 B; stock.dts из приклеенного DTB; stock-lk-7120G.bin; initrd).
+Метод — по ctyon-гайду (/srv/forge/android/ctyon/reverse_engineering_status.xml).
+
+**FACT — стоковый DTB, узлы тача:**
+- `&i2c0: cap_touch@5d { compatible="mediatek,cap_touch"; reg=<0x5d>; status="okay"; }` — НЕ 0x48!
+- `touch{}`: interrupts=<1 2> (EINT1), pinctrl: eint=GPIO1, **RST=GPIO42** (не GPIO79!),
+  tpd-resolution=<1080 1920>, ключи <139 172 158> (как у нас), vtouch-supply.
+- Строки в стоковом ядре: gt9xx×7/GT9XX×5/hotknot×4/goodix×14 (GT1151 — НЕТ), fts_×36
+  (focaltech второй поставщик), mstar×8. idc в стоковой системе нет (AVRCP/qwerty only).
+
+**FACT — наш донорский DTS (Honor 6C Pro "Jim"):** `&touch` содержит huawei-поля
+(product="Jim", slave_address=<0x5d 0x48 ...>, goodix,product_id="GT917D",
+hmx_irq_config/goodix_irq_config) — донор сам был goodix@0x5d, а адаптация взяла
+ВТОРОЙ адрес из списка (0x48 himax) и донорский RST GPIO79. cap_touch@48
+(compatible+reg) генерится drvgen'ом в out/.../cust.dtsi из донорского DWS.
+
+**INFERENCE (сильный) — механика брика #158 и himax-зависания:** оба драйвера
+(GT1151, HX8527) в tpd_local_init дёргали reset/I2C по адресу/пинам, где чипа нет
+(0x48/0x5d-на-пустой-шине, RST=79) → бесконечный ретрай → WDT → recovery.
+pstore himax-сборки (captures/20260612-m6-himax-hx8527-flash-result/): последняя строка
+`[21.244611] mtk-tpd: enter tpd_probe, 450` — повис в тач-пробе. FT5x0x падает мягко
+(возврат ошибки) — потому #129/#157 грузятся, но без тача.
+
+**REJECTED:** himax HX8527 @0x48 как чип M6 (моя вчерашняя гипотеза — донорский артефакт).
+
+**Фикс применён (сборка идёт):**
+- meizu_m6.dts: cap_touch@48 → status=disabled; добавлен стоковый cap_touch@5d;
+  ctp_pins_rst_output0/1: GPIO79→GPIO42; tpd-resolution 720x1280→1080x1920 (сток).
+- defconfig/.config: +TOUCHSCREEN_MTK_GT9XX_HOTKNOT, +TOUCHSCREEN_MTK_FT5X0X (как сток,
+  мягкий), GT1151/HX8527 off, GTP_DRIVER_SEND_CFG off (донорские конфиги GT917D не слать,
+  чип живёт на заводском конфиге), GTP_AUTO_UPDATE/HEADER_FW off, +CONFIG_I2C_CHARDEV
+  (даёт /dev/i2c-* для живого ACK-скана шины — раньше его не было).
+- Прошивка строго через харнесс: hang → СНАЧАЛА pstore из recovery → restore #157 (409b55fc).
+
+**Дисплей:** Fable 5 агент (stock-dsi-reverse) реверсит стоковый vmlinux (kallsyms →
+LCM params ili9881p → MIPITX/DSI PHY) и диффит с нашим исходником; отчёт будет в
+captures/20260612-m6-stock-flyme-7120G-kernel/stock-vs-ours-dsi-lcm-diff-20260612.md.
+В стоковом ядре 4 LCM: ili9881c_hd_dsi_txd, ili9881p_hd_dsi_txd, r63350_fhd_dsi_vdo_tcl_csot,
+s6d7aa6_hd720_dsi_vdo_hlt. В стоковом DTS у mtkfb есть pinctrl lcd_bias_enp/enn и
+`mediatek,lcm_voltage=<0x0c>` — агенту на проверку.
+
+## 2026-06-12 — STOCK-KERNEL REVERSE DONE: кандидат-корень чёрного экрана = bias-GPIO TPS65132 уведены не туда (DTS), DSI ни при чём
+
+Patch category: ANALYSIS (read-only реверс, ничего не флешилось). Полный отчёт:
+`captures/20260612-m6-stock-flyme-7120G-kernel/stock-vs-ours-dsi-lcm-diff-20260612.md`
+(+ vmlinux.elf с 64798 kallsyms, disasm/, decoded-*).
+
+- FACT: реверс ГЕНУИННОГО стокового ядра Flyme 7.1.2.0G (vmlinux из OTA): ВЕСЬ
+  DSI/MIPITX-слой совпадает с нашим 3.18.140 по формулам, значениям и порядку:
+  DSI_PHY_clk_setting (RT_CODE/BG/TOP/LDO/PLL_PWR/TXDIV/PCW «/13»/SSC-skip/LDOOUT/
+  PLL_EN/PCW_CHG/PAD_TIE_LOW), DSI_PHY_TIMCONFIG (все константы и оверрайды;
+  TIMCON0..3 для PLL=230 = 0x05080404/0x08140610/0x06160100/0x00080e03 = наш live),
+  TXRX (hstx_cklp_en=!cont_clock, 0x1003c), PS, VDO_Timing (−4/−10/−12, ALIGN4),
+  SetMode/Start/clk_HS_mode/VM_CMD, ветка takeover в ddp_dsi_config (enabled &&
+  PMaster==0 && !force → goto done — как наш текущий вариант с FORCE=0). LCM-params
+  стока = наши (PLL 230, 4 lane, burst, порчи, ssc_disable=1, cont_clock=0), init-
+  таблица 72 записи БАЙТ-В-БАЙТ. Ось DSI/PHY ИСЧЕРПАНА и закрыта трижды (lkgold #95,
+  LK-реверс, теперь сток-ядро).
+- FACT (стоковый DTS того же OTA): TPS65132 ENP=GPIO24 (`lcd_bias_enp*`, pins
+  0x1800), ENN=GPIO27 (`lcd_bias_enn*`, pins 0x1b00); пины 24/27 в стоке принадлежат
+  ТОЛЬКО дисплею. Сток audio hpdepop=GPIO16, сток NFC eint=GPIO15. LK (бинарь, §R
+  прежнего реверса) подтверждает: GPIO 0x18(24)/0x1b(27) → high перед TPS i2c.
+- FACT (наш DTS/код — наследие донора LCT «yufangfang»): LCM bias идёт через
+  lcm_pinctl на GPIO17 (vsp)/GPIO90 (vsn) — НЕ те пины; GPIO24 отдан audio
+  hpdepop (aud_pins_hpdepop_*), GPIO27 отдан NFC eint (nfc_eint_*).
+- FACT: CONFIG_NFC_MT6605=y; mt6605.c:1120 на probe селектит state `eint_low` →
+  GPIO27=output-LOW; dmesg капчуры: mt_nfc_probe @1.42s, «set EINT finished» @1.46s.
+- INFERENCE (сильный): на t≈1.4с NFC-проба роняет ENN → VSN −5.5V гаснет → стекло
+  чёрное при живой логике панели (LP DCS ok, 0x0A=0x9C, подсветка отдельная) и
+  идеальных DSI-регистрах; BIST невидим; наши lcm_init/resume «включают» bias на
+  17/90 вхолостую. Объясняет «логотип LK виден → гаснет через ~3с» и бесплодность
+  130 регистровых итераций.
+- NEXT (решающий тест, человек+глаза, без флеша): в чёрном состоянии с BIST red
+  bl=255 поднять GPIO24/27 в out/1 (mtgpio debugfs / devmem) → если стекло
+  загорается, корень подтверждён. Патч-кандидат №1 (DTS-only): vsp 17→24,
+  vsn 90→27; audio hpdepop 24→16; NFC c 27 убрать/выключить (на M6 NFC нет).
+  После оживления: vfp_lp 540→0 (сток 0), учесть Flyme-поле is_rotate=1
+  (панель смонтирована с разворотом → возможен переворот картинки).
+
+## 2026-06-12 — ЭКРАН: root cause найден (NFC крадёт GPIO27 → VSN гаснет) + auto-recovery guard
+
+**FACT (стоковый DTB+LK, тот же OTA 7.1.2.0G) — bias-рейлы TPS65132 на M6:**
+ENP=GPIO24 (lcd_bias_enp1, out-high), ENN=GPIO27 (lcd_bias_enn0/1). GPIO24/27 во
+всём стоке встречаются ТОЛЬКО в lcd_bias-нодах. Стоковый audio hpdepop=GPIO16,
+стоковый NFC eint=GPIO15. LK power-path (бинарь): GPIO24→1, GPIO27→1, TPS i2c 0x0F/0x0F.
+Весь DSI/MIPITX/PHY/тайминги/команды стока == наши (детальная таблица в отчёте).
+
+**FACT — наш донорский DTS перепутал владельцев пинов:**
+- bias дёргается хаком `lcm_pinctrl` (LCT "yufangfang") на GPIO17/GPIO90 — на M6 это
+  не bias-пины (17=fingerprint pwr, 90 не исп.) → наши lcm_init/resume «включают» bias вхолостую.
+- **GPIO27 отдан NFC** (`&nfc` eint, CONFIG_NFC_MT6605=y): `mt6605.c:1120` на probe
+  (dmesg t≈1.42с) ставит `st_eint_l` → GPIO27=out-LOW → **ENN=0 → VSN(−5.5V) выкл**.
+- GPIO24 отдан audio hpdepop (срабатывает позже, на HP-разъём).
+
+**INFERENCE (сильный, объясняет ВСЁ):** LK оставляет 24/27=1 (логотип виден). На ~1.42с
+NFC роняет GPIO27 → VSN гаснет → матрице нечем питать пиксели → стекло чёрное, но логика
+панели жива (LP DCS ответ, power_mode=0x9C, TE идёт, ESD ОК, подсветка WLED отдельно).
+**BIST чёрный по той же причине — питания нет.** Совпадает с «картинка пропадает ~3с».
+Отчёт: captures/20260612-m6-stock-flyme-7120G-kernel/stock-vs-ours-dsi-lcm-diff-20260612.md.
+
+**Решающий on-device тест (ещё не сделан):** дамп уровней GPIO24/27 в чёрном состоянии;
+либо прямой тест — убрать вора GPIO27 (NFC) и смотреть, оживёт ли экран.
+
+**Фикс экрана (план):** (1) снять NFC с GPIO27 (`&nfc` disabled / CONFIG_NFC_MT6605=n) —
+минимальный решающий тест; (2) снять audio с GPIO24; (3) развести bias ENP/ENN на
+GPIO24/27 как сток (через mtkfb lcd_bias pinctrl или перенаправить lcm_pinctl).
+Побочно (после оживления питания): vertical_frontporch_for_low_power 540→0,
+возможен разворот (Flyme is_rotate=1 → MTK_LCM_PHYSICAL_ROTATION="180").
+
+**AUTO-RECOVERY GUARD (по запросу — «медиатековский авто-ребут в рекавери, рано»):**
+Патч в `drivers/misc/mediatek/rtc/mtk_rtc_common.c` (гейт cmdline-токеном `forgeguard`):
+на late_initcall ставит RTC recovery-бит (`hal_rtc_set_spare_register(RTC_FAC_RESET,1)`)
++ panic-нотифаер (prio INT_MAX) делает то же. Любой провал старта (паника/тихий i2c-hang/
+WDT) → LK грузит recovery, кнопки не нужны. Снятие: harness пишет `echo 0 >
+/proc/forge_recovery_guard` по факту boot_completed → здоровое ядро грузится нормально.
+Test cmdline: /tmp/bootimg-forgeguard.cfg. Harness: /tmp/m6-flash-harness.sh (снимает guard на BOOTED).
+
+**Тач (параллельно):** GT9xx@0x5d прошёл i2c-hang, но паниковал в `tpd_power_on` на
+ERR_PTR регулятора vtouch (EPROBE_DEFER, -517). Фикс: NULL-ить tpd->reg при ошибке
+regulator_get + IS_ERR-гард в tpd_power_on (gt9xx_driver.c). Чтоб ядро грузилось и
+guard можно было провалидировать end-to-end.

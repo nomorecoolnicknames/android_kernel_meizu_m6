@@ -108,7 +108,7 @@
 //===========Himax Option function=============
 #define HX_RST_PIN_FUNC
 //#define HX_LOADIN_CONFIG
-#define HX_AUTO_UPDATE_FW
+//#define HX_AUTO_UPDATE_FW	// M6 bring-up: disabled fw-flash-at-probe (boot-safe). Factory on-chip fw + himax_loadSensorConfig() (probe ~6125) drives touch.
 //#define HX_SMART_WAKEUP
 //#define HX_DOT_VIEW
 //#define HX_PALM_REPORT
