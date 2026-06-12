@@ -16787,3 +16787,32 @@ Test cmdline: /tmp/bootimg-forgeguard.cfg. Harness: /tmp/m6-flash-harness.sh (с
 ERR_PTR регулятора vtouch (EPROBE_DEFER, -517). Фикс: NULL-ить tpd->reg при ошибке
 regulator_get + IS_ERR-гард в tpd_power_on (gt9xx_driver.c). Чтоб ядро грузилось и
 guard можно было провалидировать end-to-end.
+
+## 2026-06-12 — ЭКРАН ОЖИЛ (коммит 5fcb6d9) + ПОПРАВКА механизма (честно)
+
+**FACT:** после отключения `&nfc` (DTS) панель ожила — белый экран + бутанимация +
+система с картинкой (перевёрнута на 180°). Первое изображение за ~месяц. Запушено:
+github nomorecoolnicknames/android_kernel_meizu_m6 `5fcb6d9` ветка work/m6-rdma0-disp-decpq-20260531.
+
+**ПОПРАВКА к гипотезе GPIO27 (charter — называю противоречие):**
+- Живое измерение `mt_gpio`: GPIO27 = `MODE0 DIR1 DOUT0` (**output LOW**) И в чёрной
+  сборке (NFC on), И в рабочей (NFC off). Уровень GPIO27 НЕ изменился.
+- => исходная формулировка «NFC роняет GPIO27 → VSN gone» по СТАЦИОНАРНОМУ УРОВНЮ
+  **REJECTED**. Экран работает при GPIO27=low.
+- FACT остаётся: единственное display-смежное изменение с чёрного #157 — отключение
+  NFC (код дисплея, ddp_dsi, LCM — не менялись). Фикс верен по исключению.
+- INFERENCE/HYPOTHESIS (новая, не подтверждена прибором): mt6605 на probe (~1.42с)
+  ПЕРЕКЛЮЧАЕТ GPIO27 (default→eint_low) ровно в окне bias-init → глитч защёлки ENN
+  TPS65132 → рейл не встаёт. Стац. уровень в обоих случаях low, различие — в ТАЙМИНГЕ
+  переключения относительно init. GPIO24(ENP)=high (LK) в обоих.
+- Надёжный фикс (бэклог): самим владеть GPIO24/27 из LCM bias-пути (как сток
+  lcd_bias_enp1/enn0), а не полагаться, что после снятия NFC их никто не трогает.
+
+**Поворот 180° + размер:** ROM/userspace, не ядро. `ro.sf.hwrotation` был 0 → панель
+смонтирована на 180°, сток Flyme компенсировал в SF (is_rotate). Живой тест:
+/system/build.prop ro.sf.hwrotation=180 + ребут. Постоянно — в device tree LineageOS
+(rom-lineage-15.1.../device/meizu/meizu_m6). fb0=720x1280 (верно), плотность 320;
+«1080p-большая» бутанимация = ассет ROM не под этот размер (bootanimation.zip), косметика.
+
+**Статус экрана: РЕШЁН на уровне ядра.** Осталось: ротация в ROM (постоянно),
+надёжность bias (владеть пинами), bootanim-ассет. Тач — отдельно (GT9xx биндинг).

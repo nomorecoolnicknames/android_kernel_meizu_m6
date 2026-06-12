@@ -93,9 +93,13 @@ static const struct timeval FRAME_INTERVAL = { 0, 30000 };	/* 33ms */
 
 static bool no_update;
 
-#define M6_EARLY_FB_WHITE_MARKER 1
-#define M6_EARLY_FB_WHITE_MARKER_TRIGGER 1
-#define M6_EARLY_FB_CONST_LAYER_ISOLATION 1
+/* M6: display works now -> disable the early-FB WHITE diagnostic markers
+ * (they deliberately filled the boot framebuffer white + an isolated const
+ * layer to prove the path; now just a white flash / glitch between LK logo
+ * and bootanimation). */
+#define M6_EARLY_FB_WHITE_MARKER 0
+#define M6_EARLY_FB_WHITE_MARKER_TRIGGER 0
+#define M6_EARLY_FB_CONST_LAYER_ISOLATION 0
 #define M6_EARLY_FB_DIAG_DELAY_MS 30000
 #define M6_EARLY_FB_DIAG_REPORT_LIMIT 10
 #define M6_EARLY_FB_DIAG_PROC_NAME "m6_mtkfb_early_diag"
@@ -891,7 +895,7 @@ static void m6_mtkfb_unregister_early_diag_proc(void)
 	m6_early_fb_diag_proc_registered = false;
 }
 
-static void m6_mtkfb_record_fb_trigger(const struct mtkfb_device *fbdev,
+static void __maybe_unused m6_mtkfb_record_fb_trigger(const struct mtkfb_device *fbdev,
 				       const struct fb_info *fbi,
 				       const struct fb_overlay_layer *fb_layer,
 				       int cfg_ret, int trigger_ret)
@@ -920,7 +924,7 @@ static void m6_mtkfb_record_fb_trigger(const struct mtkfb_device *fbdev,
 	m6_mtkfb_schedule_early_diag_report();
 }
 
-static void m6_mtkfb_config_const_white_marker(struct fb_info *fbi,
+static void __maybe_unused m6_mtkfb_config_const_white_marker(struct fb_info *fbi,
 					       const struct fb_overlay_layer *fb_layer)
 {
 #if M6_EARLY_FB_CONST_LAYER_ISOLATION
@@ -1484,7 +1488,7 @@ static int mtkfb_set_par(struct fb_info *fbi)
 	_convert_fb_layer_to_disp_input(&fb_layer, input);
 	{
 		int cfg_ret;
-		int trigger_ret = 0;
+		int __maybe_unused trigger_ret = 0;
 
 		cfg_ret = primary_display_config_input_multiple(session_input);
 #if M6_EARLY_FB_WHITE_MARKER_TRIGGER
