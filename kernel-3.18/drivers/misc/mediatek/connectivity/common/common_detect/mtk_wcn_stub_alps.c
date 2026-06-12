@@ -554,6 +554,25 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 		wifi_irq = irq_of_parse_and_map(node, 0);/* get wifi eint num */
 #endif
 #if 1
+#ifdef CONFIG_MTK_COMBO_CHIP_CONSYS_6755
+		/*
+		 * M6 (MT6755) WCN is the integrated on-die CONSYS. Its
+		 * wifi@180f0000 "interrupts=<GIC_SPI 238>" (Linux IRQ 270) is the
+		 * AHB WiFi-HIF *data* interrupt that the gen2 wlan driver claims in
+		 * wlanProbe (request_irq AHB_SLAVE_HIF). The legacy SDIO-combo eirq
+		 * path here (meant for external combo chips like MT6628 that sit on
+		 * an SDIO slot with a separate GPIO EINT) parses the SAME node and
+		 * grabs IRQ 270 first as "WIFI-eint" -> genirq flags-mismatch ->
+		 * wlanProbe request_irq fails -> "wmt call wlan probe fail(-1)" ->
+		 * WiFi func_on -2. The integrated CONSYS has no SDIO EINT, so this
+		 * request is both wrong and harmful: skip it and leave IRQ 270 for
+		 * the AHB data driver. FACT: dmesg "genirq: Flags mismatch irq 270
+		 * (AHB_SLAVE_HIF) vs (WIFI-eint)".
+		 */
+		wifi_irq = M6_WIFI_IRQ_INVALID;
+		ret = 0;
+		pr_warn("M6 CMB SDIO request_eirq: integrated CONSYS_6755, skip WIFI-eint grab (leave IRQ for AHB wlan)\n");
+#else
 		if (m6_wifi_irq_valid()) {
 			ret = request_irq(wifi_irq, mtk_wcn_cmb_sdio_eirq_handler_stub,
 				IRQF_TRIGGER_LOW, "WIFI-eint", NULL);
@@ -561,6 +580,7 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 		} else {
 			ret = -ENODEV;
 		}
+#endif
 		pr_warn("M6 CMB SDIO request_eirq source=%s parsed_irq=%u valid=%d request_ret=%d\n",
 			irq_source, wifi_irq, m6_wifi_irq_valid(), ret);
 		m6_cmb_trace_irq_node("irq-parse-result", irq_source, node,
