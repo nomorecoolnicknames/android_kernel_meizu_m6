@@ -646,6 +646,18 @@ hw-dev-detect@0{
 };
 /* CONSYS end */
 
+/* M6 BT FIX (2026-06-13): donor mt6755.dtsi disabled the XO_CONN (WCN/connectivity)
+ * PMIC clock buffer — clkbuf-config index[1]=0 (CLOCK_BUFFER_DISABLE). Stock Flyme
+ * sets it =1 (CLOCK_BUFFER_SW_CONTROL). With XO_CONN off, the chip boots (26MHz) and
+ * WiFi works (active), but the BT subsystem never gets its co-clock -> WMT func-on
+ * event never lands in btif_buf (need(6) have(0)) -> firmware assert reason 33 ->
+ * connsys coredump -> chip reset. Restore CONN buffer to stock value (match ground
+ * truth). The consys code itself warns: "Keep XO_CONN SW default on ... otherwise
+ * WMT power on failed issue" (mtk_wcn_consys_hw.c). */
+&rf_clock_buffer_ctrl {
+	mediatek,clkbuf-config = <2 1 1 1>;
+};
+
 /* SPM GPIO standardization */
 &pio {
 	spm_pins_default: default {
@@ -1013,16 +1025,43 @@ hw-dev-detect@0{
 	mediatek,kpd-hw-factory-key = <0x00>;
 	status = "okay";
 };
-/* add by changjingyang */
+/* M6 mBack FINGERPRINT (2026-06-13): board uses GOODIX, not sunwave (donor
+ * mis-selected, same class as the touch fix). Disable the old mediatek,fingerprint
+ * (sunwave) node and wire the Goodix gf_spi_tee driver per stock Flyme:
+ *  - goodix,goodix-fp SPI child under spi0 (netlink route 29)
+ *  - mediatek,goodix-fp node with EINT12 + 8 pinctrl states
+ *  - pins: IRQ=GPIO12, MISO=GPIO95(func1), RESET=GPIO13, POWER=GPIO17 (stock GPIOs) */
 &fingerprint {
 	compatible="mediatek,fingerprint";
-	status = "ok";
-	pinctrl-names="default","reset_low","reset_high","ldo_low","ldo_high";
-	pinctrl-0 = <&fingerprint_default>;
-	pinctrl-1 = <&fingerprint_rst_low>;
-	pinctrl-2 = <&fingerprint_rst_high>;
-	pinctrl-3 = <&fingerprint_ldo_low>;
-	pinctrl-4 = <&fingerprint_ldo_high>;
+	status = "disabled";
+};
+
+&spi0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	fingerprint@0 {
+		compatible = "goodix,goodix-fp";
+		reg = <0>;
+		spi-max-frequency = <0x7a1200>;
+		netlink-event = <0x1d>;
+		status = "okay";
+	};
+};
+
+&goodix_fp {
+	interrupt-parent = <&eintc>;
+	interrupts = <12 2>;
+	debounce = <12 0>;
+	status = "okay";
+	pinctrl-names = "fingerprint_irq","miso_spi","miso_pullhigh","miso_pulllow","reset_high","reset_low","power_high","power_low";
+	pinctrl-0 = <&fp_irq>;
+	pinctrl-1 = <&fp_miso_spi>;
+	pinctrl-2 = <&fp_miso_pullhigh>;
+	pinctrl-3 = <&fp_miso_pulllow>;
+	pinctrl-4 = <&fp_reset_high>;
+	pinctrl-5 = <&fp_reset_low>;
+	pinctrl-6 = <&fp_power_high>;
+	pinctrl-7 = <&fp_power_low>;
 };
 
 &pio {
@@ -1059,6 +1098,33 @@ hw-dev-detect@0{
 			output-high;
 			bias-pull-down=<00>;
 		};
+	};
+
+	/* Goodix mBack FP pin states (stock GPIOs, raw pinmux = (gpio<<8)|func):
+	 * IRQ GPIO12 (EINT12), MISO GPIO95 func1, RESET GPIO13, POWER GPIO17 */
+	fp_irq: fp_irq {
+		pins_cmd_dat { pins = <0xc00>; slew-rate = <0>; bias-pull-down = <0>; };
+	};
+	fp_miso_spi: fp_miso_spi {
+		pins_cmd_dat { pins = <0x5f01>; };
+	};
+	fp_miso_pullhigh: fp_miso_pullhigh {
+		pins_cmd_dat { pins = <0x5f00>; slew-rate = <1>; output-high; };
+	};
+	fp_miso_pulllow: fp_miso_pulllow {
+		pins_cmd_dat { pins = <0x5f00>; slew-rate = <1>; output-low; };
+	};
+	fp_reset_high: fp_reset_high {
+		pins_cmd_dat { pins = <0xd00>; slew-rate = <1>; output-high; };
+	};
+	fp_reset_low: fp_reset_low {
+		pins_cmd_dat { pins = <0xd00>; slew-rate = <1>; output-low; };
+	};
+	fp_power_high: fp_power_high {
+		pins_cmd_dat { pins = <0x1100>; slew-rate = <1>; output-high; };
+	};
+	fp_power_low: fp_power_low {
+		pins_cmd_dat { pins = <0x1100>; slew-rate = <1>; output-low; };
 	};
 	iddig_default: iddig_default {
 	};

@@ -3127,11 +3127,10 @@
 		compatible = "mediatek, dsi_te-eint";
 		status = "disabled";
 	};
-/*
-	goodix_fp: fingerprint@ {
+	goodix_fp: goodix_fp {
 		compatible = "mediatek,goodix-fp";
+		status = "disabled";
 	};
-*/
 	eint_fingerprint:eint_fingerprint{
 		 compatible = "mediatek, eint_fingerprint-eint";
 	};
