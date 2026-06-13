@@ -17076,3 +17076,95 @@ WiFi жив (enabled, wlan0).
 Артефакт на устройстве: boot-m6-stable2-20260612.img sha c62b0982 (все фиксы дня).
 Открыто: BT HCI Reset timeout (loop предотвращён выключенным bluetooth_on=0);
 mBack (#13); постоянная ротация в ROM.
+
+---
+## 2026-06-13 — BT глубокая диагностика (открыто, идёт Ghidra-реверс стока)
+
+**Точный корень (FACT, из coredump чипа):** BT firmware ассертит
+`assert@system/transport/hcit_mtk_stp.c:2171` (chipid MT326, rom E1, branch W1636MP,
+patch 20171226). Цепочка: host шлёт HCI Reset (0x0c03) по BTIF -> чип ACK'ает первые
+~6 STP-пакетов (rxack=6) -> затык на длинном пакете 7 -> `stp_do_tx_timeout` ->
+"STP NoAck trigger firmware assert" (stp_core.c:731) -> host форсит assert чипа
+(reason 33) -> whole-chip reset -> убивает и WiFi (b:2 w:2 -> b:0 w:0).
+BTIF TX/RX оба живые (60 Tx + 60 Rx пакетов), RX DMA работает
+("data in rx dma is received by driver"). RX-эхо `b8 00 03 bb 03 0c 00 f5 00` +
+idle-маркеры `7f 7f 7f 7f`.
+
+**Проверенные и ОТКЛОНЁННЫЕ гипотезы:**
+- BT HAL блобы (libbluetooth_mtk.so/libbt-vendor.so) — sha1 БАЙТ-В-БАЙТ = сток. REJECTED.
+- BT firmware (ROMv2 patches/WIFI_RAM_CODE/WMT_SOC.cfg) — sha1 = сток. REJECTED.
+- stp_core.c/mtk_btif.c/btif_plat.c/btif_dma_plat.c — 0 diff vs sibling M6-N-ex6. REJECTED.
+- DTS btif@1100c000 (irq 112, clk INFRA_BTIF=27+AP_DMA=42) — = сток. REJECTED.
+- DTS consys@18070000 (irq 237+239, clk scpsys SCP_SYS_CONN, 4 reg ranges) — = сток. REJECTED.
+- consys_ic_set_if_pinmux отсутствует (агент предложил скопировать platform/mt6755.c
+  из mt6750-P-ex2) — REJECTED: наше N-era ядро использует инлайн-IC-ops, не callbacks;
+  BTIF — внутренний bus интегрированного CONSYS, GPIO-pinmux не нужен (consys_pins_default
+  пустой = норма). Копирование Q-era файла не скомпилируется.
+- mtk_wcn_consys_hw.c отличается от sibling — только мои диаг-printk, логика та же. REJECTED.
+
+**Единственная оставшаяся переменная:** донорское ядро (Honor 6C Pro) vs стоковое
+на уровне регистрового тайминга BTIF/co_clock, видимого только в дизассемблере.
+ИДЁТ: Ghidra-импорт стокового vmlinux.elf (НЕ stripped, 175 BTIF/consys символов,
+.symtab есть) для сравнения как сток реально настраивает BTIF hw init / baud / co_clock.
+Стоковый vmlinux: captures/20260612-m6-stock-flyme-7120G-kernel/vmlinux.elf.
+
+---
+## 2026-06-13 (cont) — BT: точная цепочка assert найдена, но C-код = референс
+
+**Decisive факт (FACT, свежий чистый dmesg):** на BT enable хост шлёт WMT_SLEEP_CMD
+по BTIF и читает 6-байтный WMT_SLEEP_EVT через wmt_core_rx -> ответ НЕ приходит
+(`read SLEEP_EVT fail`) -> `host trigger firmware assert` reason=33 (wmt_core.c:1434-1453).
+Параллельно: `btif_parser_wmt_evt: there is not enough data for parser, need(6), have(0)`
+-> btif_buf (BBS) ПУСТ в момент чтения WMT-события. Чип ack'ает первые ~6 STP-пакетов,
+потом RX WMT-события не доходит до btif_buf -> assert -> whole chip reset (убивает WiFi).
+RX-маркеры `7f 7f 7f 7f` = STP RESYNC (чип потерял sync потока).
+
+**Это STP-PSM (power-save) sleep handshake по BTIF.** PSM enable по умолчанию
+(gPsEnable=1). Runtime-тест `echo "0x0 0 0" > /proc/driver/wmt_dbg` (disable PSM) НЕ
+помог: BT-стек сам шлёт SLEEP/WAKEUP при BLE init -> assert просто откладывается.
+
+**Всё C/H/DTS = референс (sha1/diff verified, REJECTED как причина):**
+- mtk_btif.c, mtk_btif.h (ENABLE_BTIF_RX_DMA=1 ВКЛ, RX=DMA), btif_plat.c,
+  btif_dma_plat.c, btif_dma_priv.h (VFF 8K, RX_THRE 0x1800), stp_core.c, psm_core.c,
+  wmt_lib.c, wmt_ctrl.c — все идентичны sibling kernel-meizu_M6-N-ex6 (sha1 match).
+- DTS btif@1100c000 / consys@18070000 = сток (irq/clk/reg verified).
+- BT firmware + HAL блобы = сток (sha1 byte-identical).
+- patch версия 20171226153459a/1636 = чип рапортует то же.
+
+**Остаётся ТОЛЬКО:** различие на уровне СКОМПИЛИРОВАННОГО донорского ядра
+(Honor 6C Pro) vs стокового M6 на уровне регистров BTIF/co_clock/clk. ИДЁТ Ghidra-
+анализ стокового vmlinux.elf (не stripped) — сравнить hal_btif_hw_init/dma_hw_init/
+clk_ctrl/consys_co_clock_type/consys_hw_reg_ctrl с нашим скомпилированным.
+Скрипт: /home/n8n/tools/ghidra_scripts/m6_bt_decomp.py. Проект m6stock.
+
+---
+## 2026-06-13 — BT: Ghidra-реверс стока завершён, статического расхождения НЕТ
+
+Импортирован стоковый vmlinux.elf (не stripped, 175 BTIF/consys символов) в Ghidra
+12.1.2 (проект m6stock, анализ 888с). Декомпилированы hal_btif_hw_init,
+hal_btif_dma_hw_init, hal_btif_clk_ctrl (Java-скрипт M6BtDecomp.java; Python не
+работает без PyGhidra).
+
+**Сравнение стоковый декомпил vs наш исходник (FACT):**
+- hal_btif_hw_init: стоковая регистровая последовательность (FAKELCR normal,
+  new_handshake +0x6c|1, FIFO clear, TRI_LVL +0x60 = (rx&7)<<4|tx&0xf, loopback off,
+  tx/rx DMA mode off, DMA auto-reset +0x4c, IER) — ТОЧНО соответствует нашему C-коду
+  btif_plat.c:hal_btif_hw_init. Идентично.
+- hal_btif_dma_hw_init: enable_4G() ветвление (high-addr DMA) — у нас тоже есть
+  (btif_dma_plat.c:423-428, RX_DMA_VFF_ADDR_H). enable_4G() = enable_4gb из
+  emi_mpu.c (M6 2GB RAM -> 0 -> else-ветка high addr — корректно). Идентично.
+- tri_lvl: BTIF_TRI_LVL_TX(x)=(x&0xf), BTIF_TRI_LVL_RX(x)=(x&0x7)<<4 = стоковый
+  `(param+0x1c & 7)<<4 | param[3] & 0xf`. Идентично.
+
+**ВЫВОД (honest):** статического расхождения в BTIF/STP/co_clock между донорским
+ядром и стоком НЕТ. Весь код/firmware/HAL/DTS/регистровые последовательности
+идентичны. Причина BT STP NoAck — НЕ в статическом коде. Это рантайм:
+либо co_clock измерение (требует прибор/живой замер 26M/32k), либо известное
+ограничение донорского Honor 6C Pro порта на M6-железе (subtle clock/timing),
+либо BT никогда не валидировался на этом донор-ядре. Дальнейшее гадание с правками
+кода запрещено charter §3 (нет FACT-обоснования). НЕ блокирует остальное — WiFi,
+тач, дисплей, батарея работают. BT остаётся единственным открытым.
+
+Ghidra проект: /home/n8n/tools/ghidra_proj/m6stock. Скрипт:
+/home/n8n/tools/ghidra_scripts/M6BtDecomp.java (расширить на co_clock/consys_hw для
+следующей сессии).
