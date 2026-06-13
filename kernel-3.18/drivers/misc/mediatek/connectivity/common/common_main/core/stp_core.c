@@ -1325,6 +1325,19 @@ static VOID stp_process_packet(VOID)
 			if (stp_core_ctx.parser.type == BT_TASK_INDX) {
 				static const UINT8 rst_buf[7] = { 0x04, 0x0e, 0x04, 0x01, 0x3, 0xc, 0x00 };
 
+				/* M6BT Probe 3: fully framed, CRC-valid packet delivered to
+				 * BT_TASK_INDX (chip->host). A CommandComplete for HCI Reset
+				 * (04 0e 04 01 03 0c 00) appearing here before any assert => chip
+				 * answered 0x0c03 => H2 falsified at the HCI layer. rx_buf holds the
+				 * HCI event, rx_counter its length. Placed AFTER rst_buf decl: tree
+				 * builds -std=gnu89 -Wdeclaration-after-statement (Makefile:404,762). */
+				pr_err("M6BT-RXDISP: BT pkt len=%d seq=%d ack=%d evt[%02x %02x %02x %02x %02x %02x]\n",
+				       stp_core_ctx.rx_counter, stp_core_ctx.parser.seq, stp_core_ctx.parser.ack,
+				       stp_core_ctx.rx_buf[0], stp_core_ctx.rx_counter > 1 ? stp_core_ctx.rx_buf[1] : 0,
+				       stp_core_ctx.rx_counter > 2 ? stp_core_ctx.rx_buf[2] : 0,
+				       stp_core_ctx.rx_counter > 3 ? stp_core_ctx.rx_buf[3] : 0,
+				       stp_core_ctx.rx_counter > 4 ? stp_core_ctx.rx_buf[4] : 0,
+				       stp_core_ctx.rx_counter > 5 ? stp_core_ctx.rx_buf[5] : 0);
 				if (!osal_strncmp(stp_core_ctx.rx_buf, (const PINT8)rst_buf, 7))
 					osal_printtimeofday("############ BT Rest end <--");
 			}
@@ -2287,6 +2300,15 @@ static INT32 stp_parser_data_in_full_mode(UINT32 length, UINT8 *p_data)
 				stp_core_ctx.rx_counter = stp_core_ctx.parser.length;
 				stp_change_rx_state(MTKSTP_SYNC);
 				*(stp_core_ctx.rx_buf + stp_core_ctx.rx_counter) = '\0';
+				/* M6BT Probe 4: firmware ASSERT / coredump packet parsed in BTIF
+				 * full mode. type==STP_TASK_INDX (5) is the coredump/assert channel
+				 * that carried "<ASSERT> hcit_mtk_stp.c #2171" in the live capture
+				 * (operator-capture-v2-20260613-132950/dmesg-post.txt:7665). The text
+				 * here timestamps the assert against probes 1/3, identifying which
+				 * host TX preceded it. */
+				pr_err("M6BT-ASSERT: fwmsg type=%d len=%d text=\"%.80s\"\n",
+				       stp_core_ctx.parser.type, stp_core_ctx.rx_counter,
+				       (char *)stp_core_ctx.rx_buf);
 				/* STP_ERR_FUNC("%s [%d]\n", stp_core_ctx.rx_buf, stp_core_ctx.rx_counter); */
 				/*Trace32 Dump */
 				if (STP_IS_ENABLE_DBG(stp_core_ctx) &&
@@ -2391,6 +2413,17 @@ INT32 mtk_wcn_stp_parser_data(PUINT8 buffer, UINT32 length)
 	INT32 i;
 	PUINT8 p_data;
 	INT32 ret = 0;
+
+	/* M6BT Probe 2: REAL registered BTIF rx_cb entry. This function IS the cb
+	 * registered at wmt_ctrl.c:522 via mtk_wcn_stp_rxcb_register(
+	 * (MTK_WCN_BTIF_RX_CB) mtk_wcn_stp_parser_data). Output here => chip is
+	 * delivering bytes to host => H2 (chip silent) falsified at the BTIF link
+	 * layer. (stp_btif.c:192 mtk_wcn_consys_stp_btif_rx stub is NOT this path.) */
+	if (length)
+		pr_err("M6BT-RXENTRY: btif_cb len=%u b[%02x %02x %02x %02x %02x %02x]\n",
+		       length, buffer[0], length > 1 ? buffer[1] : 0, length > 2 ? buffer[2] : 0,
+		       length > 3 ? buffer[3] : 0, length > 4 ? buffer[4] : 0,
+		       length > 5 ? buffer[5] : 0);
 #ifdef DEBUG_DUMP_PACKET_HEAD
 	static UINT32 counter;
 
@@ -2660,6 +2693,14 @@ DONT_MONITOR:
 	if (type == BT_TASK_INDX) {
 		static const UINT8 rst_buf[4] = { 0x01, 0x03, 0x0c, 0x00 };
 
+		/* M6BT Probe 1: every BT_TASK_INDX host->chip TX. HAL writes /dev/stpbt ->
+		 * stp_chrdev_bt.c:206 mtk_wcn_stp_send_data(...,BT_TASK_INDX) -> here.
+		 * First 4 bytes == 01 03 0c 00 => HAL sent HCI Reset => H3 falsified.
+		 * Total absence across the session => H3 (host never sends) confirmed. */
+		pr_err("M6BT-TX: BT->chip len=%u cmd[%02x %02x %02x %02x %02x %02x]\n",
+		       length, buffer[0], length > 1 ? buffer[1] : 0, length > 2 ? buffer[2] : 0,
+		       length > 3 ? buffer[3] : 0, length > 4 ? buffer[4] : 0,
+		       length > 5 ? buffer[5] : 0);
 		if (!osal_strncmp(buffer, (const PINT8)rst_buf, 4))
 			osal_printtimeofday("############ BT Rest start -->");
 	}

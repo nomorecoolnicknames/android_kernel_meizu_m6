@@ -423,22 +423,34 @@ INT32 wmt_core_func_ctrl_cmd(ENUM_WMTDRV_TYPE_T type, MTK_WCN_BOOL fgEn)
 	u4WmtCmdPduLen = WMT_HDR_LEN + rWmtPktCmd.u2SduLen;	/* (6) */
 	u4WmtEventPduLen = WMT_HDR_LEN + WMT_STS_LEN;	/* (5) */
 
+	if (WMTDRV_TYPE_BT == type)
+		WMT_ERR_FUNC("M6BT: func_ctrl_cmd TX op=0x%x type=%d en=%d cmdLen=%d\n",
+			     rWmtPktCmd.eOpCode, type, rWmtPktCmd.aucParam[1], u4WmtCmdPduLen);
 	do {
 		fgFail = MTK_WCN_BOOL_TRUE;
 /* iRet = (*kal_stp_tx)((PUINT8)&rWmtPktCmd, u4WmtCmdPduLen, &u4WrittenSize); */
 		iRet =
 		    wmt_core_tx((PUINT8) &rWmtPktCmd, u4WmtCmdPduLen, &u4WrittenSize,
 				MTK_WCN_BOOL_FALSE);
+		if (WMTDRV_TYPE_BT == type)
+			WMT_ERR_FUNC("M6BT: func_ctrl_cmd TX done iRet=%d written=%d\n", iRet, u4WrittenSize);
 		if (iRet) {
 			WMT_ERR_FUNC("WMT-CORE: wmt_func_ctrl_cmd kal_stp_tx failed\n");
 			break;
 		}
 
 		iRet = wmt_core_rx((PUINT8) &rWmtPktEvent, u4WmtEventPduLen, &u4ReadSize);
+		if (WMTDRV_TYPE_BT == type)
+			WMT_ERR_FUNC("M6BT: func_ctrl_cmd RX iRet=%d readSize=%d evtType=0x%x evtOp=0x%x sts=%d\n",
+				     iRet, u4ReadSize, rWmtPktEvent.eType, rWmtPktEvent.eOpCode,
+				     rWmtPktEvent.aucParam[0]);
 		if (iRet) {
 			WMT_ERR_FUNC
 				("WMT firwmare no rx event, trigger f/w assert. sub-driver type:%d, state(%d)\n",
 				type, fgEn);
+			if (WMTDRV_TYPE_BT == type)
+				WMT_ERR_FUNC("M6BT: SILENT - no BT rx event (chip_type=%d, SOC skips coredump)\n",
+					     wmt_detect_get_chip_type());
 			if (wmt_detect_get_chip_type() == WMT_CHIP_TYPE_COMBO) {
 				ctrlPa1 = type;
 				ctrlPa2 = 32;
@@ -483,8 +495,12 @@ INT32 wmt_core_func_ctrl_cmd(ENUM_WMTDRV_TYPE_T type, MTK_WCN_BOOL fgEn)
 
 	if (MTK_WCN_BOOL_FALSE == fgFail) {
 		/* WMT_INFO_FUNC("WMT-CORE: wmt_func_ctrl_cmd OK!\n"); */
+		if (WMTDRV_TYPE_BT == type)
+			WMT_ERR_FUNC("M6BT: func_ctrl_cmd OK (BT,en=%d)\n", fgEn);
 		return 0;
 	}
+	if (WMTDRV_TYPE_BT == type)
+		WMT_ERR_FUNC("M6BT: func_ctrl_cmd FAIL return -2 (BT,en=%d)\n", fgEn);
 	WMT_ERR_FUNC("WMT-CORE: wmt_func_ctrl_cmd 0x%x FAIL\n", rWmtPktCmd.aucParam[0]);
 	return -2;
 }
@@ -652,6 +668,14 @@ INT32 wmt_core_init_script(struct init_script *script, INT32 count)
 
 		osal_memset(evtBuf, 0, sizeof(evtBuf));
 		iRet = wmt_core_rx(evtBuf, script[i].evtSz, &u4Res);
+		/* M6BT Probe 5: WMT-layer blocking RX result per init step, incl.
+		 * init_table_4 "set stp" (WMT_SET_STP_CMD) and init_table_5 "query stp"
+		 * (WMT_QUERY_STP_CMD) per wmt_ic_soc.c:742/746. ret==0 with the expected
+		 * evtSz proves the chip WMT firmware RX-responds, isolating any BT failure
+		 * to the BT sub-function rather than WMT bring-up. */
+		pr_err("M6BT-WMT: initstep \"%s\" ret=%d rx=%u exp=%d evt[%02x %02x %02x %02x %02x]\n",
+		       script[i].str, iRet, u4Res, script[i].evtSz,
+		       evtBuf[0], evtBuf[1], evtBuf[2], evtBuf[3], evtBuf[4]);
 		if (iRet || (u4Res != script[i].evtSz)) {
 			WMT_ERR_FUNC("WMT-CORE: read (%s) iRet(%d) evt len err(rx:%d, exp:%d)\n",
 				     script[i].str, iRet, u4Res, script[i].evtSz);
@@ -1227,6 +1251,8 @@ static INT32 opfunc_func_on(P_WMT_OP pWmtOp)
 			iRet =
 			    (*(gpWmtFuncOps[drvType]->func_on)) (gMtkWmtCtx.p_ic_ops,
 								 wmt_conf_get_cfg());
+			if (WMTDRV_TYPE_BT == drvType)
+				WMT_ERR_FUNC("M6BT: gpWmtFuncOps[BT]->func_on returned iRet=%d\n", iRet);
 			if (0 != iRet) {
 				if (WMTDRV_TYPE_WIFI == drvType
 				    && WMT_HIF_UART == gMtkWmtCtx.wmtHifConf.hifType) {

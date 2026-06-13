@@ -17168,3 +17168,139 @@ hal_btif_dma_hw_init, hal_btif_clk_ctrl (Java-скрипт M6BtDecomp.java; Pyth
 Ghidra проект: /home/n8n/tools/ghidra_proj/m6stock. Скрипт:
 /home/n8n/tools/ghidra_scripts/M6BtDecomp.java (расширить на co_clock/consys_hw для
 следующей сессии).
+
+## 2026-06-13 КАМЕРА — корень: пустой/невалидный камерный NVRAM (LSC/TSF) → NULL-deref в libcamalgo
+
+Устройство 711HEBSR277K5, образ на устройстве `boot-m6-stable2-20260612.img`
+sha c62b0982, LineageOS 15.1 (fingerprint …900fe8e951). Камерный стек:
+prebuilt Meizu/MTK MT6750 blobs (camera.mt6750.so, libcamalgo.so, libfeatureio.so,
+libcameracustom.so, libcam.*), провайдер `legacy/0` → HAL1 `device@1.0`, HAL живёт
+в `/system/bin/mediaserver` (passthrough).
+
+**Сенсоры исправны (FACT, dmesg):**
+- Задний **IMX278 13MP** (`imx278trulymipiraw`, id 0x0278): open ok, sensor_init ok,
+  входит в preview `13M@30fps 4-lane MIPI`, идут preview-буферы 800x600.
+- Передний **OV8856 8MP** (`ov8856mipiraw`, принят alt-id 0x885a): живой, но
+  `OV8856_OTP no group has valid data` → lenc/wb OTP-калибровка пустая.
+- Обе камеры энумерятся: `CameraProviderManager: legacy/0 ready with 2 camera devices`.
+
+**Симптом (FACT):** приложение `com.android.camera2` показывает диалог
+"Camera error — Can't connect to the camera". В логе: камера ОТКРЫВАЕТСЯ
+(`onCameraOpened`), идёт preview (`First preview frame received`), затем через
+~1.5 c **нативно падает mediaserver** → `tombstoned: Tombstone written` →
+`Camera: Error 100` (CAMERA_ERROR_SERVER_DIED) → `CameraDeviceState → ERROR` →
+`onCameraOpenFailure`. Повторяется на каждом открытии, переживает ребут.
+
+**Корень — точный backtrace (FACT, tombstone_24/36/38, идентичны):**
+```
+signal 11 SIGSEGV, fault addr 0x90 (null deref), thread F858THREAD (ISP tuning)
+#00 libcamalgo.so   TsfCore::Shading_TSF_int_gain(void*, int, int, int*, int*)+200
+#01 libcamalgo.so   TsfCore::tsf_tbl_crcb_gain(int*, int)
+#02 libcamalgo.so   TsfCore::TsfCoreProcess()
+#03 libcamalgo.so   AppTsf::TsfMain()
+#04 libfeatureio.so NSIspTuning::LscMgr2RtoCycle::tsfRun()
+#05 libfeatureio.so NSIspTuning::LscMgr2Rto::tsfPostCmd()
+#06 libfeatureio.so NSIspTuning::LscMgr2::threadLoop()
+```
+Поток LSC (lens-shading correction) запускает online-TSF (`tsfRun`); алгоритм
+`Shading_TSF_int_gain` разыменовывает NULL-указатель TSF-таблицы (+0x90).
+
+**Почему NULL (FACT):** камерный NVRAM-калибровочный набор отсутствует/пуст.
+- `/nvdata/media/` содержит только `CAMERA_VERSION` (82 байта **полных нулей**),
+  ни одной таблицы `CAMERA_TSF/SHADING/3A/LENS`.
+- `/nvdata/AllFile` определяет слоты `CAMERA_Para/3A/SHADING/DEFECT/SENSOR/LENS/
+  VERSION/FEATURE/GEOMETRY/SHADING2..12` — но **записи `CAMERA_TSF` НЕТ** (а
+  крашащий код читает именно `NvramDrvBase::getBufIF<CAMERA_TSF_TBL_STRUCT>`).
+- `nvbuf_util readRamVersion` для всех nvRamId возвращает `isp=0,3a=0,sh=0,lens=0,
+  pl=0,stb=0,tsf=0,...` (все версии 0 = чистый/неинициализированный NVRAM).
+- `AppTsf TsfInit: Not Valid AWB Golden Gain R(0)G(0)B(0) set to 512`,
+  `Not Valid AWB Unit Gain ... 512`, `[TsfInit][Error] Lsc config incorrect!`.
+
+**Проверенные обходы (REJECTED как недостаточные):**
+- `setprop debug.tsfcore.enable 0` — НЕ гейтит крашащий путь (это про debug-дампы);
+  `LscMgr2::threadLoop → tsfRun` идёт безусловно при включённом LSC → краш остаётся
+  (tombstone_36, тот же backtrace).
+- Удаление зануленного `/nvdata/media/CAMERA_VERSION` (с бэкапом, восстановлено) —
+  переключает HAL на `NvramDrv [readDefaultData]` (дефолты из блоба), но дефолты
+  не содержат валидной LSC/TSF-калибровки для этих модулей → `Lsc config incorrect`
+  → краш ВОЗВРАЩАЕТСЯ (tombstone_38, тот же backtrace `Shading_TSF_int_gain`).
+
+**INFERENCE:** на стоковом Flyme для этих модулей (IMX278/OV8856) либо был валидный
+камерный NVRAM (где TSF-калибровка корректна или `isEnableTSF`=0), либо стоковый
+`isEnableTSF(sensorId)` возвращал false. У нас blank NVRAM → `isEnableTSF` читает
+мусор → true → online-TSF стартует без таблицы → NULL-deref. `libcameracustom.so`
+экспортирует `GetCameraTsfDefaultTbl(uint, CAMERA_TSF_TBL_STRUCT*)` и
+`isEnableTSF(int)`, но fallback на default-tbl для активного сенсора не срабатывает.
+
+**Фикс (нужен артефакт, charter §3 — без него дальнейшее гадание = slop):**
+1. (правильный) Залить ВАЛИДНЫЙ камерный NVRAM (TSF/SHADING/LSC/3A) — источник:
+   стоковый Flyme NVRAM этого устройства (защищённый раздел `/nvram` = mmcblk0p18,
+   либо `/nvdata` = mmcblk0p6 из стокового дампа). Бинарного дампа стокового
+   камерного NVRAM в captures пока НЕТ (только текстовые листинги) — требуется
+   снять дамп `/nvram`/`/nvdata` со стока или с этого устройства до перепрошивки.
+2. (альтернатива) Принудительно `isEnableTSF`→0 / отключить LSC-online-TSF на
+   уровне camera-customization. Блоб закрыт; вариант — LD_PRELOAD-перехват
+   `isEnableTSF`/`Shading_TSF_int_gain` (как уже сделан glconsumer-compat шим
+   `libm6_camera_glconsumer_compat.so`), либо NULL-guard вокруг TSF-таблицы.
+   Это даст рабочую камеру БЕЗ lens-shading коррекции (для bring-up приемлемо).
+
+**ВЫВОД (honest):** камера — НЕ мёртвое железо. Сенсоры открываются и превьюят;
+падает ISP-поток lens-shading из-за отсутствующей калибровочной NVRAM. Это
+последний крупный софтовый дефект камеры после долгой цепочки уже решённого
+(регуляторы vcamd, sensorlist ABI, glconsumer-compat, media_profiles). Не блокирует
+остальные компоненты. Артефакты: tombstone_24/36/38 (backtrace), capture
+20260610-1305-m6-camera-nvram-tsf-live (подтверждает пустой /nvdata/media с 10 июня).
+
+### 2026-06-13 КАМЕРА — КРАШ УСТРАНЁН (LD_PRELOAD TSF-bypass шим)
+
+FACT: камерный краш ИСПРАВЛЕН. Подход — LD_PRELOAD-шим
+`libm6_camera_tsf_bypass.so`, перехватывающий MTK ISP TSF-функции и обходящий
+NULL-дереф из-за отсутствующей TSF/LSC-калибровки (NVRAM populate не требуется).
+
+Механизм (FACT, проверено пошагово на железе):
+- libcamalgo.so собран БЕЗ -Bsymbolic → все вызовы экспортируемых символов идут
+  через PLT (`bl <sym>@plt`), поэтому LD_PRELOAD преемптит даже внутрибиблиотечные
+  вызовы. Подтверждено: заглушка листа `TsfCore::Shading_TSF_int_gain` сдвинула
+  SIGSEGV вверх с него (fault 0x90) на `TsfCore::TsfCoreProcess()+852` (fault 0x50)
+  — значит перехват РАБОТАЕТ, а пустая TSF-таблица роняет в нескольких точках.
+- `isEnableTSF()→0` НЕ помогает (это гейт HAL3-пути; на HAL1 `LscMgr2::threadLoop`
+  гонит online-TSF безусловно) — REJECTED как единственный рычаг.
+- Рабочее решение: заглушить весь online-TSF subtree на `TsfCore::TsfCoreProcess()`
+  (после её возврата `AppTsf::TsfMain()` делает только эпилог без дереференсов →
+  краш устранён). Шим экспортит три символа libcamalgo/cameracustom:
+  `_ZN7TsfCore14TsfCoreProcessEv` (стаб→0), `_ZN7TsfCore20Shading_TSF_int_gainEPviiPiS1_`
+  (нейтральный gain 1024, defensive), `_Z11isEnableTSFi` (→0, harmless).
+
+Сборка (off-device): тулчейн `/srv/forge/toolchains/aarch64-linux-android-4.9`,
+`g++ -shared -fPIC -O2 -nostdlib -fno-exceptions -fno-rtti` (без NEEDED-зависимостей,
+DYN, SONAME). Исходник+бинарь: capture
+`20260613-camera-tsf-bypass-fix-711HEBSR277K5/` (.so sha256
+aa7647695c9999565422b39675d9488ee4be22f551573d878a76ef4eeaf9adb4) и
+`/srv/forge/work/m6-camera-tsf-bypass/`.
+
+Инъекция (live на /system, переживает ребут): шим лежит в
+`/system/vendor/lib64/libm6_camera_tsf_bypass.so` (root:root 644, ctx
+`u:object_r:system_file:s0` как у glconsumer-шима); дописан в `setenv LD_PRELOAD`
+ОБОИХ rc — `/system/etc/init/mediaserver.rc` и
+`/vendor/etc/init/android.hardware.camera.provider@2.4-service.rc` (оба процесса
+мапят libcamalgo). Бэкапы rc: `/data/local/tmp/{mediaserver,provider}.rc.bak`.
+
+Верификация (FACT): после фикса камера открывается, `First preview frame received`,
+HAL гонит кадры (`MtkCam/DisplayClient` 207 кадров/4с), AE крутится; mediaserver
+СТАБИЛЕН — 3 цикла открытия подряд, pid не менялся (503), НОВЫХ tombstone НЕТ
+(были tombstone_44=Shading_TSF, _47=TsfCoreProcess до фикса). Диалог
+"Can't connect to the camera" больше НЕ появляется.
+
+ОТКРЫТО (вторично, НЕ краш): превью в скрине чёрное — потому что AE измеряет
+яркость сцены РОВНО 0 (`m_u4CWValue/m_u4AccW = 0/0`, AE задрал экспозицию в макс
+30мс + gain 8x + просит +5.5EV) = задняя камера лежит объективом в стол, света нет;
+плюс screencap не захватывает hardware-overlay. Затвор `enabled=false` т.к. AE не
+сходится на нулевой яркости. Нужна проверка на освещённой сцене (глаза юзера) —
+имиджинг-пайплайн рабочий по всем косвенным метрикам. Front-cam свитч в этом
+camera2-билде отсутствует (только Options+Shutter).
+
+TODO reproducibility: live-правки /system НЕ в исходном дереве (как и glconsumer-шим
+— тоже был live-push). Для чистой сборки: добавить Android.mk-модуль шима +
+proprietary-files + rc LD_PRELOAD-правки в rom-lineage-15.1 device tree.
+Долгосрочно «правильно» — залить валидный камерный NVRAM из стока (уберёт и
+кривой цвет/AE, и нужду в шиме).
