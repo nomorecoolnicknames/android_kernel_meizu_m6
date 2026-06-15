@@ -71,6 +71,19 @@ stCAM_CAL_LIST_STRUCT g_camCalList[] = {
 	{S5K2P8_SENSOR_ID, 0xA2, CMD_AUTO, cam_cal_check_mtk_cid},
 	{OV8858_SENSOR_ID, 0xA2, CMD_AUTO, cam_cal_check_mtk_cid},
 
+	/*
+	 * M6 (M711H) sensors: rear IMX278, front OV8856/OV8856JSL. Stock Flyme reads
+	 * per-unit cal from a GT24C64A EEPROM @0x50 (slaveID 0xA0>>1) on each camera
+	 * bus (FACT: stock vmlinux CAM_CAL_DRV/CAM_CAL_DRV1 board_info addr 0x50).
+	 * Without these the common cam_cal driver finds no match -> no per-unit cal.
+	 * SPECULATIVE: auto-memory (2026-06-13) reports on-device /nvdata/media empty,
+	 * so this only does anything if i2cdetect ACKs 0x50 on i2c-1/i2c-2; additive,
+	 * cannot regress. cat24c16 reader already registered above.
+	 */
+	{IMX278_SENSOR_ID, 0xA0, CMD_AUTO, cam_cal_check_mtk_cid},
+	{OV8856_SENSOR_ID, 0xA0, CMD_AUTO, cam_cal_check_mtk_cid},
+	{OV8856JSL_SENSOR_ID, 0xA0, CMD_AUTO, cam_cal_check_mtk_cid},
+
 	/*  ADD before this line */
 	{0, 0, CMD_NONE, 0} /*end of list*/
 };

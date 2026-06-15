@@ -93,9 +93,9 @@ static DEFINE_MUTEX(g_mutex);
 /* Pinctrl */
 /* ============================== */
 static struct pinctrl *flashlight_pinctrl;
-/*jiin.wang remove not use pinctrl*/
-//static struct pinctrl_state *flashlight_hwen_high;
-//static struct pinctrl_state *flashlight_hwen_low;
+/* M6: AW3643 needs HWEN pin driven (un-commented) */
+static struct pinctrl_state *flashlight_hwen_high;
+static struct pinctrl_state *flashlight_hwen_low;
 static struct pinctrl_state *flashlight_torch_high;
 static struct pinctrl_state *flashlight_torch_low;
 static struct pinctrl_state *flashlight_flash_high;
@@ -113,8 +113,7 @@ int flashlight_gpio_init(struct platform_device *pdev)
 		logI("Cannot find flashlight pinctrl!");
 		ret = PTR_ERR(flashlight_pinctrl);
 	}
-#if 0
-	/* Flashlight HWEN pin initialization */
+	/* Flashlight HWEN pin initialization (M6: AW3643 EN on GPIO99) */
 	flashlight_hwen_high = pinctrl_lookup_state(flashlight_pinctrl, "hwen_high");
 	if (IS_ERR(flashlight_hwen_high)) {
 		ret = PTR_ERR(flashlight_hwen_high);
@@ -126,7 +125,6 @@ int flashlight_gpio_init(struct platform_device *pdev)
 		ret = PTR_ERR(flashlight_hwen_low);
 		logI("%s : init err, flashlight_hwen_low\n", __func__);
 	}
-#endif
 	/* Flashlight TORCH pin initialization */
 	flashlight_torch_high = pinctrl_lookup_state(flashlight_pinctrl, "torch_high");
 	if (IS_ERR(flashlight_torch_high)) {
@@ -170,8 +168,7 @@ int flashlight_gpio_set(int pin , int state)
 	}
 
 	switch (pin) {
-	/*jiin.wang remove not use pinctrl init*/
-#if 0
+	/* M6: AW3643 HWEN drive enabled */
 	case FLASHLIGHT_PIN_HWEN:
 		if (state == STATE_LOW && !IS_ERR(flashlight_hwen_low))
 			pinctrl_select_state(flashlight_pinctrl, flashlight_hwen_low);
@@ -180,7 +177,6 @@ int flashlight_gpio_set(int pin , int state)
 		else
 			logI("%s : set err, pin(%d) state(%d)\n", __func__, pin, state);
 		break;
-#endif
 	case FLASHLIGHT_PIN_TORCH:
         if (state == STATE_LOW && !IS_ERR(flashlight_torch_low)){
             wake_unlock(&flashlight_control_lock);

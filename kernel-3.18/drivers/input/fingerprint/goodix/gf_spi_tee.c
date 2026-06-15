@@ -805,6 +805,14 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
+		/*
+		 * M6 mBack ground-truth probe: log every (key,value) the FP HAL sends
+		 * per physical gesture (tap / press / long-press / swipe) so the
+		 * Back + Recents mapping is set from evidence, not guessed (avoids
+		 * regressing the already-working HOME). Remove once mapping is locked.
+		 */
+		pr_err("[M6_FP] KEY_EVENT key=%d value=%d\n", gf_key.key, gf_key.value);
+
 		if (GF_KEY_HOME == gf_key.key) {
 			key_event = GF_INPUT_HOME_KEY;
 		} else if (GF_KEY_POWER == gf_key.key) {

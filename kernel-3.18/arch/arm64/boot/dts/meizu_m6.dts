@@ -65,7 +65,7 @@
 	};
 	led6:led@6 {
 		compatible = "mediatek,lcd-backlight";
-		led_mode = <4>;
+		led_mode = <5>;	/* M6: CUST_BLS_PWM DISP_PWM like stock (was <4> inert) */
 		data = <1>;
 		pwm_config = <0 0 0 0 0>;
 	};
@@ -80,6 +80,14 @@
 		vib_timer = <25>;
 		vib_limit = <9>;
 		vib_vol= <5>;
+	};
+	/* M6: AWINIC AW8738 1-wire speaker PA (/dev/aw8738), EN = GPIO14, per stock */
+	ext_pa_aw8738 {
+		compatible = "mediatek,aw8738-pa";
+		pinctrl-names = "default", "en_pin";
+		pinctrl-0 = <&aw8738_pins_default>;
+		pinctrl-1 = <&aw8738_pins_en>;
+		status = "okay";
 	};
 /*  start sensor */
 	cust_accel {
@@ -371,14 +379,42 @@ hw-dev-detect@0{
 			output-low;
 		};
 	};
+	/* M6: AW3643 flash EN/HWEN = GPIO99 (stock flash0_en0/en1, 0x6300) */
+	flashlight_pins_hwen_high: hwen_high {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO99__FUNC_GPIO99>;
+		    slew-rate = <1>;
+			output-high;
+		};
+	};
+	flashlight_pins_hwen_low: hwen_low {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO99__FUNC_GPIO99>;
+		    slew-rate = <1>;
+			output-low;
+		};
+	};
+	/* M6: AW8738 speaker-PA EN pin = GPIO14 (driver drives level via gpiolib 14) */
+	aw8738_pins_default: aw8738_default {
+	};
+	aw8738_pins_en: aw8738_en {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO14__FUNC_GPIO14>;
+			slew-rate = <1>;
+			bias-disable;
+			output-high;
+		};
+	};
 };
 &flashlight {
-	pinctrl-names = "default","flashlight_high","flashlight_low","torch_high","torch_low";
+	pinctrl-names = "default","flashlight_high","flashlight_low","torch_high","torch_low","hwen_high","hwen_low";
 	pinctrl-0 = <&flashlight_pins_default>;
 	pinctrl-1 = <&flashlight_pins_flashlight_high>;
 	pinctrl-2 = <&flashlight_pins_flashlight_low>;
 	pinctrl-3 = <&flashlight_pins_torch_high>;
 	pinctrl-4 = <&flashlight_pins_torch_low>;
+	pinctrl-5 = <&flashlight_pins_hwen_high>;
+	pinctrl-6 = <&flashlight_pins_hwen_low>;
 	status = "okay";
 };
 /*jijin.wang add FLASHLIGHT ADD GPIO END*/
@@ -756,7 +792,7 @@ hw-dev-detect@0{
 	};
 	aud_pins_extamp_high: audexamphigh {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO12__FUNC_GPIO12>;/*modify by caozhg for support EXTAP*/
+			pins = <PINMUX_GPIO115__FUNC_GPIO115>;/*ext spk amp EN = GPIO115 per stock Flyme DTB (was wrongly GPIO12)*/
 			slew-rate = <1>;
 			output-high;
 		};
@@ -764,7 +800,7 @@ hw-dev-detect@0{
 
 	aud_pins_extamp_low: audexamplow {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO12__FUNC_GPIO12>;/*modify by caozhg for support EXTAP*/
+			pins = <PINMUX_GPIO115__FUNC_GPIO115>;/*ext spk amp EN = GPIO115 per stock Flyme DTB (was wrongly GPIO12)*/
 			slew-rate = <1>;
 			output-low;
 		};
@@ -1213,6 +1249,17 @@ hw-dev-detect@0{
 		compatible = "mediatek,msensor2";
 		reg = <0x0c>;
 		status = "disabled";
+	};
+	/*
+	 * M6 flashlight: AW3643 dual-LED flash IC. Stock Flyme binds it as
+	 * strobe_main@63 on i2c1 (FACT: stock.dts line 2278, vmlinux AW3643_probe
+	 * hardcodes addr 0x63). Declared here so leds-AW3643 binds deterministically
+	 * instead of relying on legacy MTK board-info. HWEN=GPIO99 (see &flashlight).
+	 */
+	strobe_main@63 {
+		compatible = "mediatek,strobe_main";
+		reg = <0x63>;
+		status = "okay";
 	};
 };
 

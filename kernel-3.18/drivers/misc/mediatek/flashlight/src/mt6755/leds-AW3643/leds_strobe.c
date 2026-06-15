@@ -300,20 +300,20 @@ static int leds_AW3643_i2c_probe(struct i2c_client *client, const struct i2c_dev
 		cnt --;
 		msleep(10);
 	}
-	if(!cnt)
-	{
-		ktd2685_use = 1;
-		leds_AW3643_present = 0;
-		pr_err("[M6_FLASH] aw3643_i2c_probe absent addr=0x%02x ktd2685_use=%d\n",
-			client->addr, ktd2685_use);
-		//err = -ENODEV;
-		//leds_AW3643_hwen_off();
-		//goto exit_create_singlethread;
-	} else {
-		leds_AW3643_present = 1;
-		pr_err("[M6_FLASH] aw3643_i2c_probe present addr=0x%02x chipid=0x%02x devid=0x%02x\n",
-			client->addr, reg_chipid, reg_devid);
-	}
+	/*
+	 * M6 (M711H) stock parity: the real AW3643 on this unit does NOT return
+	 * chipid 0x36 (the 0x36/devid gate above was copied verbatim from a Doogee
+	 * AW3644 reference board). Stock Flyme AW3643_probe @0xffffffc000611d5c does
+	 * NO chipid/ID i2c read and accepts the device unconditionally. The old gate
+	 * forced leds_AW3643_present=0 -> every setDuty_/flashEnable_/init_ returned
+	 * -ENODEV (lines ~477/497/517/535/553/591/615) -> torch i2c writes blocked ->
+	 * dark torch. Keep the reads above as debug only; mark present like stock.
+	 * FACT: reverse of stock vmlinux, /srv/forge/work/m6-reverse/ FLASHLIGHT spec.
+	 */
+	ktd2685_use = 0;
+	leds_AW3643_present = 1;
+	pr_err("[M6_FLASH] aw3643_i2c_probe FORCED present=1 (stock parity, chipid ignored) addr=0x%02x chipid=0x%02x devid=0x%02x\n",
+		client->addr, reg_chipid, reg_devid);
 
 	leds_AW3643_create_sysfs(client);	
 
