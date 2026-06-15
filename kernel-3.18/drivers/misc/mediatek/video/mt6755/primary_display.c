@@ -4427,6 +4427,23 @@ int primary_display_resume(void)
 		DISPDBG("lcm_mode_status=%d, lcm_dsi_mode=%d\n", lcm_mode_status, lcm_dsi_mode);
 	}
 	/* c/v switch by suspend end*/
+
+	/*
+	 * M6 resume-scanout fix (FACT, full data-flow trace 2026-06-15):
+	 * On a plain resume ddp_dsi_config() hits the branch
+	 *   (mipitx_enabled && PMaster_enable==0 && !dsi_force_config) -> goto done
+	 * which SKIPS DSI_Config_VDO_Timing(), so DSI_VACT_NL stays 0 -> the DSI emits
+	 * zero video lines -> backlight ON but panel BLACK on wake (live-confirmed:
+	 * vfp/vact/vbp/vsa=0, rdma0 IN/OUT=0). DSI_ForceConfig(1) was previously set
+	 * ONLY on a cmd<->vdo mode switch (lcm_mode_status!=0), never on a normal
+	 * resume. Force it here so ddp_dsi_config takes force_config: and reprograms the
+	 * VDO timing (it skips DSI_PHY_clk_setting, so no PHY re-cycle — correct for a
+	 * cold resume; the PHY/PLL was already brought up earlier in resume). First boot
+	 * is unaffected: boot uses primary_display_init (not resume) and the LK-live link
+	 * is preserved there. Cleared by the existing DSI_ForceConfig(0) later in resume.
+	 */
+	DSI_ForceConfig(1);
+
 	DISPDBG("dpmanager path power on[begin]\n");
 	dpmgr_path_power_on(pgc->dpmgr_handle, CMDQ_DISABLE);
 	if (disp_helper_get_option(DISP_OPT_MET_LOG))
