@@ -1352,6 +1352,18 @@ static void primary_m6_cmdq_wait_video_frame_done(cmdqRecHandle handle,
 						  const char *tag)
 {
 	primary_m6_cmdq_video_token_marker(tag);
+	/*
+	 * M6 display-resume fix (reverse-from-stock, /srv/forge/work/m6-reverse/):
+	 * stock _cmdq_build_trigger_loop waits BOTH RDMA0_EOF(77) THEN
+	 * MUTEX0_STREAM_EOF(113) at every video end-of-frame site. Commit
+	 * 2b7f864683d deleted the RDMA0_EOF wait on a now-REJECTED "dead GCE token"
+	 * hypothesis; without it the trigger loop AND the resume frame-done
+	 * insertion (_cmdq_insert_wait_frame_done_token_mira) stop serializing on
+	 * the real RDMA0 latch, so the config flushed during resume is not pushed to
+	 * DSI after state reaches ALIVE -> backlight on but panel black on wake.
+	 * Stock proves token 77 is live on M711H (waits it forever, never wedges).
+	 */
+	cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
 	cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 }
 
@@ -1359,8 +1371,9 @@ static void primary_m6_cmdq_clear_video_frame_done(cmdqRecHandle handle,
 						   const char *tag)
 {
 	primary_m6_cmdq_video_token_marker(tag);
-	cmdqRecClearEventToken(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
+	/* stock clear order: RDMA0_EOF(77) then MUTEX0_STREAM_EOF(113) */
 	cmdqRecClearEventToken(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
+	cmdqRecClearEventToken(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 }
 
 static void primary_m6_hold_trigger_loop_clocks(const char *tag)

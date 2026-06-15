@@ -180,11 +180,14 @@ int _esd_check_config_handle_vdo(cmdqRecHandle handle)
 
 	primary_display_manual_lock();
 
-	/* 1.wait stream eof first. M6 isolates a dead RDMA0_EOF GCE token here. */
-	DISPERR("M6 ESD video eof isolation: wait MUTEX0_STREAM_EOF instead of RDMA0_EOF rdma_eof=%u mutex0_eof=%u dsi0_eof=%u\n",
+	/* 1.wait frame done. M6 fix: restore stock RDMA0_EOF(77) wait before
+	 * MUTEX0_STREAM_EOF(113) to match stock _esd_check_config_handle_vdo
+	 * (the RDMA0_EOF wait was wrongly removed as a "dead token"). */
+	DISPMSG("M6 ESD video eof: wait RDMA0_EOF then MUTEX0_STREAM_EOF rdma_eof=%u mutex0_eof=%u dsi0_eof=%u\n",
 		cmdqCoreGetEvent(CMDQ_EVENT_DISP_RDMA0_EOF),
 		cmdqCoreGetEvent(CMDQ_EVENT_MUTEX0_STREAM_EOF),
 		cmdqCoreGetEvent(CMDQ_EVENT_DISP_DSI0_EOF));
+	cmdqRecWaitNoClear(handle, CMDQ_EVENT_DISP_RDMA0_EOF);
 	cmdqRecWaitNoClear(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 
 	/* 2.stop dsi vdo mode */
