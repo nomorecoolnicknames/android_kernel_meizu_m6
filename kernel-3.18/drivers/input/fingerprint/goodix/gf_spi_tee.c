@@ -688,8 +688,8 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return -EINVAL;
 	}
 
-	switch (cmd) {
-	case GF_IOC_INIT:
+	switch (_IOC_NR(cmd)) { /* M6: dispatch by cmd number to tolerate HAL/driver GF_IOC dir/size ABI skew */
+	case _IOC_NR(GF_IOC_INIT):
 		gf_debug(INFO_LOG, "%s: GF_IOC_INIT gf init======\n", __func__);
 		gf_debug(INFO_LOG, "%s: Linux Version %s\n", __func__, GF_LINUX_VERSION);
 
@@ -731,7 +731,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		gf_debug(INFO_LOG, "%s: gf init finished======\n", __func__);
 		break;
 
-	case GF_IOC_CHIP_INFO:
+	case _IOC_NR(GF_IOC_CHIP_INFO):
 		if (copy_from_user(&info, (struct gf_ioc_chip_info *)arg, sizeof(struct gf_ioc_chip_info))) {
 			retval = -EFAULT;
 			break;
@@ -743,7 +743,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		gf_debug(INFO_LOG, "%s: operation 0x%x\n", __func__, info.operation);
 		break;
 
-	case GF_IOC_EXIT:
+	case _IOC_NR(GF_IOC_EXIT):
 		gf_debug(INFO_LOG, "%s: GF_IOC_EXIT ======\n", __func__);
 		gf_disable_irq(gf_dev);
 		if (gf_dev->irq) {
@@ -763,42 +763,42 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		gf_debug(INFO_LOG, "%s: gf exit finished ======\n", __func__);
 		break;
 
-	case GF_IOC_RESET:
+	case _IOC_NR(GF_IOC_RESET):
 		gf_debug(INFO_LOG, "%s: chip reset command\n", __func__);
 		gf_hw_reset(gf_dev, 60);
 		break;
 
-	case GF_IOC_ENABLE_IRQ:
+	case _IOC_NR(GF_IOC_ENABLE_IRQ):
 		gf_debug(INFO_LOG, "%s: GF_IOC_ENABLE_IRQ ======\n", __func__);
 		gf_enable_irq(gf_dev);
 		break;
 
-	case GF_IOC_DISABLE_IRQ:
+	case _IOC_NR(GF_IOC_DISABLE_IRQ):
 		gf_debug(INFO_LOG, "%s: GF_IOC_DISABLE_IRQ ======\n", __func__);
 		gf_disable_irq(gf_dev);
 		break;
 
-	case GF_IOC_ENABLE_SPI_CLK:
+	case _IOC_NR(GF_IOC_ENABLE_SPI_CLK):
 		gf_debug(INFO_LOG, "%s: GF_IOC_ENABLE_SPI_CLK ======\n", __func__);
 		gf_spi_clk_enable(gf_dev, 1);
 		break;
 
-	case GF_IOC_DISABLE_SPI_CLK:
+	case _IOC_NR(GF_IOC_DISABLE_SPI_CLK):
 		gf_debug(INFO_LOG, "%s: GF_IOC_DISABLE_SPI_CLK ======\n", __func__);
 		gf_spi_clk_enable(gf_dev, 0);
 		break;
 
-	case GF_IOC_ENABLE_POWER:
+	case _IOC_NR(GF_IOC_ENABLE_POWER):
 		gf_debug(INFO_LOG, "%s: GF_IOC_ENABLE_POWER ======\n", __func__);
 		gf_hw_power_enable(1);
 		break;
 
-	case GF_IOC_DISABLE_POWER:
+	case _IOC_NR(GF_IOC_DISABLE_POWER):
 		gf_debug(INFO_LOG, "%s: GF_IOC_DISABLE_POWER ======\n", __func__);
 		gf_hw_power_enable(0);
 		break;
 
-	case GF_IOC_INPUT_KEY_EVENT:
+	case _IOC_NR(GF_IOC_INPUT_KEY_EVENT):
 		if (copy_from_user(&gf_key, (struct gf_key *)arg, sizeof(struct gf_key))) {
 			gf_debug(ERR_LOG, "Failed to copy input key event from user to kernel\n");
 			retval = -EFAULT;
@@ -857,11 +857,11 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 		break;
 
-	case GF_IOC_ENTER_SLEEP_MODE:
+	case _IOC_NR(GF_IOC_ENTER_SLEEP_MODE):
 		gf_debug(INFO_LOG, "%s: GF_IOC_ENTER_SLEEP_MODE ======\n", __func__);
 		break;
 
-	case GF_IOC_GET_FW_INFO:
+	case _IOC_NR(GF_IOC_GET_FW_INFO):
 		gf_debug(INFO_LOG, "%s: GF_IOC_GET_FW_INFO ======\n", __func__);
 		buf = gf_dev->need_update;
 
@@ -872,7 +872,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 
 		break;
-	case GF_IOC_REMOVE:
+	case _IOC_NR(GF_IOC_REMOVE):
 		gf_debug(INFO_LOG, "%s: GF_IOC_REMOVE ======\n", __func__);
 
 		gf_netlink_destroy(gf_dev);
@@ -897,7 +897,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		mutex_destroy(&gf_dev->buf_lock);
 
 		break;
-	case GF_IOC_FTM:
+	case _IOC_NR(GF_IOC_FTM):
 			data = (void __user *) arg;
 			if (copy_to_user(data, id_buf, 7)) {
 				retval = -EFAULT;
@@ -908,7 +908,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 #ifdef SUPPORT_REE_SPI
 
-	case GF_IOC_TRANSFER_CMD:
+	case _IOC_NR(GF_IOC_TRANSFER_CMD):
 		if (copy_from_user(&ioc, (struct gf_ioc_transfer *)arg, sizeof(struct gf_ioc_transfer))) {
 			gf_debug(ERR_LOG, "%s: Failed to copy gf_ioc_transfer from user to kernel\n", __func__);
 			retval = -EFAULT;
