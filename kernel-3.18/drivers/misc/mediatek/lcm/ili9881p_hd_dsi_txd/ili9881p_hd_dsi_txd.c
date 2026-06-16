@@ -856,12 +856,16 @@ static void lcm_get_params(LCM_PARAMS *params)
 #endif
 	params->dsi.clk_lp_per_line_enable = 0;
 	/*
-	 * Disable runtime ESD polling for bring-up.  On meizu_M6 bootdiag the
-	 * ili9881p check path repeatedly times out and forces panel recovery,
-	 * which is followed by CMDQ/GED fence stalls during Android boot.
+	 * Disable runtime ESD polling for bring-up (FACT, 2026-06-15).
+	 * The ili9881p 0x0A check repeatedly times out on this panel and forces
+	 * primary_display_esd_recovery(), whose reconfig path hits ddp_dsi_config
+	 * "goto done" (no DSI_ForceConfig) -> DSI_VACT_NL stays 0 -> backlight ON
+	 * but panel BLACK ~5s after boot. Regression source: 820af945e35
+	 * ("isolate stock ili9881p lcm parity") re-enabled this after it had been
+	 * disabled in 2ca57757cbb. Keep ESD off; the LK-preserved link is stable.
 	 */
-	params->dsi.esd_check_enable = 1;
-	params->dsi.customization_esd_check_enable = 1;
+	params->dsi.esd_check_enable = 0;
+	params->dsi.customization_esd_check_enable = 0;
 	params->dsi.lcm_esd_check_table[0].cmd = 0x0A;
 	params->dsi.lcm_esd_check_table[0].count = 1;
 	params->dsi.lcm_esd_check_table[0].para_list[0] = 0x9C;

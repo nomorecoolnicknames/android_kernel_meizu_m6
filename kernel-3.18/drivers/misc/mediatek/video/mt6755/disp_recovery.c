@@ -74,6 +74,7 @@ int lcd_report_dsm_errno(int errno);
 #include "disp_recovery.h"
 
 extern unsigned int esd_recovery_level;
+extern void DSI_ForceConfig(int forceconfig);	/* ddp_dsi.c — force VDO-timing reconfig */
 
 static struct task_struct *primary_display_check_task; /* For abnormal check */
 static wait_queue_head_t _check_task_wq;	/* used for blocking check task  */
@@ -691,7 +692,17 @@ int primary_display_esd_recovery(void)
 
 		data_config->ovl_dirty = 1;
 
+		/*
+		 * M6 ESD-recovery scanout fix (FACT, 2026-06-15): like a cold resume,
+		 * this reconfig hits ddp_dsi_config()'s
+		 *   (mipitx_enabled && PMaster_enable==0 && !dsi_force_config) -> goto done
+		 * branch, which SKIPS DSI_Config_VDO_Timing() -> DSI_VACT_NL stays 0 ->
+		 * backlight ON but panel BLACK. 68cac40b fixed only primary_display_resume;
+		 * the recovery path needs the same force so VDO timing is reprogrammed.
+		 */
+		DSI_ForceConfig(1);
 		ret = dpmgr_path_config(primary_get_dpmgr_handle(), data_config, NULL);
+		DSI_ForceConfig(0);
 		MMProfileLogEx(ddp_mmp_get_events()->primary_resume, MMProfileFlagPulse, 2, 2);
 		data_config->dst_dirty = 0;
 
