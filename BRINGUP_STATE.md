@@ -17304,3 +17304,129 @@ TODO reproducibility: live-правки /system НЕ в исходном дер�
 proprietary-files + rc LD_PRELOAD-правки в rom-lineage-15.1 device tree.
 Долгосрочно «правильно» — залить валидный камерный NVRAM из стока (уберёт и
 кривой цвет/AE, и нужду в шиме).
+
+---
+
+## 2026-06-15 — РЕГРЕССИЯ «экран чёрный через ~5 c после загрузки» = бракованный ESD-recovery ili9881p (VACT=0)
+
+Симптом (репортер): после загрузки системы экран показывает картинку первые
+~5 c, затем стабильно чернеет при ГОРЯЩЕЙ подсветке. Стабильно проявляется
+примерно с «патча 180».
+
+### Доказательства
+- **FACT** — ядро на устройстве `3.18.140 #185 ... Mon Jun 15 06:28:58 2026`
+  (`/proc/version`) = текущий HEAD, т.е. фикс `68cac40b` (resume vact=0) УЖЕ был
+  прошит, а симптом сохранялся.
+- **FACT** — это НЕ userspace/компоновка: `screencap` отдаёт корректный кадр
+  (локскрин LineageOS), `sys.boot_completed=1`, SF/zygote running, фокус =
+  Trebuchet. `dumpsys`: `mScreenState=ON`, `mState=ON`, `mActualBacklight=10`
+  при `mScreenBrightnessSetting=200`. Подсветка (WLED) горит отдельно.
+- **FACT** — `/d/mtkfb`: панель `ili9881p_hd_dsi_txd`, 720x1280 DSI video mode,
+  `State=Alive`, слои SF идут с фенсами. Проблема ниже компоновки — на DSI
+  scanout.
+- **FACT** — `ili9881p_hd_dsi_txd.c:858-867`: комментарий гласит «Disable runtime
+  ESD polling … the ili9881p check path repeatedly times out and forces panel
+  recovery … CMDQ/GED fence stalls», но код стоял `esd_check_enable = 1` +
+  `customization_esd_check_enable = 1`, ESD-таблица: read DCS `0x0A`, ждёт `0x9C`.
+- **FACT** — `disp_recovery.c:526-567`: ESD-воркер `msleep(2000)`, при провале
+  `primary_display_esd_recovery()`, до 5 попыток, затем сам себя отключает
+  (`primary_display_esd_check_enable(0)`) → чёрный становится постоянным.
+- **FACT** — `disp_recovery.c:643-709`: recovery реконфигурит DSI СВОИМ путём
+  (`dpmgr_path_config()` → `ddp_dsi_config()`), БЕЗ `DSI_ForceConfig(1)` (греп
+  по файлу был пуст). Подсветку включает явно (`:711`). Фикс `68cac40b` лежит
+  ТОЛЬКО в `primary_display_resume()` → путь recovery им не покрыт.
+- **FACT (git-таймлайн регрессии):** `2026-05-11 2ca57757cbb fix(lcm): disable
+  ili9881p esd recovery loop` (ESD выключали) → `2026-05-30 820af945e35 m6:
+  isolate stock ili9881p lcm parity` СНОВА включил `esd_check_enable=1`. Это и
+  есть точка регрессии (≈ конец мая ≈ «патч 180»).
+
+### Механизм (INFERENCE на этих FACT)
+LK поднимает панель → первые секунды картинка есть → t≈2-5 c первый ESD-check
+читает `0x0A`, проверка проваливается (таймаут/несовпадение) →
+`primary_display_esd_recovery()` реконфигурит DSI без `DSI_ForceConfig`, ветка
+`ddp_dsi_config()` `(mipitx_enabled && PMaster_enable==0 && !dsi_force_config)
+-> goto done` ПРОПУСКАЕТ `DSI_Config_VDO_Timing()` → `DSI_VACT_NL=0` → DSI не
+выдаёт активных строк → ЧЁРНЫЙ при включённой подсветке. После 5 неудач ESD
+самоотключается → чёрный навсегда; MTK-пайп и SF продолжают работать. Это ровно
+то состояние `vfp/vact/vbp/vsa=0, rdma0 IN/OUT=0`, что `68cac40b` зафиксировал
+на resume-варианте той же ветки.
+
+### Снятые противоречия
+- `State=Alive / video mode` ≠ опровержение `VACT=0`: это статус dpmgr-пути
+  (loop крутится), не регистра DSI.
+- `68cac40b` в #185, но чёрный остался: фикс только в `primary_display_resume`,
+  а гасит ESD-recovery (отдельный reconfig).
+
+### Фикс (#186, на флэш)
+1. `kernel-3.18/.../lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c:867-868` —
+   `esd_check_enable = 0`, `customization_esd_check_enable = 0` (откат
+   re-enable из `820af945e35`; в духе `2ca57757cbb`).
+2. `kernel-3.18/.../video/mt6755/disp_recovery.c` — `extern void
+   DSI_ForceConfig(int)` (`:77`) + обёртка `DSI_ForceConfig(1)` /
+   `DSI_ForceConfig(0)` вокруг `dpmgr_path_config()` в
+   `primary_display_esd_recovery()` (зеркало `68cac40b`, defense-in-depth).
+
+### Команды верификации (для следующего capture после прошивки #186)
+```bash
+S=711HEBSR277K5; ADB="env ANDROID_ADB_SERVER_PORT=15038 adb -s $S"
+$ADB shell cat /proc/version          # ожидать #186, дата сборки 2026-06-15
+$ADB shell cat /d/mtkfb | grep -E "LCM Driver|State="   # ili9881p, State=Alive
+$ADB shell dmesg | grep -E "\[ESD\]"  # НЕ должно быть esd recovery / disable esd check
+gzip -cd /srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb \
+  | strings | grep -E "esd=0/0"       # подтвердить ESD off в собранном образе (M6 LCM params лог)
+# ГЛАЗА ЮЗЕРА: панель держит картинку дольше 5 c, не чернеет.
+```
+
+### Вторичная проблема (открыта)
+kmsg вытесняется за ~1 c флудом `Gsensor BMA2x2_ReadSensorData` (~15/с) +
+`Power/swap *idle_block_cnt`. Диагностика дисплея по логам слепая. На этом
+устройстве printk-шторм уже гасил экран (`8a209d2c852 throttle M4U dumps …
+froze display`). HYPOTHESIS: задушить эти printk отдельным патчем; falsify —
+после throttle снять чистый boot-dmesg с display-init строками.
+
+---
+## 2026-06-16 — ЭКРАН (продолжение): ION-гипотеза ОТВЕРГНУТА; bias-enable GPIO12 = LOW в чёрном состоянии (live #176)
+
+Контекст: предыдущая сессия (chat-fragment) свернула на «userspace/ION доставка
+буфера», прочитав I2C-readback TPS65132 `0x00/0x01=0x0f/0x0f` как «питание панели в
+порядке». Это ОШИБКА интерпретации: регистры 0x00/0x01 задают только УРОВЕНЬ
+напряжения (±5.5В), а физический выход рейлов гейтится аппаратными пинами ENP/ENN.
+
+### Live FACT (устройство 711HEBSR277K5, ядро #176, uptime ~5ч, чёрный экран)
+- Цифровой пайп ЗДОРОВ и активно сканирует реальный кадр:
+  - `M6 OVL scan: mod=OVL0 enabled=0x7 EN=1 ROI=0x50002d0` (3 слоя, полный 720x1280);
+  - `DISP ovl0 ANALYSIS: ovl_en=1 layer_enable(1,1,1,0) cur_pos(x=487,y=883)` (скан в середине кадра);
+  - `RDMA0 Transfer` счётчик растёт (858201→887950), BW 61.15 MB/s;
+  - DSI: `pll en=1 pcw=0x46c4ec4e`, все линии `lane_ldo=1/1/1/1/1`, HS, `ps=0x30870`.
+  => VACT≠0, ESD не глушит, путь OVL/RDMA/DSI исправен. Подтверждает, что регрессия
+     НЕ в свежем коммите ядра и НЕ в ESD/VACT на ЭТОМ буте.
+- GPIO (mtgpio, `[MODE PULL_SEL DIN DOUT PULLEN DIR IES SMT]`):
+  - **GPIO12 = `00000110` → DIR=out, DOUT=0 (LOW)**. В текущем `meizu_m6.dts`
+    `mtkfb_pins_lcd_bias_enp0/enp1` = **GPIO12** (enp0 output-low, enp1 output-high).
+    Значит panel bias ENP сейчас выключен → +рейл off → ЧЁРНОЕ стекло при живой логике.
+  - GPIO24 (сток ENP) = LOW (output), GPIO27 (сток ENN) = HIGH (output).
+- `/sys/bus/platform/devices/irq_nfc` присутствует → NFC-узел снова активен на #176
+  (кандидат на повторную регрессию относительно 5fcb6d9, где `&nfc` отключали).
+
+### INFERENCE (сильный, согласуется с историей 06-12 bias-ownership)
+На бутe mtkfb выбирает `lcd_bias_enp1` (GPIO12=high) → панель горит ~5с. Затем
+какой-то путь (suspend/blank/recovery/контендер пина) переводит GPIO12 в enp0
+(output-low) → ENP выключается → панель чернеет, а OVL/RDMA/DSI продолжают крутиться.
+Это ровно симптом «картинка есть 5с → чёрный при горящей подсветке». Семейство причин
+= тот же bias-enable, что и 06-12 (не ION, не DSI, не VACT).
+
+### Live ISOLATION probe (reversible, без флеша; pre-approved M6 policy)
+Команда (mtgpio): `echo -wmode 12 0 > pin; echo -wdir 12 1 > pin; echo -wdout 12 1 > pin`.
+Результат: GPIO12 `00000110`→`00110110` (DOUT 0→1, реально поднялся HIGH). RDMA
+продолжает скан. **Ожидаемое наблюдение (глаза юзера): если корень — bias ENP, стекло
+должно ЗАГОРЕТЬСЯ картинкой при поднятии GPIO12.** Откат: ребут (или `-wdout 12 0`).
+
+### Следующие шаги по ветке (после визуального результата)
+- Если загорелось → подтверждён bias-ENP/GPIO12. Постоянный фикс: не давать GPIO12
+  уходить в low после init (убрать контендера пина / держать enp1), и/или владеть
+  ENP/ENN из LCM bias-пути как сток (lcd_bias_enp1/enn0 на 24/27) — бэклог-фикс с 06-12.
+  Проверить, кто переводит GPIO12 в low (suspend/recovery/audio/NFC) — добавить DIAGNOSTIC
+  маркер в путь pinctrl-выбора enp0.
+- Если НЕ загорелось при GPIO12=high → попробовать также 24/27=high (стоковые ENP/ENN);
+  если и это не помогает — вернуться к панели/аналогу (но цифровой пайп исключён).
+Capture: `captures/20260616-064825-m6-176-live-buffer-vact-truth-711HEBSR277K5/`.

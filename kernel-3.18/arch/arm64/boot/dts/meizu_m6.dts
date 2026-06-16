@@ -177,30 +177,36 @@ hw-dev-detect@0{
 &pio {
 	lcm_pins_default: lcmdefault {
 	};
+	/* M6 BIAS FIX (stock Flyme 7.1.2.0G DTB/LK reverse): the TPS65132 panel
+	 * bias enables on this board are ENP=GPIO24, ENN=GPIO27 (stock
+	 * lcd_bias_enp1/enn0). The donor "yufangfang" wiring drove vsp=GPIO17
+	 * (FP pwr) / vsn=GPIO90 (unused) in vain while audio hpdepop held GPIO24
+	 * (ENP) low ~5s after boot -> +rail off -> black panel with live DSI/OVL.
+	 * Own the real enables here so resume/init drive them high. */
 	lcm_pins_vsp_high: vsphigh {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO17__FUNC_GPIO17>;
+			pins = <PINMUX_GPIO24__FUNC_GPIO24>;
 				slew-rate = <1>;
 				output-high;
 		};
 	};
 	lcm_pins_vsp_low: vsplow {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO17__FUNC_GPIO17>;
+			pins = <PINMUX_GPIO24__FUNC_GPIO24>;
 				slew-rate = <1>;
 				output-low;
 		};
 	};
 	lcm_pins_vsn_high: vsnhigh {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO90__FUNC_GPIO90>;
+			pins = <PINMUX_GPIO27__FUNC_GPIO27>;
 				slew-rate = <1>;
 				output-high;
 		};
 	};
 	lcm_pins_vsn_low: vsnlow {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO90__FUNC_GPIO90>;
+			pins = <PINMUX_GPIO27__FUNC_GPIO27>;
 				slew-rate = <1>;
 				output-low;
 		};
@@ -836,9 +842,12 @@ hw-dev-detect@0{
 		};
 	};
 
+	/* M6 BIAS FIX: hpdepop moved GPIO24 -> GPIO16 (stock Flyme). GPIO24 is the
+	 * panel TPS65132 ENP enable on this board; audio driving it low de-popped
+	 * the +bias rail and blacked the screen. GPIO16 = stock audio hpdepop. */
 	aud_pins_hpdepop_high: audhpdepophigh {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO24__FUNC_GPIO24>;
+			pins = <PINMUX_GPIO16__FUNC_GPIO16>;
 			slew-rate = <1>;
 			output-high;
 		};
@@ -846,7 +855,7 @@ hw-dev-detect@0{
 
 	aud_pins_hpdepop_low: audhpdepoplow {
 		pins_cmd_dat {
-			pins = <PINMUX_GPIO24__FUNC_GPIO24>;
+			pins = <PINMUX_GPIO16__FUNC_GPIO16>;
 			slew-rate = <1>;
 			output-low;
 		};
