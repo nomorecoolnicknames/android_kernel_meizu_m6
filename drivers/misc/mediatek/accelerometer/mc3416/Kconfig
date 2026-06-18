@@ -1,0 +1,8 @@
+config MTK_MC3416
+	tristate "MC34x6 for MediaTek package"
+	default n
+	help
+	  It support different accelerometer sensor.
+          If this option is set,
+	  it will support
+          MC34x6 Accelerometer.

@@ -1,0 +1,7 @@
+config MTK_AW8738_PA
+	bool "AWINIC AW8738 1-wire speaker PA (Meizu M6)"
+	default n
+	help
+	  Char-device (/dev/aw8738) driver for the AWINIC AW8738 pulse-controlled
+	  class-D speaker amplifier, as used on the Meizu M6. The MTK audio HAL
+	  opens /dev/aw8738 and selects the gain/enable mode via ioctl.

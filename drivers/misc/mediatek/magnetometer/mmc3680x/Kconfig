@@ -1,0 +1,9 @@
+
+config MTK_MMC3680X
+	bool "MMC3680X for MediaTek package"
+	default y
+	help
+	  It support different magnetometer sensor.
+          If this option is set,
+	  it will support
+          MMC3680X magnetometer.

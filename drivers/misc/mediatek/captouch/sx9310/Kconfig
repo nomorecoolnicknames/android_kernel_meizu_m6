@@ -1,0 +1,9 @@
+
+config CAPSENSOR_SX931X
+	bool "MTK_SX9310 for MediaTek package"
+	default n
+	help
+	It support different type sensor
+	in this platform. If this option
+	is set, it will support ambient
+	and light sensor MTK_SX9310.
