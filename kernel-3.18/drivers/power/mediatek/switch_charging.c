@@ -964,7 +964,7 @@ static void mtk_select_ichg_aicr(void)
 			"[BATTERY] select_charging_curret !\n");
 	}
 #endif
-		battery_log(BAT_LOG_CRTI,
+		battery_log(BAT_LOG_FULL,
 			"[BATTERY] Default CC mode charging : %d, input current = %d\n",
 			g_temp_CC_value, g_temp_input_CC_value);
 		battery_log(BAT_LOG_CRTI,

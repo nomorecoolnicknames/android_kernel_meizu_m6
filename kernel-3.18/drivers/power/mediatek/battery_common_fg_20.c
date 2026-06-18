@@ -2557,10 +2557,10 @@ void mt_battery_GetBatteryData(void)
 	BMT_status.temperature =
 	    mt_battery_average_method(BATTERY_AVG_TEMP, &batteryTempBuffer[0], temperature,
 				      &temperature_sum, batteryIndex);
-	#ifdef CONFIG_LCT_RUNNING_DISABLE_CURRENT_LIMIT
+#ifdef CONFIG_LCT_RUNNING_DISABLE_CURRENT_LIMIT
 	BMT_status.temperature = temperature;
-	battery_log(BAT_LOG_CRTI, "running test BMT_status.temperature = (%d)\n", BMT_status.temperature);
-	#endif
+	battery_log(BAT_LOG_FULL, "running test BMT_status.temperature = (%d)\n", BMT_status.temperature);
+#endif
 	BMT_status.Vsense = Vsense;
 	BMT_status.charger_vol = charger_vol;
 	BMT_status.temperatureV = temperatureV;
@@ -2576,7 +2576,7 @@ void mt_battery_GetBatteryData(void)
 #ifdef CONFIG_HUAWEI_DSM
     bat_update_thread_dsm();
 #endif
-	battery_log(BAT_LOG_CRTI,
+	battery_log(BAT_LOG_FULL,
 		"[kernel]AvgVbat %d,bat_vol %d, AvgI %d, I %d, VChr %d, AvgT %d, T %d, ZCV %d, CHR_Type %d, SOC %3d:%3d:%3d, bcct %d:%d, Ichg %d, IBat %d, car_tune_value %d, battery_type %d,batt_cust_data.v_charger_max = %d\n",
 		BMT_status.bat_vol, bat_vol, BMT_status.ICharging, ICharging,
 		BMT_status.charger_vol, BMT_status.temperature, temperature, BMT_status.ZCV,
@@ -2584,7 +2584,7 @@ void mt_battery_GetBatteryData(void)
 		g_bcct_flag, get_usb_current_unlimited(), get_bat_charging_current_level() / 100,
 		BMT_status.IBattery / 10, batt_meter_cust_data.car_tune_value, battery_type,batt_cust_data.v_charger_max);
 #ifdef CONFIG_ATO_TEST
-		battery_log(BAT_LOG_CRTI,"[kernel] otg_adc_value [%d] [%d] [%d] [%d] [%d]\n",otg_adc_value[0],otg_adc_value[1],otg_adc_value[2],otg_adc_value[3],otg_adc_value[4]);
+		battery_log(BAT_LOG_FULL,"[kernel] otg_adc_value [%d] [%d] [%d] [%d] [%d]\n",otg_adc_value[0],otg_adc_value[1],otg_adc_value[2],otg_adc_value[3],otg_adc_value[4]);
 #endif
 }
 

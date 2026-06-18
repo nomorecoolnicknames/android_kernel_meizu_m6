@@ -1109,6 +1109,13 @@ hw-dev-detect@0{
 	pinctrl-7 = <&fp_power_low>;
 };
 
+&eint_fingerprint {
+	interrupt-parent = <&eintc>;
+	interrupts = <12 2>;
+	debounce = <12 0>;
+	status = "okay";
+};
+
 &pio {
 	fingerprint_default:fingerprint_default{
 		};

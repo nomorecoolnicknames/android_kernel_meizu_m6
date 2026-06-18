@@ -751,12 +751,12 @@ static int bq2415x_set_chargecurrent(struct charger_device *chg_dev, u32 curr)
 
 	ichg <<= BQ2415X_ICHG_SHIFT;
 	
-	pr_info("[M6_CHG] set_chargecurrent req_uA=%u req_mA=%u sensor_mohm=%d reg=0x%02X\n",
+	pr_debug("[M6_CHG] set_chargecurrent req_uA=%u req_mA=%u sensor_mohm=%d reg=0x%02X\n",
 		req_uA, curr, bq->cfg.sensor_mohm, ichg);
 	
 	ret = bq2415x_update_bits(bq, BQ2415X_REG_04,
 				BQ2415X_ICHG_MASK, ichg);
-	pr_info("[M6_CHG] set_chargecurrent ret=%d\n", ret);
+	pr_debug("[M6_CHG] set_chargecurrent ret=%d\n", ret);
 	return ret;
 
 }
@@ -861,12 +861,12 @@ static int bq2415x_set_input_current_limit(struct charger_device *chg_dev, u32 c
 
 	val <<= BQ2415X_IINLIM_SHIFT;
 
-	pr_info("[M6_CHG] set_input_current req_uA=%u req_mA=%u reg=0x%02X\n",
+	pr_debug("[M6_CHG] set_input_current req_uA=%u req_mA=%u reg=0x%02X\n",
 		req_uA, curr, val);
 		
 	ret = bq2415x_update_bits(bq, BQ2415X_REG_01,
 				BQ2415X_IINLIM_MASK, val);
-	pr_info("[M6_CHG] set_input_current ret=%d\n", ret);
+	pr_debug("[M6_CHG] set_input_current ret=%d\n", ret);
 	return ret;
 }
 

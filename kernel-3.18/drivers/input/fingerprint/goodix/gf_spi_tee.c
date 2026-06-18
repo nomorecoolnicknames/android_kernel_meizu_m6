@@ -69,11 +69,10 @@
 #define MAX_NL_MSG_LEN 16
 
 #ifndef GF_INPUT_HOME_KEY
-/* on MTK EVB board, home key has been redefine to KEY_HOMEPAGE! */
-/* double check the define on customer board!!! */
-#define GF_INPUT_HOME_KEY KEY_HOMEPAGE /* KEY_HOME */
+/* M6/Flyme Goodix HAL sends GF_KEY_HOME for an mBack tap. Stock maps it to Back. */
+#define GF_INPUT_HOME_KEY KEY_BACK
 
-#define GF_INPUT_MENU_KEY  KEY_MENU
+#define GF_INPUT_MENU_KEY  KEY_MENU /* mapped to APP_SWITCH by gf-keys.kl */
 #define GF_INPUT_BACK_KEY  KEY_BACK
 
 #define GF_INPUT_FF_KEY  KEY_POWER
@@ -88,6 +87,24 @@
 #define GF_NAV_RIGHT_KEY  KEY_RIGHT
 
 /*************************************************************/
+
+static void gf_input_report_tap(struct input_dev *input, unsigned int key)
+{
+	input_report_key(input, key, 1);
+	input_sync(input);
+	input_report_key(input, key, 0);
+	input_sync(input);
+}
+
+static void gf_input_report_value(struct input_dev *input, unsigned int key, int value)
+{
+	if (value == 1)
+		gf_input_report_tap(input, key);
+	else {
+		input_report_key(input, key, value);
+		input_sync(input);
+	}
+}
 
 /* debug log setting */
 u8 g_debug_level = ERR_LOG;
@@ -655,6 +672,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	struct gf_device *gf_dev = NULL;
 	struct gf_key gf_key;
 	uint32_t key_event;
+	u32 nav_event;
 #ifdef SUPPORT_REE_SPI
 	struct gf_ioc_transfer ioc;
 	u8 *transfer_buf = NULL;
@@ -815,10 +833,25 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 		if (GF_KEY_HOME == gf_key.key) {
 			key_event = GF_INPUT_HOME_KEY;
+		} else if ((GF_KEY_MENU == gf_key.key) || (GF_KEY_UP == gf_key.key)) {
+			/*
+			 * Ghidra-confirmed Goodix HAL mBack long-press path calls
+			 * gf_hal_send_key_event(6, 1/0). In this kernel enum 6 is
+			 * GF_KEY_UP, but the ROM keylayout maps KEY_MENU to APP_SWITCH.
+			 */
+			key_event = GF_INPUT_MENU_KEY;
+		} else if (GF_KEY_BACK == gf_key.key) {
+			key_event = GF_INPUT_BACK_KEY;
 		} else if (GF_KEY_POWER == gf_key.key) {
 			key_event = GF_INPUT_FF_KEY;
 		} else if (GF_KEY_CAPTURE == gf_key.key) {
 			key_event = GF_INPUT_CAMERA_KEY;
+		} else if (GF_KEY_DOWN == gf_key.key) {
+			key_event = GF_NAV_DOWN_KEY;
+		} else if (GF_KEY_RIGHT == gf_key.key) {
+			key_event = GF_NAV_RIGHT_KEY;
+		} else if (GF_KEY_LEFT == gf_key.key) {
+			key_event = GF_NAV_LEFT_KEY;
 		} else {
 			/* add special key define */
 			key_event = GF_INPUT_OTHER_KEY;
@@ -826,35 +859,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		gf_debug(INFO_LOG, "%s: received key event[%d], key=%d, value=%d\n",
 				__func__, key_event, gf_key.key, gf_key.value);
 
-		if ((GF_KEY_POWER == gf_key.key || GF_KEY_CAPTURE == gf_key.key) && (gf_key.value == 1)) {
-			input_report_key(gf_dev->input, key_event, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, key_event, 0);
-			input_sync(gf_dev->input);
-		} else if (GF_KEY_UP == gf_key.key) {
-			input_report_key(gf_dev->input, GF_NAV_UP_KEY, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, GF_NAV_UP_KEY, 0);
-			input_sync(gf_dev->input);
-		} else if (GF_KEY_DOWN == gf_key.key) {
-			input_report_key(gf_dev->input, GF_NAV_DOWN_KEY, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, GF_NAV_DOWN_KEY, 0);
-			input_sync(gf_dev->input);
-		} else if (GF_KEY_RIGHT == gf_key.key) {
-			input_report_key(gf_dev->input, GF_NAV_RIGHT_KEY, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, GF_NAV_RIGHT_KEY, 0);
-			input_sync(gf_dev->input);
-		} else if (GF_KEY_LEFT == gf_key.key) {
-			input_report_key(gf_dev->input, GF_NAV_LEFT_KEY, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, GF_NAV_LEFT_KEY, 0);
-			input_sync(gf_dev->input);
-		} else if ((GF_KEY_POWER != gf_key.key) && (GF_KEY_CAPTURE != gf_key.key)) {
-			input_report_key(gf_dev->input, key_event, gf_key.value);
-			input_sync(gf_dev->input);
-		}
+		gf_input_report_value(gf_dev->input, key_event, gf_key.value);
 		break;
 
 	case _IOC_NR(GF_IOC_ENTER_SLEEP_MODE):
@@ -898,6 +903,44 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 		break;
 	case _IOC_NR(GF_IOC_FTM):
+			if ((_IOC_DIR(cmd) & _IOC_WRITE) && (_IOC_SIZE(cmd) == sizeof(nav_event))) {
+				if (copy_from_user(&nav_event, (void __user *)arg, sizeof(nav_event))) {
+					gf_debug(ERR_LOG, "Failed to copy nav event from user to kernel\n");
+					retval = -EFAULT;
+					break;
+				}
+
+				pr_err("[M6_FP] NAV_EVENT nav=%u cmd=0x%x\n", nav_event, (unsigned int)cmd);
+				switch (nav_event) {
+				case GF_NAV_UP:
+					key_event = GF_NAV_UP_KEY;
+					break;
+				case GF_NAV_DOWN:
+					key_event = GF_NAV_DOWN_KEY;
+					break;
+				case GF_NAV_LEFT:
+					key_event = GF_NAV_LEFT_KEY;
+					break;
+				case GF_NAV_RIGHT:
+					key_event = GF_NAV_RIGHT_KEY;
+					break;
+				case GF_NAV_LONG_PRESS:
+					key_event = GF_INPUT_MENU_KEY;
+					break;
+				case GF_NAV_CLICK:
+					key_event = GF_INPUT_HOME_KEY;
+					break;
+				default:
+					key_event = 0;
+					gf_debug(INFO_LOG, "%s: ignore nav event=%u\n", __func__, nav_event);
+					break;
+				}
+
+				if (key_event)
+					gf_input_report_tap(gf_dev->input, key_event);
+				break;
+			}
+
 			data = (void __user *) arg;
 			if (copy_to_user(data, id_buf, 7)) {
 				retval = -EFAULT;

@@ -17430,3 +17430,168 @@ froze display`). HYPOTHESIS: задушить эти printk отдельным �
 - Если НЕ загорелось при GPIO12=high → попробовать также 24/27=high (стоковые ENP/ENN);
   если и это не помогает — вернуться к панели/аналогу (но цифровой пайп исключён).
 Capture: `captures/20260616-064825-m6-176-live-buffer-vact-truth-711HEBSR277K5/`.
+
+---
+## Patch history: 2026-06-18 M6 hot-path log quiesce for charging validation
+
+Category: **PROPER-FIX / DIAGNOSTIC**. This patch does not change charger
+policy, current limits, JEITA, fuel-gauge math, bq24157 register values, or
+sensor data returned to userspace. It only removes/demotes proven hot-path
+printk/battery logs so charging can be measured without the kernel spending the
+test window on repeated log output.
+
+Hypothesis: the phone is charging, but while attached over wired ADB it is
+classified as `STANDARD_HOST` and limited to 500 mA, and the runtime printk
+load is high enough that net battery current can be near zero or negative under
+screen/userspace load. Quiescing the hottest logs should reduce background work
+and make a wall-charger + wireless-ADB test meaningful without changing charger
+behavior.
+
+Evidence:
+- `captures/20260616-012408-m6-rollback-176-screen-test-711HEBSR277K5/dmesg-before-rescue-flash.txt`
+  contains thousands of `BMA2x2_ReadSensorData` / mapped gsensor lines and
+  repeated battery/charger routine logs; the same capture still shows charging
+  enabled.
+- `captures/20260616-camera-isp-rootcause/dmesg_back_long.txt` contains the
+  same gsensor spam class and a battery line with `CHR_Type 1`, `Charging`, and
+  negative net `IBat`, consistent with net drain under a 500 mA USB-host cap.
+- Existing charger evidence shows bq24157 enable succeeds and policy selects
+  `cc=50000 aicr=50000` for `type=1 usb_state=2`, so the first proven problem is
+  not a dead charger IC.
+
+Files changed:
+- `kernel-3.18/drivers/misc/mediatek/accelerometer/bma253-new/bma2x2.c`:
+  move mapped gsensor data from unconditional `GSE_ERR` to existing
+  `BMA_TRC_IOCTL` trace logging.
+- `kernel-3.18/drivers/power/mediatek/battery_common_fg_20.c`: demote periodic
+  full battery sample, running-test temperature, and ATO ADC logs from
+  `BAT_LOG_CRTI` to `BAT_LOG_FULL`.
+- `kernel-3.18/drivers/power/mediatek/switch_charging.c`: demote the generic
+  default-current line to `BAT_LOG_FULL`; keep compact `[M6_CHG]
+  select_ichg_aicr` at `BAT_LOG_CRTI` for charger-type/AICR verification.
+- `kernel-3.18/drivers/misc/mediatek/power/mt6755/bq24157/bq24157_charger.c`:
+  demote repeated bq24157 set-current/set-input-current traces from `pr_info`
+  to `pr_debug`.
+
+Why each file changed:
+- `bma2x2.c`: the capture proves this is the dominant hot-path spam source and
+  the data is already available behind the driver's trace flag.
+- `battery_common_fg_20.c`: full per-cycle battery state is useful for deep
+  diagnosis but too expensive/noisy for normal charging validation; sysfs and
+  `dumpsys battery` remain available for live values.
+- `switch_charging.c`: the generic line duplicates the retained `[M6_CHG]`
+  compact line, so keeping both at critical level is unnecessary.
+- `bq24157_charger.c`: the repeated register-write traces are diagnostic-only;
+  failures still return through the same paths.
+
+Expected next marker:
+- A 15-30 s post-boot dmesg window should no longer be dominated by
+  `Mapped gsensor data`, full `[kernel]AvgVbat`, or bq24157 set-current spam.
+- The retained `[M6_CHG] select_ichg_aicr ... type=... cc=... aicr=...` line
+  should still identify whether the device is stuck as `STANDARD_HOST` or sees
+  a charger mode when tested over wireless ADB on a wall charger.
+
+Rollback condition:
+- Revert this patch if userspace loses accelerometer data, charger enable/current
+  programming regresses, or the next investigation needs full per-cycle charger
+  register traces in normal dmesg rather than via debug/full logging.
+
+Verification commands:
+```bash
+S=711HEBSR277K5
+ADB="env ANDROID_ADB_SERVER_PORT=15038 adb -s $S"
+
+# wired sanity after flashing the rebuilt boot
+$ADB shell 'dmesg -c >/dev/null 2>&1; sleep 15; dmesg | grep -E "BMA2x2_ReadSensorData|Mapped gsensor|Default CC mode charging|set_input_current|set_chargecurrent|\\[kernel\\]AvgVbat|M6_CHG"'
+
+# enable wireless ADB once, then unplug USB and use a wall charger
+$ADB tcpip 5555
+$ADB shell 'ip -f inet addr show wlan0'
+adb connect PHONE_IP:5555
+ADB_TCP="adb -s PHONE_IP:5555"
+
+# wall-charger validation without USB-host 500 mA classification
+$ADB_TCP shell 'dumpsys battery; for f in /sys/class/power_supply/battery/{status,capacity,voltage_now,current_now} /sys/class/power_supply/usb/online /sys/class/power_supply/ac/online; do [ -e "$f" ] && echo "$f=$(cat "$f")"; done'
+$ADB_TCP shell 'dmesg | grep -E "CHR_Type|M6_CHG|bq2415x|enable charger" | tail -80'
+```
+
+---
+## Patch history: 2026-06-18 M6 Goodix mBack ioctl contract from Ghidra MCP
+
+Category: **PROPER-FIX / DIAGNOSTIC**. This patch fixes the kernel-side
+Goodix HAL ioctl/key contract for mBack and leaves bounded `[M6_FP]` key/nav
+markers for the next physical gesture capture. It does not change the secure
+TA, enrollment policy, fingerprint templates, SPI timing, or TEEI init order.
+
+Hypothesis: Goodix fingerprint userspace is now mostly wired, but mBack gestures
+are misrouted because the kernel still uses generic Goodix EVB key semantics:
+`GF_KEY_HOME` emits HOME, `GF_KEY_UP` emits DPAD_UP, and ioctl nr14 is treated
+as FTM readback. Ghidra MCP decompilation of the actual stock Goodix userspace
+shows this HAL sends mBack tap/long/nav through different ioctl values than the
+current kernel handles, so the earliest proven blocker is a HAL/kernel ABI
+mismatch, not touch gesture code.
+
+Evidence:
+- Ghidra MCP `libgf_hal.so` `gf_hal_send_key_event@0x00125a9c`: calls
+  `ioctl(fd, 0x40086709, {key,value})`, matching `GF_IOC_INPUT_KEY_EVENT`.
+- Ghidra MCP `libgf_hal.so` `hal_long_pressed_mback_key_timer_thread@0x0011ed6c`:
+  P-code shows calls to `gf_hal_send_key_event(6,1)` and then `(6,0)`. In this
+  kernel enum, 6 is `GF_KEY_UP`; old code emitted DPAD_UP, not Recents.
+- Ghidra MCP `libgf_hal.so` `gf_hal_send_nav_event@0x001258fc`: calls
+  `ioctl(fd, 0x4004670e, &nav_u32)`. This is ioctl nr14 size4 write, while old
+  kernel nr14 path was `GF_IOC_FTM` readback and never emitted nav keys.
+- Ghidra MCP `libgf_ca.so` `gf_ca_open_session@0x001008b0` and
+  `gf_ca_invoke_command@0x001009a4`: opens `/dev/teei_fp` and invokes ioctl
+  `0x5a777e02`; `teei_daemon` strings show `/system/vendor/thh/fp_server_goodix`
+  and `/vendor/thh/fp_server_goodix`. This confirms the TEE dependency is
+  MicroTrust `/dev/teei_fp` + `fp_server_goodix`, not a kernel TA blob path.
+
+Files changed:
+- `kernel-3.18/drivers/input/fingerprint/goodix/gf_spi_tee.h`: adds the Goodix
+  nav enum and documents ioctl nr14 write as `GF_IOC_NAV_EVENT`, sharing the nr
+  with legacy FTM by direction/size.
+- `kernel-3.18/drivers/input/fingerprint/goodix/gf_spi_tee.c`: maps
+  `GF_KEY_HOME` to Back, maps `GF_KEY_UP`/`GF_KEY_MENU` to KEY_MENU (current
+  `gf-keys.kl` maps it to APP_SWITCH), makes value=1 synthesize down+up like
+  stock, and handles nr14 write nav events as DPAD directions.
+- `kernel-3.18/arch/arm64/boot/dts/meizu_m6.dts`: adds a late
+  `&eint_fingerprint` override to keep the final generated DTB on stock Goodix
+  EINT12 even when generated `cust.dtsi` still carries donor EINT7.
+- `kernel-3.18/arch/arm64/boot/dts/cust_eint.dtsi`: changes fingerprint EINT
+  override from donor EINT7 to stock Goodix EINT12 for source-level parity; the
+  current manual build path still generates `cust.dtsi` separately, so the
+  `meizu_m6.dts` late override is the artifact-proven fix.
+- `BRINGUP_STATE.md`: records the Ghidra MCP evidence, expected markers, and
+  verification commands.
+
+Why each file changed: `gf_spi_tee.c/.h` own the kernel/userspace Goodix ABI
+boundary proven by Ghidra MCP. `meizu_m6.dts` owns the final device DTB
+override. `cust_eint.dtsi` is source-board EINT truth; leaving it at 7
+contradicts stock DTS and the already-added Goodix node using EINT12, but it is
+not sufficient alone for the current out-dir generated `cust.dtsi`.
+
+Expected next marker: after flashing the rebuilt boot, `getevent -lt` on the
+Goodix input node should show mBack TAP as KEY_BACK down/up and mBack LONG as
+KEY_MENU down/up (Android action APP_SWITCH via `gf-keys.kl`). Dmesg should
+show `[M6_FP] KEY_EVENT key=1 value=...` for tap and `[M6_FP] KEY_EVENT key=6`
+for long press; swipes should show `[M6_FP] NAV_EVENT nav=3/4/5/6 cmd=0x4004670e`
+and corresponding DPAD key events. `/dev/teei_fp` and `/dev/goodix_fp` must both
+exist before `goodixfingerprintd` starts.
+
+Rollback condition: revert this patch if Goodix probe/regression loses
+`/dev/goodix_fp`, if mBack HOME/tap/long all disappear with no `[M6_FP]` ioctl
+markers, if EINT12 never fires while EINT7 did in a known-good capture, or if
+fingerprint enrollment regresses after TEEI reaches `soter.teei.init=INIT_OK`.
+
+Verification commands:
+```bash
+S=711HEBSR277K5
+ADB="env ANDROID_ADB_SERVER_PORT=15038 adb -s $S"
+$ADB shell 'cat /proc/version; ls -l /dev/goodix_fp /dev/teei_fp; getprop soter.teei.init'
+$ADB shell 'cat /proc/interrupts | grep -Ei "goodix|finger|eint"'
+$ADB shell 'for e in /sys/class/input/event*/device/name; do echo "$e=$(cat "$e")"; done'
+$ADB shell 'dmesg -c >/dev/null 2>&1; sleep 1; dmesg | grep -E "M6_FP|\\[gf\\]|goodix|teei_fp|soter" | tail -160'
+# While holding this command, physically tap/long-press/swipe mBack:
+$ADB shell 'getevent -lt'
+$ADB shell 'dmesg | grep -E "M6_FP|KEY_EVENT|NAV_EVENT|goodix" | tail -120'
+```
