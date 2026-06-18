@@ -702,8 +702,10 @@ static int bq2415x_charging(struct charger_device *chg_dev, bool enable)
 	else
 		ret = bq2415x_disable_charger(bq);
 
-	pr_err("%s charger %s\n", enable ? "enable" : "disable",
-				  !ret ? "successfully" : "failed");
+	if (ret)
+		pr_err("%s charger failed\n", enable ? "enable" : "disable");
+	else
+		pr_debug("%s charger successfully\n", enable ? "enable" : "disable");
 	
 	ret = bq2415x_read_byte(bq, BQ2415X_REG_01, &val);
 

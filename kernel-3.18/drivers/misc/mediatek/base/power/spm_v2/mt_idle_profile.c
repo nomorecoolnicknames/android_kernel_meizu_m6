@@ -24,7 +24,7 @@
 #define idle_prof_alert(fmt, args...)	pr_alert(IDLE_PROF_TAG fmt, ##args)
 #define idle_prof_crit(fmt, args...)	pr_crit(IDLE_PROF_TAG fmt, ##args)
 #define idle_prof_err(fmt, args...)		pr_err(IDLE_PROF_TAG fmt, ##args)
-#define idle_prof_warn(fmt, args...)	pr_warn(IDLE_PROF_TAG fmt, ##args)
+#define idle_prof_warn(fmt, args...)	pr_debug(IDLE_PROF_TAG fmt, ##args)
 #define idle_prof_notice(fmt, args...)	pr_notice(IDLE_PROF_TAG fmt, ##args)
 #define idle_prof_info(fmt, args...)	pr_debug(IDLE_PROF_TAG fmt, ##args)
 #define idle_prof_ver(fmt, args...)		pr_debug(IDLE_PROF_TAG fmt, ##args)
@@ -440,4 +440,3 @@ void mt_idle_twam_init(void)
 	idle_twam.speed_mode = true;
 	idle_twam.event = 29;
 }
-

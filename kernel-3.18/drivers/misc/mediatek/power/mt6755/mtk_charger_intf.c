@@ -149,10 +149,10 @@ static unsigned int is_chr_det(void)
 
 	vbus = battery_meter_get_charger_voltage();
 #ifdef CONFIG_MTK_PMIC_CHIP_MT6353
-	battery_log(BAT_LOG_CRTI, "[is_chr_det]vbus:%d chrdet:%d\n",
+	battery_log(BAT_LOG_FULL, "[is_chr_det]vbus:%d chrdet:%d\n",
 		vbus, pmic_get_register_value(PMIC_RGS_CHRDET));
 #else
-	battery_log(BAT_LOG_CRTI, "[is_chr_det]vbus:%d chrdet:%d\n",
+	battery_log(BAT_LOG_FULL, "[is_chr_det]vbus:%d chrdet:%d\n",
 		vbus, pmic_get_register_value(MT6351_PMIC_RGS_CHRDET));
 #endif
 
@@ -721,7 +721,7 @@ static int mtk_chg_ctrl_intf(const struct mtk_charger_info *mchr_info,
 		ret = -ENOTSUPP;
 
 	if (ret == -ENOTSUPP)
-		battery_log(BAT_LOG_CRTI, "%s: function %d is not support\n",
+		battery_log(BAT_LOG_FULL, "%s: function %d is not support\n",
 			__func__, cmd);
 	else if (ret < 0)
 		battery_log(BAT_LOG_CRTI, "%s: function %d failed, ret = %d\n",

@@ -4485,7 +4485,7 @@ static void battery_shutdown(struct platform_device *dev)
 /* ///////////////////////////////////////////////////////////////////////////////////////// */
 static ssize_t show_BatteryNotify(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	battery_log(BAT_LOG_CRTI, "[Battery] show_BatteryNotify : %x\n", g_BatteryNotifyCode);
+	battery_log(BAT_LOG_FULL, "[Battery] show_BatteryNotify : %x\n", g_BatteryNotifyCode);
 
 	return sprintf(buf, "%u\n", g_BatteryNotifyCode);
 }

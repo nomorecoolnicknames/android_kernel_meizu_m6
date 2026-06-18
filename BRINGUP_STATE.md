@@ -17595,3 +17595,146 @@ $ADB shell 'dmesg -c >/dev/null 2>&1; sleep 1; dmesg | grep -E "M6_FP|\\[gf\\]|g
 $ADB shell 'getevent -lt'
 $ADB shell 'dmesg | grep -E "M6_FP|KEY_EVENT|NAV_EVENT|goodix" | tail -120'
 ```
+
+---
+## Runtime note: 2026-06-18 #190 good screen with live GPU composition
+
+Category: **FACT / RUNTIME-STATE**. No new boot image flashed from this note.
+
+FACT: user reported that v190 started with a very good screen and no lag. The
+live device identity at the time was:
+`Linux localhost 3.18.140 #190 SMP PREEMPT Thu Jun 18 00:40:34 CDT 2026`, direct
+ADB `127.0.0.1:15038`, serial `711HEBSR277K5`, `sys.boot_completed=1`,
+`bootanim=stopped`.
+
+Important qualifier: the live SurfaceFlinger properties were still from the
+previous diagnostic probe: `debug.sf.disable_hwc=1` and
+`debug.composition.type=gpu`. `dumpsys SurfaceFlinger` reported
+`h/w composer present and disabled`. Therefore the good-screen observation is
+currently a fact for **#190 + GPU composition / HWC disabled**, not yet proof
+that stock HWC composition is good after a clean reboot.
+
+Additional charging fact from the same live check: battery had risen to `49%`,
+`status: 2`/Charging, `USB powered: true`, voltage `3949 mV`. This weakens the
+earlier hypothesis that log spam alone was preventing charge; the phone can
+gain charge on the current #190 runtime.
+
+Action taken: an unflashed local OVL-bypass/RDMA-log patch was abandoned after
+this newer user observation. Do not flash or push that patch unless a fresh
+clean-reboot capture proves the same lag/fault signature without the live
+HWC-disabled property override.
+
+Next display discriminator:
+- If the user wants to preserve the good screen, leave HWC disabled while
+  working on charger/mBack/fingerprint.
+- To prove default composition, do a controlled clean reboot or restore
+  `debug.sf.disable_hwc=0`, collect `/d/mtkfb`, SurfaceFlinger, and dmesg, and
+  compare for `DISP_OVL0` M4U fault, `RDMA0 underflow`, and `wait VSYNC`.
+
+---
+## Patch staged: 2026-06-18 quiet runtime charger / WMT / thermal spam
+
+Category: **PROPER-FIX / LOG-HYGIENE** for proven normal-path spam, plus
+**RUNTIME-STATE** for the live property filter. No boot image has been flashed
+from this patch entry yet.
+
+FACT: current good-screen capture is
+`/srv/forge/android/meizu_m6/captures/20260618-091104-m6-190-good-screen-hwc-disabled-15038`.
+It was collected on #190 with `debug.sf.disable_hwc=1`,
+`debug.composition.type=gpu`, and SurfaceFlinger reporting
+`h/w composer present and disabled`.
+
+FACT: the fresh 45s live window had no active display-fault spam:
+`thermal_repeater=9`, `wmt_launcher=44`, `Power/swap=23/24`,
+`bq241=10`, `M6_CHG=5`, `mtk_chg_ctrl_intf=20`, `is_chr_det=64/65`,
+`fuelgauged=50`, `Battery=9..12`, `M4Ufault=0`, `RDMA0 underflow=0`,
+`wait VSYNC=0`, `goodix/fingerprint=0`. Battery rose to `50%` during this
+capture. This supports treating charger/wmt/thermal as log hygiene first, not
+as the display lag root cause on the HWC-disabled good-screen runtime.
+
+FACT: live liblog filtering worked immediately:
+`setprop log.tag.wmt_launcher W` and `setprop log.tag.thermal_repeater W`
+reduced both tags to zero in
+`live-logtag-filter-20s`. This did not require stopping WMT, Wi-Fi, or thermal
+services. The matching source props were added to both
+`android_device_meizu_m6/system.prop` and
+`rom-lineage-15.1-meizu_m6-experimental/device/meizu/meizu_m6/system.prop`, but
+those props only persist after a system/vendor-side rebuild/flash.
+
+Files changed in the source-kernel log patch:
+- `mtk_charger_intf.c`: demote normal `[is_chr_det]` VBUS polling and
+  expected `-ENOTSUPP` charger-control probes from `BAT_LOG_CRTI` to
+  `BAT_LOG_FULL`; real `ret < 0` charger failures stay critical.
+- `switch_charging.c`: keep `[M6_CHG] select_ichg_aicr` visible, but print only
+  on state change or every 60s.
+- `bq24157_charger.c`: demote successful `enable/disable charger successfully`
+  messages to `pr_debug`; failures stay `pr_err`.
+- `mt_idle_profile.c`, `pmic_auxadc.c`, `mtk_rtc_hal_common.c`, and the three
+  battery common files: demote normal periodic profiler/AUXADC/RTC/BatteryNotify
+  reads out of ordinary warning/error logs.
+
+Build result: manual kernel build succeeded:
+`/srv/forge/android/meizu_m6/kernel-meizu_M6-N-ex6-linux-3.18.140/build-m6-quiet-runtime-spam-20260618.log`.
+`Image.gz-dtb`:
+`/srv/forge/work/m6-source-kernel-manual-20260520/out/arch/arm64/boot/Image.gz-dtb`,
+sha256 `6f39c738e84f9eed7774182112342dee8dd0e239fb8ed6abc2378420cbfb8634`.
+`diff --check` passed for the kernel and device prop trees.
+
+Expected post-flash observation: after flashing a boot image carrying this
+kernel, a fresh 30-45s ordinary log window should no longer contain normal-path
+`Power/swap`, `[is_chr_det]`, `mtk_chg_ctrl_intf: function ... is not support`,
+`[Auxadc] ch:`, `bq2415x_charging: enable charger successfully`,
+`show_BatteryNotify`, or RTC notice spam. `[M6_CHG] select_ichg_aicr` may still
+appear on charger-state changes or once per minute. Real charger failures must
+remain visible.
+
+Important flash caution: boot-only flashing this kernel will not persist the
+two `log.tag.*` source properties and may also lose the live HWC-disabled
+SurfaceFlinger state on reboot. If preserving the current good screen is more
+important than immediately validating kernel log hygiene, keep #190 running and
+continue non-reboot diagnostics with HWC disabled.
+
+---
+## Runtime note: 2026-06-18 #190 Goodix / TEE live baseline
+
+Category: **FACT / RUNTIME-STATE**. No new boot image flashed from this note.
+
+Capture:
+`/srv/forge/android/meizu_m6/captures/20260618-092741-m6-190-good-screen-goodix-tee-live`.
+
+FACT: on the same good-screen #190 runtime, the Goodix/MicroTrust stack is
+alive at the process/device-node/framework level:
+- `soter.teei.init=INIT_OK`;
+- `/dev/goodix_fp` exists as `system:system 0660`;
+- `/dev/teei_fp` exists as `system:system 0666`;
+- `teei_daemon`, `goodixfingerprintd`, and
+  `android.hardware.biometrics.fingerprint@2.0-service` are running;
+- `FingerprintManager` dumpsys works and shows zero enrolled prints;
+- package features include `android.hardware.fingerprint`;
+- `gf-keys` is `/dev/input/event2` and advertises `KEY_MENU`, `KEY_BACK`, and
+  DPAD directions;
+- EINT12 `goodix_fp_irq` exists and has non-zero counts.
+
+FACT: idle Goodix/TEE logs are clean in this runtime capture:
+`logcat-goodix-tee.txt` and `dmesg-goodix-tee.txt` both had zero matching
+Goodix/TEE error/spam lines. A 25s mBack watch under
+`mback-25s/` saw no event because no physical mBack gesture was captured during
+the window.
+
+INFERENCE: the remaining fingerprint issue is no longer "TEE/device node never
+starts". The next useful fingerprint capture must be taken during enroll/auth
+from Settings so it catches the first HAL<->TEE command failure. The next useful
+mBack capture must be taken while physically tapping/long-pressing/swiping the
+sensor so `getevent -lt /dev/input/event2` and `[M6_FP] KEY_EVENT/NAV_EVENT`
+markers can confirm or reject the Ghidra-derived ioctl/key mapping.
+
+Source default update made after this observation:
+- `android_device_meizu_m6/system.prop`;
+- `rom-lineage-15.1-meizu_m6-experimental/device/meizu/meizu_m6/system.prop`;
+- `rom-lineage-15.1-meizu_m6-experimental/device/meizu/meizu_m6/device_meizu_m6.mk`.
+
+These source files now keep the proven-good display isolation as the build
+default: `debug.sf.disable_hwc=1` and `debug.composition.type=gpu`. This is an
+**ISOLATION** default, not an HWC fix. Roll it back only after a clean reboot
+with default HWC proves no jitter, no bootanimation lag, and no display-fault
+spam.

@@ -46,6 +46,7 @@
  ****************************************************************************/
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/jiffies.h>
 #include <mt-plat/battery_meter.h>
 #include <mt-plat/battery_common.h>
 #include <mt-plat/battery_meter_hal.h>
@@ -967,11 +968,42 @@ static void mtk_select_ichg_aicr(void)
 		battery_log(BAT_LOG_FULL,
 			"[BATTERY] Default CC mode charging : %d, input current = %d\n",
 			g_temp_CC_value, g_temp_input_CC_value);
-		battery_log(BAT_LOG_CRTI,
-			"[M6_CHG] select_ichg_aicr type=%d usb_unlimited=%d bcct=%d cc=%d aicr=%d usb_state=%d\n",
-			BMT_status.charger_type, get_usb_current_unlimited(),
-			g_bcct_flag, g_temp_CC_value, g_temp_input_CC_value,
-			g_usb_state);
+		{
+			static int last_charger_type = -1;
+			static int last_usb_unlimited = -1;
+			static int last_bcct = -1;
+			static int last_cc = -1;
+			static int last_aicr = -1;
+			static int last_usb_state = -1;
+			static unsigned long last_log_jiffies;
+			int charger_type = BMT_status.charger_type;
+			int usb_unlimited = get_usb_current_unlimited();
+			int bcct = g_bcct_flag;
+			int cc = g_temp_CC_value;
+			int aicr = g_temp_input_CC_value;
+			int usb_state = g_usb_state;
+			bool changed = charger_type != last_charger_type ||
+				usb_unlimited != last_usb_unlimited ||
+				bcct != last_bcct ||
+				cc != last_cc ||
+				aicr != last_aicr ||
+				usb_state != last_usb_state;
+
+			if (changed || time_after(jiffies,
+					last_log_jiffies + 60 * HZ)) {
+				battery_log(BAT_LOG_CRTI,
+					"[M6_CHG] select_ichg_aicr type=%d usb_unlimited=%d bcct=%d cc=%d aicr=%d usb_state=%d\n",
+					charger_type, usb_unlimited, bcct, cc,
+					aicr, usb_state);
+				last_charger_type = charger_type;
+				last_usb_unlimited = usb_unlimited;
+				last_bcct = bcct;
+				last_cc = cc;
+				last_aicr = aicr;
+				last_usb_state = usb_state;
+				last_log_jiffies = jiffies;
+			}
+		}
 
 		battery_charging_control(CHARGING_CMD_SET_INPUT_CURRENT,
 			&g_temp_input_CC_value);
