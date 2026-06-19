@@ -843,12 +843,12 @@ static void lcm_get_params(LCM_PARAMS *params)
 	params->dsi.ssc_disable = 1;
 #ifndef CONFIG_FPGA_EARLY_PORTING
 #if (LCM_DSI_CMD_MODE)
-	params->dsi.PLL_CLOCK = 230;	/* this value must be in MTK suggested table */
+	params->dsi.PLL_CLOCK = 240;	/* M6: 230->240 for 60Hz hardware scanout (was 57.65) */
 #else
-	params->dsi.PLL_CLOCK = 230;	/* this value must be in MTK suggested table */
+	params->dsi.PLL_CLOCK = 240;	/* M6: 230->240 for 60Hz hardware scanout (was 57.65) */
 #endif
-	params->dsi.PLL_CK_CMD = 230;
-	params->dsi.PLL_CK_VDO = 230;
+	params->dsi.PLL_CK_CMD = 240;
+	params->dsi.PLL_CK_VDO = 240;
 #else
 	params->dsi.pll_div1 = 0;
 	params->dsi.pll_div2 = 0;

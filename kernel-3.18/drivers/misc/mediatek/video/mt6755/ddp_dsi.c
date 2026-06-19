@@ -266,6 +266,8 @@ t_dsi_context _dsi_context[DSI_INTERFACE_NUM];
  */
 #define M6_FORCE_FIRST_DSI_CONFIG_ON_LK_MIPITX 0
 
+#define M6_BOOT_PLL_REPROG 1
+
 PDSI_REGS DSI_REG[2] = {0};
 PDSI_PHY_REGS DSI_PHY_REG[2] = {0};
 PDSI_CMDQ_REGS DSI_CMDQ_REG[2] = {0};
@@ -4017,6 +4019,38 @@ void dsi_m6_force_clk_restore(const char *tag)
 	dsi_m6_dump_snapshot("clk-restore-after", DISP_MODULE_DSI0, NULL);
 }
 
+void DSI_PHY_clk_change(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PARAMS *dsi_params);
+void DSI_PHY_TIMCONFIG(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PARAMS *dsi_params);
+
+void dsi_m6_force_pll_change(unsigned int new_pll, const char *tag)
+{
+	const char *safe_tag = tag ? tag : "manual";
+	LCM_DSI_PARAMS *dsi_params = &_dsi_context[0].dsi_params;
+	unsigned int old_pll = dsi_params->PLL_CLOCK;
+	unsigned int data_rate = new_pll * 2;
+
+	if (!DSI_REG[0])
+		return;
+
+	if (data_rate < 50 || data_rate > 1250) {
+		DISPERR("M6 DSI pll_change[%s]: REJECTED new_pll=%u data_rate=%u out of range [25..625]\n",
+			safe_tag, new_pll, data_rate);
+		return;
+	}
+
+	DISPERR("M6 DSI pll_change[%s]: begin old_pll=%u new_pll=%u data_rate=%u\n",
+		safe_tag, old_pll, new_pll, data_rate);
+	dsi_m6_dump_phy_truth("pll-change-before");
+
+	dsi_params->PLL_CLOCK = new_pll;
+	DSI_PHY_clk_change(DISP_MODULE_DSI0, NULL, dsi_params);
+	DSI_PHY_TIMCONFIG(DISP_MODULE_DSI0, NULL, dsi_params);
+
+	DISPERR("M6 DSI pll_change[%s]: done old_pll=%u new_pll=%u data_rate=%u\n",
+		safe_tag, old_pll, new_pll, data_rate);
+	dsi_m6_dump_phy_truth("pll-change-after");
+}
+
 void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
 			   unsigned int restore, unsigned int sample_mux)
 {
@@ -6498,6 +6532,7 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 	LCM_DSI_PARAMS *dsi_config = &(config->dispif_config.dsi);
 	static unsigned int dump_count;
 	static unsigned int m6_force_first_lk_mipitx_config_done;
+	static unsigned int m6_boot_pll_reprog_done;
 #ifndef CONFIG_FPGA_EARLY_PORTING
 	int mipitx_enabled = 0;
 #endif
@@ -6570,8 +6605,19 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 			goto force_config;
 		} else if (dsi_force_config)
 			goto force_config;
-		else
+		else {
+			if (M6_BOOT_PLL_REPROG && !m6_boot_pll_reprog_done) {
+				m6_boot_pll_reprog_done = 1;
+				pr_err("M6BOOTPLL: reprog PLL from LK handoff, target pll=%u data_rate=%u pcw_before=0x%x\n",
+					dsi_config->PLL_CLOCK, dsi_config->PLL_CLOCK * 2,
+					DSI_INREG32(PMIPITX_DSI_PLL_CON2_REG, &DSI_PHY_REG[0]->MIPITX_DSI_PLL_CON2));
+				DSI_PHY_clk_change(module, NULL, dsi_config);
+				DSI_PHY_TIMCONFIG(module, NULL, dsi_config);
+				pr_err("M6BOOTPLL: reprog done, pcw_after=0x%x\n",
+					DSI_INREG32(PMIPITX_DSI_PLL_CON2_REG, &DSI_PHY_REG[0]->MIPITX_DSI_PLL_CON2));
+			}
 			goto done;
+		}
 	} else
 #endif
 	{

@@ -17851,3 +17851,72 @@ FACT: screencap framebuffer = 6.83% nonzero (partially lit, not 99.83% black lik
 INFERENCE: the camera frontier moved. The 0613 mediaserver SIGSEGV (TSF NULL-deref) is fixed by the shim. The remaining issue is userspace camera HAL: only 1 of 2 sensors is enumerated, and the HAL refuses to open the device for the Camera2 app (generic Exception, not a kernel-side sensor failure). This is consistent with the 0613 note that `libcameracustom.so` lacks `constructCustStaticMetadata_*SENSOR_DRVNAME_OV8856_MIPI_RAW` symbols — the HAL can build metadata for one sensor but not the other, and the Camera2 app's open callback fails before preview starts. No kernel patch can fix missing userspace HAL metadata symbols.
 
 Open camera follow-up (userspace): either (a) build/patch `libcameracustom.so` to include the missing `constructCustStaticMetadata_*` symbols for both IMX278 and OV8856, or (b) use the legacy Camera1 API path (`com.android.camera` legacy app) which may not require the full metadata, or (c) acquire the stock `libcameracustom.so` that matches both sensors. The kernel sensor list ABI is correct (`a5ae09e8fd1`); the gap is HAL-side metadata.
+
+## 2026-06-19 #199 DSI PLL boot-time reprogram 230→240 — hardware vsync now 60.0 Hz, runtime debugfs PLL change command
+
+Patch category: **PROPER-FIX** (boot-time PLL reprogram in `ddp_dsi_config`) + **DIAGNOSTIC** (runtime debugfs `m6_dsi_pll_change` command). Boot image sha `7dbdb9ca0f3aeb68780db079b87fc9e9f09ce52c5bb62222cecef14e5a7a1d5f`, kernel `Image.gz-dtb` sha `6d41d7fed777fc74d317065a33c68c9d1c381ba325a4b1b011b1545d7eb961c8`. Flashed and verified on device after cold boot (recovery→system).
+
+### Background
+
+The M6's ILI9881P DSI panel runs at 57.65 Hz with the stock LK-programmed PLL=230. The LK (Little Kernel) bootloader programs MIPITX PLL_CON2 pcw=0x46c4ec4e (PLL=230, data_rate=460 MHz) and Linux's `ddp_dsi_config` preserves the LK handoff (`goto done` without reconfiguring MIPITX) to avoid power-cycling the live DSI link. The LCM driver `ili9881p_hd_dsi_txd.c` had PLL_CLOCK=230 in both CMD and VDO branches.
+
+The HWC HAL `hwcomposer.mt6750.so` measures refresh rate at boot by timing `DISP_IOCTL_WAIT_FOR_VSYNC` and reports it to SurfaceFlinger. With PLL=230, HAL reported `refresh=17346053 ns` (57.65 fps), causing SF to schedule at 57.65 fps instead of 60.
+
+### Fix — boot-time PLL reprogram
+
+Added `M6_BOOT_PLL_REPROG=1` in `ddp_dsi_config()`: when the LK handoff skip path is taken (`mipitx_enabled && PMaster==0 && !dsi_force_config` → `else goto done`), instead of just `goto done`, the code now calls `DSI_PHY_clk_change(module, NULL, dsi_config)` + `DSI_PHY_TIMCONFIG(module, NULL, dsi_config)` to reprogram the MIPITX PLL from LK's 230 to the LCM driver's target 240, **before** `goto done`. This is a targeted PLL-only reprogram (not a full `DSI_PHY_clk_setting` which would power-cycle the entire PHY), safe because `DSI_PHY_clk_change` only writes PLL_CON0/CON1/CON2/CON3/CHG registers and waits for PLL lock.
+
+The LCM driver `ili9881p_hd_dsi_txd.c` was also changed from PLL_CLOCK=230 to 240 (proportion: `230 * 60/57.65 = 239.4` → 240).
+
+### Fix — runtime debugfs PLL change command
+
+Added `m6_dsi_pll_change:<pll>[:tag]` debugfs command in `disp_debug.c` calling new `dsi_m6_force_pll_change(new_pll, tag)` in `ddp_dsi.c`. This allows runtime PLL reprogramming on the live DSI link without reboot — safe for empirical testing (240/250/265), revert by writing the old value. The command uses `primary_display_manual_lock/unlock` for exclusion and `DSI_PHY_clk_change` + `DSI_PHY_TIMCONFIG` for the actual reprogram.
+
+### Evidence (cold boot #199, recovery→system)
+
+- **PCW after cold boot**: `0x49d89d89` (PLL=240, data_rate=480 MHz) — confirmed after cold boot via recovery (MIPITX reset). LK would have programmed `0x46c4ec4e` (PLL=230); the boot-time reprog changed it to 240.
+- **OVL0 IRQ rate at PLL=240**: 60.0 Hz (918 IRQ in 15.3s) — hardware vsync is exactly 60.0 Hz.
+- **SF HAL refresh**: `17295053 ns` (57.82 fps) — improved from 57.65 fps (17346053 ns), but HAL still under-measures by ~3.6%. The HAL caches the measurement from boot init and does not re-measure on SF restart (`stop/start surfaceflinger` and `killall -9 surfaceflinger` both leave the cached value unchanged).
+- **Runtime debugfs test PLL=250**: PCW=`0x26762762`, OVL0 IRQ=61.3 Hz, HAL still reports 57.82 (cached). Reverted to 240.
+- **Display works**: no corruption, no black screen, no regression from boot-time or runtime PLL reprog.
+
+### Honest limitation: HAL under-measures refresh rate
+
+FACT: hardware vsync = 60.0 Hz (OVL0 IRQ measurement), but HAL reports 57.82 fps. The HAL measures vsync by timing `DISP_IOCTL_WAIT_FOR_VSYNC` during boot init and caches the result. The under-measurement (~3.6%) is in the HAL's vsync timing logic, not the kernel. SF restart does not force re-measurement.
+
+The residual 57.82 vs 60.0 discrepancy is a userspace HAL issue. Two options: (a) accept PLL=240 as the correct hardware setting (vsync=60.0 Hz) and patch the HAL to report 60.0 fps, or (b) increase PLL to ~250 to compensate for HAL under-measurement (but real vsync becomes ~61.3 Hz, above 60). Option (a) is preferred — the kernel delivers correct 60 Hz, the HAL misreports it.
+
+### Files changed
+
+- `kernel-3.18/drivers/misc/mediatek/lcm/ili9881p_hd_dsi_txd/ili9881p_hd_dsi_txd.c`: PLL_CLOCK 230→240 (CMD+VDO branches, PLL_CK_CMD/PLL_CK_VDO)
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.c`: `M6_BOOT_PLL_REPROG=1` define, boot-time PLL reprog in `ddp_dsi_config` else-branch, `dsi_m6_force_pll_change()` function, forward declarations for `DSI_PHY_clk_change`/`DSI_PHY_TIMCONFIG`
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/ddp_dsi.h`: `dsi_m6_force_pll_change()` declaration
+- `kernel-3.18/drivers/misc/mediatek/video/mt6755/disp_debug.c`: `m6_dsi_pll_change` help text + command dispatch
+
+### Expected next marker
+
+- `M6BOOTPLL: reprog PLL from LK handoff, target pll=240 data_rate=480 pcw_before=0x46c4ec4e` in early boot dmesg (may be lost from ring buffer; check pstore after next reboot)
+- `M6BOOTPLL: reprog done, pcw_after=0x49d89d89` in early boot dmesg
+- `dumpsys SurfaceFlinger | grep refresh=` → 17295053 ns (57.82 fps, HAL under-measurement) or 16666666 ns (60.0 fps if HAL patched)
+- OVL0 IRQ rate = 60.0 Hz (kernel truth)
+
+### Rollback condition
+
+Revert if: display goes black during boot (PLL reprog breaks LK link), display corruption/flicker, MIPITX PLL fails to lock (pcw_after != expected), or boot regression. Set `M6_BOOT_PLL_REPROG=0` to disable boot-time reprog and restore LK handoff preservation. Revert `ili9881p_hd_dsi_txd.c` PLL_CLOCK to 230.
+
+### Verification commands
+
+```bash
+# On device (root):
+echo m6_dsi_phy_truth:verify > /d/mtkfb; dmesg | grep pcw=0x
+# Expect: pcw=0x49d89d89 (PLL=240)
+# OVL0 vsync rate (15s):
+A=$(cat /proc/interrupts | grep " ovl0 " | awk '{s=0;for(i=2;i<=NF-3;i++)s+=$i;print s}'); T=$(cat /proc/uptime | cut -d. -f1); sleep 15; B=$(cat /proc/interrupts | grep " ovl0 " | awk '{s=0;for(i=2;i<=NF-3;i++)s+=$i;print s}'); T2=$(cat /proc/uptime | cut -d. -f1); echo "rate=$(( (B-A)/(T2-T) )) Hz"
+# Expect: ~60 Hz
+# Runtime PLL test (no reboot):
+echo m6_dsi_pll_change:250:test > /d/mtkfb; dmesg | grep "pll_change\[test"
+echo m6_dsi_pll_change:240:revert > /d/mtkfb
+# SF refresh:
+dumpsys SurfaceFlinger | grep refresh=
+# Expect: 17295053 ns (57.82 fps, HAL under-measurement)
+```

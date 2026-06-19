@@ -141,8 +141,10 @@ char MTKFB_STR_HELP[] =
 		"             Meizu M6 DSI/MIPITX debug mux multi-sample stats; restores selectors\n"
 		"        m6_dsi_lkgold_muxstats_dump\n"
 		"             Meizu M6 dump cached early LK handoff MIPITX mux stats\n"
-		"        m6_dsi_clk_restore[:tag]\n"
-		"             Meizu M6 force TXRX HSTX_CKLP_EN and PHY LC_HS_TX_EN back on\n"
+	"        m6_dsi_clk_restore[:tag]\n"
+	"             Meizu M6 force TXRX HSTX_CKLP_EN and PHY LC_HS_TX_EN back on\n"
+	"        m6_dsi_pll_change:<pll>[:tag]\n"
+	"             Meizu M6 runtime MIPITX PLL reprogram (pll=230 stock, 240/250/265 test); live link, revert by writing old value\n"
 		"        m6_dsi_cc_probe:<0|1>[:hold_ms[:restore[:mux]]]\n"
 		"             Meizu M6 isolation toggle for TXRX HSTX_CKLP_EN; mux=1 sweep, mux=2 stats\n"
 		"        m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore[:mux]]]\n"
@@ -770,6 +772,25 @@ void mtkfb_process_dbg_opt(const char *opt)
 		dsi_m6_force_clk_restore(safe_tag);
 		primary_display_manual_unlock();
 		DISPERR("M6 DSI clk_restore command: tag=%s\n", safe_tag);
+	} else if (0 == strncmp(opt, "m6_dsi_pll_change:", sizeof("m6_dsi_pll_change:") - 1)) {
+		unsigned int new_pll = 0;
+		const char *tag = "manual";
+		char safe_tag[32];
+		const char *colon;
+
+		ret = sscanf(opt, "m6_dsi_pll_change:%u", &new_pll);
+		if (ret < 1) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		colon = strchr(opt + sizeof("m6_dsi_pll_change:") - 1, ':');
+		if (colon)
+			tag = colon + 1;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+		primary_display_manual_lock();
+		dsi_m6_force_pll_change(new_pll, safe_tag);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI pll_change command: pll=%u tag=%s\n", new_pll, safe_tag);
 	} else if (0 == strncmp(opt, "m6_dsi_cc_probe:", sizeof("m6_dsi_cc_probe:") - 1)) {
 		int value_arg = 0;
 		unsigned int value = 0;
