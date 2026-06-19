@@ -17738,3 +17738,68 @@ default: `debug.sf.disable_hwc=1` and `debug.composition.type=gpu`. This is an
 **ISOLATION** default, not an HWC fix. Roll it back only after a clean reboot
 with default HWC proves no jitter, no bootanimation lag, and no display-fault
 spam.
+
+---
+
+## 2026-06-18 #195 HWC OVL0 guard-page remap + BT co_clock markers — kernel-side M4U fault storm eliminated; residual HWC jitter is userspace HAL
+
+Patch category: **PROPER-FIX** (OVL0 guard-page remap, kernel) + **DIAGNOSTIC** (BT co_clock markers, read-only). Boot image sha `31f181f0fabee83452b7375dfe53dcfe3b6b2b09a36edf1347265e29e87769ec`, kernel `Image.gz-dtb` sha `d0e51cf563ee2beec5c4c2be60be2b9d2c6a66d25d15e7f20a4a7e54d58b225d`. Flashed and verified on device 711HEBSR277K5 (boot partition hash matches). Commit `6e2e9dcbcc8`.
+
+### Background: 5 parallel subagent investigations (2026-06-18)
+
+Launched one subagent per open problem (HWC composition, Goodix mBack, camera preview, BT STP NoAck, fuel-gauge 6%). Findings:
+
+- **HWC composition (CRITICAL re-open):** the `9dbe92ab414` commit message's "isolation hack is CORRECT, do not touch RDMA0_EOF again" framing was **stub-success-shaped and overclaimed**. Stock reverse proves token 77 (RDMA0_EOF) IS live on this hardware and stock waits on 77+113. The wedge on boot-184 was because RDMA0_EOF never pulses on our source — traced to OVL0 layer-1 end-of-valid-MVA prefetch fault (no guard page on display buffers) → RDMA0 underflow → RDMA0_EOF dead. GPU composition works because single layer-0 doesn't trigger the prefetch.
+- **Goodix mBack:** the committed ABI fix (`3c6a45487c0`, `e6e538e6b4b`) is **correct and complete** per Ghidra+disasm+DTB evidence. Needs physical validation only.
+- **Camera preview:** the 06-13 "AE sees 0 / face-down / screencap overlay" INFERENCE is **overturned** by the 06-16 capture: `waitPreviewReady` timeout + 99.83% black framebuffer + chronic `No new MNum` ISP pass1↔3A starvation. Real bug, needs illuminated-scene diagnostic to split H1 (kernel ISP) vs H2 (userspace tuning).
+- **BT STP NoAck:** all static code/firmware/DTS/HAL = stock (sha1-verified). ONE unexamined angle: `co_clock_flag=3` from WMT_SOC.cfg overrides PMIC auto-detect; the auto-detect value was never captured. DIAGNOSTIC markers added to capture it.
+- **Fuel-gauge 6%:** userspace `fuelgauged` daemon trusts stale RTC=6 over live OCV=90%. Kernel guard (`af4f8a72be1`) self-heals on #190 (49-50% tracking). **Resolved**, no further patch.
+
+### OVL0 guard-page remap — what it does
+
+FACT: in HWC mode the OverlayEngine places multiple per-frame buffers on OVL0 layers, each allocated at exactly one-frame size (`0x384000` = 720×1280×4) with **no guard page**. OVL0 prefetches one burst past the programmed visible end on layer 1 → reads at `mva == valid_end` (delta=0x0) → M4U DISP_OVL0 translation fault. The existing disp-TF bypass (`m4u_hw.c:2065-2106`, upstream MTK) only suppressed the TLB/AEE dumps; it did NOT give OVL0 a valid physical page, so the prefetch transaction stalled → RDMA0 FIFO emptied → RDMA0 underflow → RDMA0_EOF never pulsed.
+
+FIX (`m4u_hw.c`): allocate one zeroed scratch 4K page in `m4u_domain_init`; in the M4U ISR, when a DISP_OVL0 TF is the verified benign end-of-valid-MVA prefetch case (`fault_mva < valid_mva_end + SZ_4K`), call `m4u_map_4K(domain, fault_mva & ~0xfff, page_to_phys(scratch), R|W|CACHE)` so the OVL0 read completes. Rate-limited markers log the first 96 remaps. No register writes beyond the page table, no control-flow change, no skip/stub.
+
+### Evidence (capture `20260618-1830-m6-195-ovl-guard-hwc-711HEBSR277K5`)
+
+- **bounds_profile=1 baseline (pre-guard):** M4Ufault `DISP_OVL0 mva=0x914b000 layer=1 delta=0x0`, RDMA0 underflow cnt=73/75, ObjectPool empty=24.
+- **guard-page active:** 8+ successful `M6 M4U ovl guard remap` (scratch mapped at fault_mva), 0 fail. Faults stop after first remap per buffer end (the scratch page stays mapped).
+- **20s idle, bounds=0+guard:** `0` underflow, `0` M4Ufault, `0` guard remap (first fault per buffer-end remaps once, then stable).
+- **Active stimulus, bounds=0+guard:** `0` M4Ufault (vs 8+ without guard). Kernel-side fault storm fully eliminated.
+- **Truth window (guard_idle):** `rdma_sof=1 rdma_eof=0 mutex0_eof=0 dsi0_sof=1 dsi0_eof=1` — confirms GCE event 77 (RDMA0_EOF) and 113 (MUTEX0_STREAM_EOF) are **dead on this source regardless of underflow**; DSI0_EOF is the live frame-done signal. This is the real reason `9dbe92ab414` avoided the 77-wait wedge; the isolation hack was technically correct for this hardware but its "do not touch again" framing blocked the stock-parity investigation.
+
+### Honest limitation: residual HWC jitter is userspace HAL, not kernel
+
+FACT: user reported the visual jitter with HWC enabled did **not** change after the guard-page fix, even though all M4U faults and RDMA0 underflow were eliminated in the captured windows.
+
+FACT: `dumpsys SurfaceFlinger` on #195 with HWC enabled reports `refresh-rate 57.650003 fps` (not 60), `7+ frames: 6.3%` latency, with the donor `hwcomposer.mt6755.so` HAL. Stock `hwcomposer.mt6750.so` fails to load on Oreo SF (missing `BufferQueue::createBufferQueue` symbol, BRINGUP_STATE.md:10574-10576); the ROM substitutes the donor mt6755 HAL which loads and runs but has different timing.
+
+INFERENCE: the residual jitter is in the userspace HWC HAL timing (57.65 fps vs 60 fps), not the kernel DDP/M4U/RDMA path. The guard-page fix is still correct and necessary (it removes the kernel-side fault storm that would otherwise compound the HAL timing issue); it is not a standalone complete fix for HWC jitter.
+
+Next HWC frontier (not kernel-fixable without HAL work): either (a) patch the donor `hwcomposer.mt6755.so` to hit 60 fps, (b) acquire a working `hwcomposer.mt6750.so` that loads on Oreo SF, or (c) keep `debug.sf.disable_hwc=1` (GPU composition) as the working default and accept GPU composition cost. The state file's `debug.sf.disable_hwc=1` ISOLATION default remains the working screen config.
+
+### BT co_clock DIAGNOSTIC markers — ready for next BT-enable capture
+
+Markers added (all read-only printk, no behavior change):
+- `mtk_wcn_consys_co_clock_type`: dump `cw15_backup`, `cw16`, `NOCOCK_BIT/COCK_BIT` strap decode.
+- `mtk_wcn_consys_hw_reg_ctrl`: dump `branch` (TCXO/CO_VCTCXO/CO_TSX/CO_DCXO), `clk_buf` (called/skipped), `vcn28` mode.
+- `wmt_plat_soc_init`: dump `cfg` vs `auto` vs `resolved` vs `used=cfg|auto`.
+
+Expected next marker (next BT-enable capture): `M6COCLK: soc_init cfg=3 auto=0|1 resolved=3 used=cfg`, `M6COCLK: reg_ctrl on=1 co_clock=3 branch=CO_VCTCXO clk_buf=skipped vcn28=SW`, `M6COCLK: co_clock_type cw15_backup=0xXXXX cw16=0xXXXX ...`. Discriminate: `auto=0 + cfg=3` → mismatch confirmed (strap=TCXO forced to VCTCXO) → PROPER-FIX candidate (set `co_clock_flag` in WMT_SOC.cfg to match strap). `auto=1 + cfg=3` → both co-clock, residual is chip-side → external scope on 26M co_clock line. **Not captured yet — needs a BT-enable attempt on the next session.**
+
+### Verification commands
+
+```bash
+S=711HEBSR277K5; ADB="env ANDROID_ADB_SERVER_PORT=15038 adb -s $S"
+# guard-page
+$ADB shell 'cat /proc/version'   # expect #195 ... Thu Jun 18 17:35:05 CDT 2026
+$ADB shell 'dmesg | grep -E "M6 M4U ovl guard|scratch page"'
+$ADB shell 'echo m6_display_truth_window:guard > /d/mtkfb; dmesg | grep -E "truth\[.*rdma_eof|truth\[.*dsi0_eof"'
+# BT co_clock (after BT enable attempt)
+$ADB shell 'dmesg | grep -E "M6COCLK"'
+```
+
+### Rollback condition
+
+Revert the guard-page remap if it causes M4U multi-hit faults, page-table recursion, display corruption, or boot regression. The scratch page is a single 4K zeroed page; if `m4u_map_4K` returns nonzero (ptable alloc fail), the remap is skipped and the old bypass-only behavior applies. Revert the M6COCLK markers if they corrupt the boot/clock path (they are pure reads/warns) or if BT diagnosis is closed and the markers are noise.
