@@ -17837,3 +17837,17 @@ INFERENCE (revised): the co_clock mismatch (strap=TCXO, config=VCTCXO) is **NOT 
 The M6COCLK markers can stay (they are harmless read-only printk and document the clock branch for any future BT regression). No co_clock PROPER-FIX is warranted since BT works with the current config=3 override.
 
 Open BT follow-up (non-blocking): verify BT can actually scan + pair + stream audio, not just reach ON state. The HCI command flow with status=0 is strong evidence, but a successful scan/pair is the final confirmation.
+
+### 2026-06-18 #195 camera lit-scene test — TSF shim works (no crash), but only 1 camera device + HAL open failure
+
+Tested on #195, capture `20260618-1930-m6-195-camera-litscene-711HEBSR277K5`.
+
+FACT: TSF bypass shim works — NO `mediaserver SIGSEGV` / NO `Shading_TSF_int_gain` / NO `TsfCoreProcess` tombstone in this session (the 0613 crash path is gone). Tombstones 27-30 are all `emdlogger1` SIGABRT (modem logger, unrelated to camera).
+
+FACT: `am start com.android.camera2` → `CAM_FatalErrorHandler: onCameraOpenFailure` with generic `java.lang.Exception` (not the old SIGSEGV). `dumpsys media.camera`: `Number of camera devices: 1` (was 2 on 0613), `Device 0 is closed`, `DISCONNECT device 0 client for package media (PID 499)`. Camera provider `legacy/0 (v2.4, passthrough)` sees only 1 device.
+
+FACT: screencap framebuffer = 6.83% nonzero (partially lit, not 99.83% black like 0616) — the preview surface has some content but the camera open failed so it's likely a stale/transition frame, not a live preview.
+
+INFERENCE: the camera frontier moved. The 0613 mediaserver SIGSEGV (TSF NULL-deref) is fixed by the shim. The remaining issue is userspace camera HAL: only 1 of 2 sensors is enumerated, and the HAL refuses to open the device for the Camera2 app (generic Exception, not a kernel-side sensor failure). This is consistent with the 0613 note that `libcameracustom.so` lacks `constructCustStaticMetadata_*SENSOR_DRVNAME_OV8856_MIPI_RAW` symbols — the HAL can build metadata for one sensor but not the other, and the Camera2 app's open callback fails before preview starts. No kernel patch can fix missing userspace HAL metadata symbols.
+
+Open camera follow-up (userspace): either (a) build/patch `libcameracustom.so` to include the missing `constructCustStaticMetadata_*` symbols for both IMX278 and OV8856, or (b) use the legacy Camera1 API path (`com.android.camera` legacy app) which may not require the full metadata, or (c) acquire the stock `libcameracustom.so` that matches both sensors. The kernel sensor list ABI is correct (`a5ae09e8fd1`); the gap is HAL-side metadata.
