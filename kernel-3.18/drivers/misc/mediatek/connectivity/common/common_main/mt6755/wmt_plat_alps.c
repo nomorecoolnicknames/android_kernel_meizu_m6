@@ -325,12 +325,16 @@ INT32 wmt_plat_soc_init(UINT32 co_clock_type)
 {
 	CMB_STUB_CB stub_cb;
 	INT32 iret;
+	UINT32 cfg_co_clock_type = co_clock_type;
 	/*init wmt function ctrl wakelock if wake lock is supported by host platform */
 	/* Set auto-detection value only for default type 0 */
 	iret = mtk_wcn_consys_co_clock_type();
 	if (0 == co_clock_type)
 		co_clock_type = iret;
 	wmt_plat_soc_co_clock_flag_set(co_clock_type);
+	WMT_PLAT_ERR_FUNC("M6COCLK: soc_init cfg=%u auto=%d resolved=%u used=%s\n",
+		cfg_co_clock_type, iret, co_clock_type,
+		(cfg_co_clock_type != 0) ? "cfg" : "auto");
 
 	stub_cb.aif_ctrl_cb = wmt_plat_audio_ctrl;
 	stub_cb.func_ctrl_cb = wmt_plat_func_ctrl;
