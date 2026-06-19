@@ -17803,3 +17803,37 @@ $ADB shell 'dmesg | grep -E "M6COCLK"'
 ### Rollback condition
 
 Revert the guard-page remap if it causes M4U multi-hit faults, page-table recursion, display corruption, or boot regression. The scratch page is a single 4K zeroed page; if `m4u_map_4K` returns nonzero (ptable alloc fail), the remap is skipped and the old bypass-only behavior applies. Revert the M6COCLK markers if they corrupt the boot/clock path (they are pure reads/warns) or if BT diagnosis is closed and the markers are noise.
+
+### 2026-06-18 mBack gesture test — kernel ABI correct, userspace HAL not emitting key events
+
+Tested on #195 (kernel 6e2e9dcbcc8, mBack ABI fix 3c6a45487c0 + e6e538e6b4b present). Capture: `20260618-1845-m6-195-mback-gesture-test-711HEBSR277K5`.
+
+FACT: Goodix stack alive at runtime: `/dev/goodix_fp` 0660, `/dev/teei_fp` 0666, `soter.teei.init=INIT_OK`, `teei_daemon`/`goodixfingerprintd`/`android.hardware.biometrics.fingerprint@2.0-service` running, EINT12 `goodix_fp_irq` counter **increments on physical touch** (13+1 → 20+6 → higher).
+
+FACT: `getevent -lt /dev/input/event2` (gf-keys) captured **0 events** during multiple 12-30s windows with physical mBack taps/long-presses/swipes. dmesg shows **0 `[M6_FP]`/`KEY_EVENT`/`NAV_EVENT` markers** during touch.
+
+FACT (source, `gf_spi_tee.c:657-667`): `gf_irq` ISR only sends `GF_NETLINK_IRQ` to userspace — it does NOT emit input events. Input events are emitted in `gf_ioctl` (`gf_spi_tee.c:862,940`) when userspace HAL sends `GF_IOC_INPUT_KEY_EVENT` (nr9) or `GF_IOC_NAV_EVENT` (nr14) back to the kernel. This is the intended architecture: IRQ wakes HAL → HAL reads chip via SPI/TEE → HAL determines gesture → HAL sends ioctl → kernel emits key event.
+
+INFERENCE: the kernel ABI fix is correct and complete, but the userspace Goodix HAL (`goodixfingerprintd` + `libgf_hal.so`) is **not sending key/nav ioctls back** on touch — it stays in idle/auth-waiting mode and never enters navigation mode. `dumpsys fingerprint` shows 0 enrolled prints; the HAL only enters nav mode after enroll/auth or when explicitly activated. EINT12 increments prove the kernel IRQ path works; the missing step is HAL-side gesture processing.
+
+This is a **userspace HAL** frontier, not a kernel gap. The kernel will emit the correct key/nav events the moment the HAL sends the matching ioctls (the ABI fix verified that mapping). To advance: either (a) enroll a fingerprint so the HAL enters active gesture mode, (b) inspect `libgf_hal.so` / `goodixfingerprintd` for a nav-mode entry ioctl that isn't being sent, or (c) check if a Goodix HAL property/init.rc gate is keeping the HAL in idle. No kernel patch needed for mBack gesture emission.
+
+### 2026-06-18 #195 BT WORKS — reason 33 resolved; co_clock mismatch is benign
+
+BREAKTHROUGH: on #195 (kernel 6e2e9dcbcc8 with M6COCLK markers), after a clean reboot BT came up **fully enabled** and stayed up — no STP NoAck, no reason 33, no firmware assert. `dumpsys bluetooth_manager`: `enabled: true`, `state: ON`, `address: 14:16:9E:0E:F5:32`, `name: Meizu M6`, `time since enabled: 1m18s`, `Enabled by system boot`. HCI commands flow with `status=0` (e.g. `opcode=0x0c52` write → `event=0x0e status=0` response). BluetoothSdpJni, BluetoothPbapService, BluetoothHeadset, A2dpStateMachine all alive. **User confirmed BT works.**
+
+M6COCLK markers captured (capture `20260618-1920-m6-195-coclk-reboot-capture-711HEBSR277K5`):
+```
+M6COCLK: co_clock_type cw15_backup=0x18 cw16=0x2380 NOCOCK_BIT=(0,1) COCK_BIT=(0,0)
+mtk_wcn_consys_co_clock_type: pmic_register_val = 0x2380, co_clock_type = 0, TCXO mode
+M6COCLK: soc_init cfg=3 auto=0 resolved=3 used=cfg
+M6COCLK: reg_ctrl on=1 co_clock=3 branch=CO_VCTCXO clk_buf=skipped(VCTCXO) vcn28=SW
+```
+
+FACT: PMIC DCXO auto-detect = **0 (TCXO, NOCOCK_BITB=1)**, but `WMT_SOC.cfg` forces `co_clock_flag=3 (CO_VCTCXO)`. The config override is in effect (`used=cfg`), `clk_buf_ctrl(CLK_BUF_CONN)` is skipped, VCN28 is in SW mode.
+
+INFERENCE (revised): the co_clock mismatch (strap=TCXO, config=VCTCXO) is **NOT the cause of BT STP NoAck** — BT works with this exact mismatch on #195. The earlier reason 33 failures were either (a) a different transient, (b) fixed by one of the intervening commits in the 0613-0618 window (the quiet-spam, mBack, guard-page patches did not touch BT, but the kernel was rebuilt fresh), or (c) dependent on a clean cold boot vs the warm/USB-host conditions of the 0613 sessions. The state file's 0613 "BT STP NoAck, software exhausted, needs external scope" verdict is **OVERTURNED for this runtime** — BT is functional.
+
+The M6COCLK markers can stay (they are harmless read-only printk and document the clock branch for any future BT regression). No co_clock PROPER-FIX is warranted since BT works with the current config=3 override.
+
+Open BT follow-up (non-blocking): verify BT can actually scan + pair + stream audio, not just reach ON state. The HCI command flow with status=0 is strong evidence, but a successful scan/pair is the final confirmation.
