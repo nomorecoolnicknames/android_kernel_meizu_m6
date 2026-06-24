@@ -21,6 +21,7 @@
 #endif
 #include <linux/i2c.h>
 #undef CONFIG_MTK_I2C_EXTENSION
+#include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
 #include <linux/cdev.h>
@@ -120,6 +121,7 @@ static void kdSetI2CSpeed(u32 i2cSpeed)
 static int iReadRegI2C(u8 *a_pSendData , u16 a_sizeSendData, u8 *a_pRecvData, u16 a_sizeRecvData, u16 i2cId)
 {
 	int  i4RetValue = 0;
+	static unsigned int diag_count;
 
 	spin_lock(&g_CAM_CALLock);
 	g_pstI2Cclient->addr = (i2cId >> 1);
@@ -129,11 +131,19 @@ static int iReadRegI2C(u8 *a_pSendData , u16 a_sizeSendData, u8 *a_pRecvData, u1
 	spin_unlock(&g_CAM_CALLock);
 	i4RetValue = i2c_master_send(g_pstI2Cclient, a_pSendData, a_sizeSendData);
 	if (i4RetValue != a_sizeSendData) {
+		if (diag_count++ < 64)
+			pr_info("DIAGNOSTIC M6_CAT24C16 i2c_send_fail i2c_id=0x%x client_addr=0x%x send=%d need=%u off=0x%x\n",
+				i2cId, g_pstI2Cclient->addr, i4RetValue,
+				a_sizeSendData, a_pSendData ? a_pSendData[0] : 0);
 		CAM_CALERR("I2C send failed!!, Addr = 0x%x\n", a_pSendData[0]);
 		return -1;
 	}
 	i4RetValue = i2c_master_recv(g_pstI2Cclient, (char *)a_pRecvData, a_sizeRecvData);
 	if (i4RetValue != a_sizeRecvData) {
+		if (diag_count++ < 64)
+			pr_info("DIAGNOSTIC M6_CAT24C16 i2c_recv_fail i2c_id=0x%x client_addr=0x%x recv=%d need=%u off=0x%x\n",
+				i2cId, g_pstI2Cclient->addr, i4RetValue,
+				a_sizeRecvData, a_pSendData ? a_pSendData[0] : 0);
 		CAM_CALERR("I2C read failed!!\n");
 		return -1;
 	}
@@ -211,9 +221,11 @@ static int selective_read_region(u32 addr, u8 *data, u16 i2c_id, u32 size)
 	/* u32 page = addr/PAGE_SIZE; // size of page was 256 */
 	/* u32 offset = addr%PAGE_SIZE; */
 	u8 *buff = data;
+	u32 start_addr = addr;
 	u32 size_to_read = size;
 	/* kdSetI2CSpeed(EEPROM_I2C_SPEED); */
 	int ret = 0;
+	static unsigned int diag_count;
 
 	while (size_to_read > 0) {
 		if (selective_read_byte(addr, buff, i2c_id)) {
@@ -246,6 +258,17 @@ static int selective_read_region(u32 addr, u8 *data, u16 i2c_id, u32 size)
 #endif
 	}
 	CAM_CALDB("selective_read_region addr =%x size %d data read = %d\n", addr, size, ret);
+	if (diag_count++ < 64)
+		pr_info("DIAGNOSTIC M6_CAT24C16 region addr=0x%x size=%u i2c_id=0x%x ret=%d data=%02x %02x %02x %02x %02x %02x %02x %02x\n",
+			start_addr, size, i2c_id, ret,
+			(data && size > 0) ? data[0] : 0,
+			(data && size > 1) ? data[1] : 0,
+			(data && size > 2) ? data[2] : 0,
+			(data && size > 3) ? data[3] : 0,
+			(data && size > 4) ? data[4] : 0,
+			(data && size > 5) ? data[5] : 0,
+			(data && size > 6) ? data[6] : 0,
+			(data && size > 7) ? data[7] : 0);
 	return ret;
 }
 
@@ -261,11 +284,21 @@ static int iWriteData(unsigned int  ui4_offset, unsigned int  ui4_length, unsign
 unsigned int cat24c16_selective_read_region(struct i2c_client *client, unsigned int addr,
 	unsigned char *data, unsigned int size)
 {
+	u16 i2c_id;
+	int ret;
+
 	g_pstI2Cclient = client;
-	if (selective_read_region(addr, data, g_pstI2Cclient->addr, size) == 0)
+	/*
+	 * PROPER-FIX M6: selective_read_byte passes an 8-bit slave id into
+	 * iReadRegI2C(), which shifts it to the 7-bit client address. Passing
+	 * client->addr here shifted 0x50 down again to 0x28 and masked the real
+	 * EEPROM read failure as zeroed calibration data.
+	 */
+	i2c_id = g_pstI2Cclient->addr << 1;
+	ret = selective_read_region(addr, data, i2c_id, size);
+	if (ret == size)
 		return size;
-	else
-		return 0;
+	return 0;
 
 }
 
@@ -714,5 +747,3 @@ MODULE_AUTHOR("Sean Lin <Sean.Lin@Mediatek.com>");
 MODULE_LICENSE("GPL");
 
 #endif
-
-

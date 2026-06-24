@@ -12685,6 +12685,34 @@ void DBGfs_UnInit(void)
 	debugfs_remove(cisp_dbgTrigfs);
 }
 /*******************************************************************************
+* [M6DIAG#207] SENINF1/2 status dump: write anything to /proc/driver/seninfdump
+* to LOG_ERR the SENINF1 (0x15008100-0x150081BC) and SENINF2 (0x15008500-) reg
+* blocks during active preview. Used to tell a dead rear MIPI link (no frame
+* count, no err bits) from a lane mis-config (CRC/FSM/VSIZE/HSIZE err bits set).
+********************************************************************************/
+static ssize_t M6_SeninfDump_Write(struct file *pFile, const char *pBuffer,
+				   size_t Count, loff_t *pData)
+{
+	unsigned int off;
+	if (gISPSYS_Reg[ISP_BASE_ADDR] == 0) {
+		LOG_ERR("M6SENINF dump skipped: ISP base not mapped\n");
+		return Count;
+	}
+	LOG_ERR("M6SENINF ==== dump (SENINF1_INT@0x15008128 bits: OVERRUN/CRCERR/FSMERR/VSIZE/HSIZE) ====\n");
+	for (off = 0x4100; off <= 0x41BC; off += 4)
+		LOG_ERR("M6SENINF S1 0x%08X = 0x%08X\n",
+			0x15004000 + off, (unsigned int)ISP_RD32(ISP_ADDR + off));
+	for (off = 0x4500; off <= 0x45BC; off += 4)
+		LOG_ERR("M6SENINF S2 0x%08X = 0x%08X\n",
+			0x15004000 + off, (unsigned int)ISP_RD32(ISP_ADDR + off));
+	return Count;
+}
+
+static const struct file_operations m6_seninfdump_fops = {
+	.write = M6_SeninfDump_Write,
+};
+
+/*******************************************************************************
 *
 ********************************************************************************/
 static const struct file_operations fcameraisp_proc_fops = {
@@ -13375,6 +13403,7 @@ static MINT32 __init ISP_Init(void)
 #if	1
 	proc_create("driver/isp_reg", 0, NULL, &fcameraisp_proc_fops);
 	proc_create("driver/camio_reg",	0, NULL, &fcameraio_proc_fops);
+	proc_create("driver/seninfdump", 0666, NULL, &m6_seninfdump_fops); /* [M6DIAG#207] */
 #else
 	pEntry = create_proc_entry("driver/isp_reg", 0,	NULL);
 	if (pEntry) {

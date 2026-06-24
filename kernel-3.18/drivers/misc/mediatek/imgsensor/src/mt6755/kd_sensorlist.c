@@ -4824,13 +4824,13 @@ static ssize_t  CAMERA_HW_Reg_Debug(struct file *file, const char *buffer, size_
     if (g_pSensorFunc != NULL) {
         g_pSensorFunc->SensorFeatureControl(DUAL_CAMERA_MAIN_SENSOR, SENSOR_FEATURE_SET_REGISTER, (MUINT8 *)&sensorReg, (MUINT32 *)sizeof(MSDK_SENSOR_REG_INFO_STRUCT));
         g_pSensorFunc->SensorFeatureControl(DUAL_CAMERA_MAIN_SENSOR, SENSOR_FEATURE_GET_REGISTER, (MUINT8 *)&sensorReg, (MUINT32 *)sizeof(MSDK_SENSOR_REG_INFO_STRUCT));
-        PK_DBG("write addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
+        PK_ERR("M6REGDBG write addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
     }
     }
     else if (sscanf(regBuf, "%x", &sensorReg.RegAddr) == 1) {
     if (g_pSensorFunc != NULL) {
         g_pSensorFunc->SensorFeatureControl(DUAL_CAMERA_MAIN_SENSOR, SENSOR_FEATURE_GET_REGISTER, (MUINT8 *)&sensorReg, (MUINT32 *)sizeof(MSDK_SENSOR_REG_INFO_STRUCT));
-        PK_DBG("read addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
+        PK_ERR("M6REGDBG read addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
     }
     }
 
@@ -4854,13 +4854,13 @@ static ssize_t  CAMERA_HW_Reg_Debug2(struct file *file, const char *buffer, size
     if (g_pSensorFunc != NULL) {
         g_pSensorFunc->SensorFeatureControl(DUAL_CAMERA_MAIN_2_SENSOR, SENSOR_FEATURE_SET_REGISTER, (MUINT8 *)&sensorReg, (MUINT32 *)sizeof(MSDK_SENSOR_REG_INFO_STRUCT));
         g_pSensorFunc->SensorFeatureControl(DUAL_CAMERA_MAIN_2_SENSOR, SENSOR_FEATURE_GET_REGISTER, (MUINT8 *)&sensorReg, (MUINT32 *)sizeof(MSDK_SENSOR_REG_INFO_STRUCT));
-        PK_DBG("write addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
+        PK_ERR("M6REGDBG write addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
     }
     }
     else if (sscanf(regBuf, "%x", &sensorReg.RegAddr) == 1) {
     if (g_pSensorFunc != NULL) {
         g_pSensorFunc->SensorFeatureControl(DUAL_CAMERA_MAIN_2_SENSOR, SENSOR_FEATURE_GET_REGISTER, (MUINT8 *)&sensorReg, (MUINT32 *)sizeof(MSDK_SENSOR_REG_INFO_STRUCT));
-        PK_DBG("read addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
+        PK_ERR("M6REGDBG read addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
     }
     }
 
@@ -4883,13 +4883,13 @@ static ssize_t  CAMERA_HW_Reg_Debug3(struct file *file, const char *buffer, size
     if (g_pSensorFunc != NULL) {
         g_pSensorFunc->SensorFeatureControl(DUAL_CAMERA_SUB_SENSOR, SENSOR_FEATURE_SET_REGISTER, (MUINT8 *)&sensorReg, (MUINT32 *)sizeof(MSDK_SENSOR_REG_INFO_STRUCT));
         g_pSensorFunc->SensorFeatureControl(DUAL_CAMERA_SUB_SENSOR, SENSOR_FEATURE_GET_REGISTER, (MUINT8 *)&sensorReg, (MUINT32 *)sizeof(MSDK_SENSOR_REG_INFO_STRUCT));
-        PK_DBG("write addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
+        PK_ERR("M6REGDBG write addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
     }
     }
     else if (sscanf(regBuf, "%x", &sensorReg.RegAddr) == 1) {
     if (g_pSensorFunc != NULL) {
         g_pSensorFunc->SensorFeatureControl(DUAL_CAMERA_SUB_SENSOR, SENSOR_FEATURE_GET_REGISTER, (MUINT8 *)&sensorReg, (MUINT32 *)sizeof(MSDK_SENSOR_REG_INFO_STRUCT));
-        PK_DBG("read addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
+        PK_ERR("M6REGDBG read addr = 0x%08x, data = 0x%08x\n", sensorReg.RegAddr, sensorReg.RegData);
     }
     }
 
@@ -5073,9 +5073,9 @@ static int __init CAMERA_HW_i2C_init(void)
     //camera_dsm_get_client();
 #endif
 #if 1
-    proc_create("driver/camsensor", 0, NULL, &fcamera_proc_fops);
-    proc_create("driver/camsensor2", 0, NULL, &fcamera_proc_fops2);
-    proc_create("driver/camsensor3", 0, NULL, &fcamera_proc_fops3);
+    proc_create("driver/camsensor", 0666, NULL, &fcamera_proc_fops);
+    proc_create("driver/camsensor2", 0666, NULL, &fcamera_proc_fops2);
+    proc_create("driver/camsensor3", 0666, NULL, &fcamera_proc_fops3);
 
     /* Camera information */
     memset(mtk_ccm_name,0,camera_info_size);

@@ -2070,6 +2070,12 @@ static int __init dram_4gb_init(void)
 	if (!PERISYS_BASE_ADDR)
 		pr_err("PERISYS_BASE_ADDR ioremap failed\n");
 
+	if (!INFRA_BASE_ADDR || !PERISYS_BASE_ADDR) {
+		pr_err("INFRACFG or PERISYS base address is NULL, skipping 4GB check\n");
+		enable_4gb = 0;
+		return 0;
+	}
+
 	infra_4g_sp = readl(IOMEM(INFRA_BASE_ADDR + 0xf00)) & (1 << 13);
 	perisis_4g_sp = readl(IOMEM(PERISYS_BASE_ADDR + 0x208)) & (1 << 15);
 

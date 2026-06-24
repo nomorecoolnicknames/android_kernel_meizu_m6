@@ -954,7 +954,8 @@ void mt_freqhopping_init(void)
 
 	freqhopping_debug_proc_init();
 
-	platform_driver_register(&freqhopping_driver);
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xBB); }	/* m681 v32: FREQHOPPING driver reg DISABLED */
+	{ static volatile int forge_fh_disable = 1; if (!forge_fh_disable) platform_driver_register(&freqhopping_driver); }	/* v32: skip -> no mt_fh_drv_probe (FHCTL/APMIXED reg wedge). FH=spread-spectrum EMI opt, non-essential for boot. */
 
 	mt_freqhopping_pll_init();	/* TODO_HAL: wait for clkmgr to invoke this function */
 }
