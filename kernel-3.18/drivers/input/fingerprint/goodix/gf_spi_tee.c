@@ -706,6 +706,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return -EINVAL;
 	}
 
+	pr_err("[M6_FP_IOC] nr=%u dir=%u sz=%u\n", _IOC_NR(cmd), _IOC_DIR(cmd), _IOC_SIZE(cmd));
 	switch (_IOC_NR(cmd)) { /* M6: dispatch by cmd number to tolerate HAL/driver GF_IOC dir/size ABI skew */
 	case _IOC_NR(GF_IOC_INIT):
 		gf_debug(INFO_LOG, "%s: GF_IOC_INIT gf init======\n", __func__);
@@ -993,6 +994,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 #endif /* SUPPORT_REE_SPI */
 	default:
+		pr_err("[M6_FP_IOC] UNHANDLED nr=%u cmd=0x%x\n", _IOC_NR(cmd), cmd);
 		gf_debug(ERR_LOG, "gf doesn't support this command(%x)\n", cmd);
 		break;
 	}

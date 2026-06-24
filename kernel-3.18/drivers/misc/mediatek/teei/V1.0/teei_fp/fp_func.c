@@ -123,7 +123,9 @@ static long fp_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 
 		Flush_Dcache_By_Area((unsigned long)fp_buff_addr, (unsigned long)fp_buff_addr + FP_SIZE);
 		/*send command data to TEEI*/
+		pr_err("[M6_TEE_FP] >> cid=%u fid=%u len=%u\n", fp_cid, fp_fid, args_len);
 		send_fp_command(FP_DRIVER_ID);
+		pr_err("[M6_TEE_FP] << cid=%u fid=%u result=%u\n", fp_cid, fp_fid, *((unsigned int *)fp_buff_addr));
 #ifdef FP_DEBUG
 		IMSG_DEBUG("back from TEEI try copy share mem to user \n");
 		IMSG_DEBUG("result in share memory %d  \n", *((unsigned int *)fp_buff_addr));

@@ -163,6 +163,6 @@ int send_fp_command(unsigned long share_memory_size)
 	ut_pm_mutex_unlock(&pm_mutex);
 	up(&fdrv_lock);
 
-
+	pr_err("[M6_TEE_FP] send_fp_command retVal=%d\n", fdrv_ent.retVal);
 	return fdrv_ent.retVal;
 }
