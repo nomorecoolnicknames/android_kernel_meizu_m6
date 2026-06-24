@@ -45,6 +45,7 @@
 #include <linux/efi.h>
 #include <linux/personality.h>
 
+#include "../../../init/forge_m681_marker.h"
 #include <asm/fixmap.h>
 #include <asm/cpu.h>
 #include <asm/cputype.h>
@@ -371,9 +372,12 @@ u64 __cpu_logical_map[NR_CPUS] = { [0 ... NR_CPUS-1] = INVALID_HWID };
 
 void __init setup_arch(char **cmdline_p)
 {
+	forge_m681_mark(FORGE_STAGE_ARCH_SETUP_ENTRY);		/* 0x32 */
+
 	setup_processor();
 
 	setup_machine_fdt(__fdt_pointer);
+	forge_m681_mark(FORGE_STAGE_ARCH_POST_MACHINE_FDT);	/* 0x34 */
 
 	init_mm.start_code = (unsigned long) _text;
 	init_mm.end_code   = (unsigned long) _etext;
@@ -381,9 +385,12 @@ void __init setup_arch(char **cmdline_p)
 	init_mm.brk	   = (unsigned long) _end;
 
 	*cmdline_p = boot_command_line;
+	forge_m681_mark(FORGE_STAGE_ARCH_CMDLINE_PARSED);	/* 0x33 */
 
 	early_fixmap_init();
 	early_ioremap_init();
+	forge_m681_marker_early_init();
+	forge_m681_mark(FORGE_STAGE_ARCH_POST_EARLY_IOREMAP);	/* 0x35 */
 
 	parse_early_param();
 
@@ -397,6 +404,7 @@ void __init setup_arch(char **cmdline_p)
 	arm64_memblock_init();
 
 	paging_init();
+	forge_m681_mark(FORGE_STAGE_ARCH_POST_PAGING_INIT);	/* 0x39 */
 	request_standard_resources();
 
 	efi_virtmap_init();
@@ -405,6 +413,7 @@ void __init setup_arch(char **cmdline_p)
 	unflatten_device_tree();
 
 	psci_init();
+	forge_m681_mark(FORGE_STAGE_ARCH_POST_PSCI_INIT);	/* 0x3B */
 
 	cpu_logical_map(0) = read_cpuid_mpidr() & MPIDR_HWID_BITMASK;
 	cpu_read_bootcpu_ops();
@@ -420,6 +429,7 @@ void __init setup_arch(char **cmdline_p)
 	conswitchp = &dummy_con;
 #endif
 #endif
+	forge_m681_mark(FORGE_STAGE_ARCH_SETUP_EXIT);		/* 0x3D */
 }
 
 static int __init arm64_device_init(void)

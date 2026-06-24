@@ -91,6 +91,10 @@
 #include <asm/smp.h>
 #endif
 
+/* m681 attempt3: WDT-surviving early-boot stage markers + vgdn bypass stack
+ * (BRINGUP_STATE.md FORCE8/FORCE9/FORCE10). */
+#include "forge_m681_marker.h"
+
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
@@ -533,7 +537,9 @@ asmlinkage __visible void __init start_kernel(void)
 	boot_cpu_init();
 	page_address_init();
 	pr_notice("%s", linux_banner);
+	forge_m681_mark(FORGE_STAGE_START_KERNEL_ENTRY);	/* 0x01 */
 	setup_arch(&command_line);
+	forge_m681_mark(FORGE_STAGE_POST_SETUP_ARCH);		/* 0x07 */
 	mm_init_cpumask(&init_mm);
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
@@ -565,6 +571,8 @@ asmlinkage __visible void __init start_kernel(void)
 	sort_main_extable();
 	trap_init();
 	mm_init();
+	forge_m681_marker_late_init();
+	forge_m681_mark(FORGE_STAGE_POST_MM_INIT);		/* 0x0C */
 #ifdef CONFIG_HUAWEI_BFM
 	hwboot_fail_init_struct();
 #endif
@@ -589,13 +597,16 @@ asmlinkage __visible void __init start_kernel(void)
 	/* init some links before init_ISA_irqs() */
 	early_irq_init();
 	init_IRQ();
+	forge_m681_mark(FORGE_STAGE_POST_INIT_IRQ);		/* 0x0F */
 	tick_init();
 	rcu_init_nohz();
 	init_timers();
 	hrtimers_init();
 	softirq_init();
 	timekeeping_init();
+	forge_m681_mark(FORGE_STAGE_PRE_TIME_INIT);		/* 0x10 */
 	time_init();
+	forge_m681_mark(FORGE_STAGE_POST_TIME_INIT);		/* 0x11 */
 	sched_clock_postinit();
 	perf_event_init();
 	profile_init();
@@ -612,6 +623,7 @@ asmlinkage __visible void __init start_kernel(void)
 	 * this. But we do want output early, in case something goes wrong.
 	 */
 	console_init();
+	forge_m681_mark(FORGE_STAGE_POST_CONSOLE_INIT);		/* 0x12 */
 	if (panic_later)
 		panic("Too many boot %s vars at `%s'", panic_later,
 		      panic_param);
@@ -685,6 +697,7 @@ asmlinkage __visible void __init start_kernel(void)
 
 	ftrace_init();
 
+	forge_m681_mark(FORGE_STAGE_ABOUT_TO_REST_INIT);	/* 0x18 */
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
 }
@@ -804,6 +817,9 @@ int __init_or_module do_one_initcall(initcall_t fn)
 
 	if (initcall_blacklisted(fn))
 		return -EPERM;
+	forge_m681_wdt_kick();
+	forge_m681_mark_aux(0xE0, (u32)(unsigned long)fn);
+	forge_m681_set_initcall((u32)(unsigned long)fn);
 	TIME_LOG_START();
 #if defined(CONFIG_MT_ENG_BUILD)
 	ret = do_one_initcall_debug(fn);
@@ -813,6 +829,8 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	else
 		ret = fn();
 #endif
+	forge_m681_mark_aux(0xE1, (u32)(unsigned long)fn);
+	forge_m681_set_initcall_done((u32)(unsigned long)fn);
 	TIME_LOG_END();
 	msgbuf[0] = 0;
 
@@ -1022,15 +1040,21 @@ static noinline void __init kernel_init_freeable(void)
 
 	cad_pid = task_pid(current);
 
+	forge_m681_mark(FORGE_STAGE_KERNEL_FORCE_SINGLE_CPU);	/* 0xCA */
 	smp_prepare_cpus(setup_max_cpus);
+	forge_m681_mark(FORGE_STAGE_POST_SMP_PREPARE);		/* 0xCB */
 
 	do_pre_smp_initcalls();
 	lockup_detector_init();
+	forge_m681_mark(FORGE_STAGE_POST_PRE_SMP_INITCALLS);	/* 0xCC */
 
 	smp_init();
+	forge_m681_mark(FORGE_STAGE_POST_SMP_INIT);		/* 0xCD */
 	sched_init_smp();
+	forge_m681_mark(FORGE_STAGE_POST_SCHED_INIT_SMP);	/* 0xCE */
 
 	do_basic_setup();
+	forge_m681_mark(FORGE_STAGE_POST_BASIC_SETUP);		/* 0xCF */
 
 	/* Open the /dev/console on the rootfs, this should never fail */
 	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)

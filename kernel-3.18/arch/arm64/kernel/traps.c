@@ -225,6 +225,23 @@ void die(const char *str, struct pt_regs *regs, int err)
 	struct thread_info *thread = current_thread_info();
 	int ret;
 
+	/* m681 v10: RAW capture (no pr_emerg) of faulting PC/ESR/LR into the
+	 * TWRP-readable forge marker region (0x44410000) before the reset.  The
+	 * old hook used forge_m681_mark_fault()->pr_emerg() which can DEADLOCK on
+	 * logbuf_lock in a fault context (suspected cause of the missing 0xFE in
+	 * v9: die fired but wedged in printk before writing the slot). */
+	{
+		extern void forge_m681_fault_snap(unsigned char stage, unsigned int pc,
+						  unsigned int esr, unsigned int addr);
+		if (regs)
+			forge_m681_fault_snap(0xFE,
+				(unsigned int)(unsigned long)regs->pc,
+				(unsigned int)err,
+				(unsigned int)(unsigned long)regs->regs[30]);
+		else
+			forge_m681_fault_snap(0xFE, 0xDEADC0DEU, 0, 0);
+	}
+
 	oops_enter();
 
 	raw_spin_lock_irq(&die_lock);
@@ -396,6 +413,17 @@ int register_async_abort_handler(void (*fn)(struct pt_regs *regs, void *), void 
  */
 asmlinkage void bad_mode(struct pt_regs *regs, int reason, unsigned int esr)
 {
+	/* m681 v10: raw snapshot at the VERY entry, before the MTK
+	 * async_abort_handler (reason==3 / SError) which may reset without ever
+	 * reaching die().  stage 0xFC, addr-slot = reason. */
+	{
+		extern void forge_m681_fault_snap(unsigned char stage, unsigned int pc,
+						  unsigned int esr, unsigned int addr);
+		forge_m681_fault_snap(0xEC,
+			(unsigned int)(unsigned long)(regs ? regs->pc : 0),
+			esr, (unsigned int)reason);
+	}
+
 	console_verbose();
 
 #ifdef CONFIG_MEDIATEK_SOLUTION

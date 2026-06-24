@@ -7,6 +7,8 @@ ccflags-y += -Idrivers/misc/mediatek/mtprof/
 
 obj-y                          := main.o version.o mounts.o
 obj-y                          += noinitramfs.o
+# m681 attempt3: WDT-surviving early-boot stage markers (see forge_m681_marker.c)
+obj-y                          += forge_m681_marker.o
 obj-$(CONFIG_BLK_DEV_INITRD)   += initramfs.o
 obj-$(CONFIG_GENERIC_CALIBRATE_DELAY) += calibrate.o
 

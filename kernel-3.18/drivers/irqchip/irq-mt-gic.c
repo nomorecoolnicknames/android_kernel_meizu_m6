@@ -401,6 +401,13 @@ static asmlinkage void __exception_irq_entry gic_handle_irq(struct pt_regs *regs
 		irqnr = irqstat & ~0x1c00;
 
 		if (likely(irqnr > 15 && irqnr < 1021)) {
+			/* m681 v11: trace every device IRQ (count/last-hwirq/
+			 * interrupted-pc -> forge marker) to catch a boot IRQ storm. */
+			{
+				extern void forge_m681_irq_trace(u32 irqnr, u32 pc);
+				forge_m681_irq_trace(irqnr,
+					(u32)(unsigned long)(regs ? regs->pc : 0));
+			}
 			handle_domain_irq(gic->domain, irqnr, regs);
 			continue;
 		}

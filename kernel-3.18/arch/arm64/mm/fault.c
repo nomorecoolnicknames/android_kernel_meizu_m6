@@ -507,6 +507,18 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
 	if (!inf->fn(addr, esr, regs))
 		return;
 
+	/* m681 v10: raw snapshot of the FIRST unhandled memory abort before it
+	 * is routed onward to arm64_notify_die()->die().  stage 0xFD, addr-slot =
+	 * faulting address low32.  Latched, so this root abort is not overwritten
+	 * by the downstream die()/panic. */
+	{
+		extern void forge_m681_fault_snap(unsigned char stage, unsigned int pc,
+						  unsigned int esr2, unsigned int addr2);
+		forge_m681_fault_snap(0xFD,
+			(unsigned int)(unsigned long)regs->pc,
+			esr, (unsigned int)addr);
+	}
+
 	pr_alert("Unhandled fault: %s (0x%08x) at 0x%016lx\n",
 		 inf->name, esr, addr);
 
