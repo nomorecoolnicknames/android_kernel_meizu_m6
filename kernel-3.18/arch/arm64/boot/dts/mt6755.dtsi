@@ -1477,6 +1477,10 @@
 			interrupts = <GIC_SPI 72 IRQ_TYPE_LEVEL_LOW>,
 					<GIC_SPI 73 IRQ_TYPE_LEVEL_LOW>;
 			interrupt-names = "musb-hdrc", "xhci";
+			/* m681 bring-up: USB3 SSUSB absent on this device -> disable
+			 * probe to skip mtu3d_probe -> musb_init_controller -> SSUSB
+			 * MTCMOS poke (AXI bus-hang, l681 M13/v42 wall at seq 145). */
+			status = "disabled";
 		};
 
 		usb_c_pinctrl:usb_c_pinctrl@0 {
@@ -1489,6 +1493,10 @@
 			reg-names = "ssusb_base", "ssusb_sif", "ssusb_sif2";
 			interrupts = <GIC_SPI 123 IRQ_TYPE_LEVEL_LOW>;
 			interrupt-names = "xhci";
+			/* m681 bring-up: xhci/USB3 host absent -> disable (companion
+			 * to usb0 disable; xhci_hcd_init is late_initcall, not reached
+			 * pre-adb anyway). */
+			status = "disabled";
 			eint_usb_iddig@144 {
 				compatible = "mediatek,usb_iddig_bi_eint";
 				interrupt-parent = <&eintc>;
@@ -1506,11 +1514,15 @@
 			compatible = "mediatek,usb3_phy";
 			clocks = <&infrasys INFRA_SSUSB_TOP>;
 			clock-names = "sssub_clk";
+			/* m681 bring-up: USB3 PHY unused (USB3 absent). */
+			status = "disabled";
 		};
 
 		usb3_sif@11280000 {
 			compatible = "mediatek,usb3_sif";
 			reg = <0x11280000 0x10000>;
+			/* m681 bring-up: USB3 SIF unused (USB3 absent). */
+			status = "disabled";
 		};
 
 		usb0p_sif2@11290000 {
@@ -1521,12 +1533,20 @@
 		usb3_sif2@11290000 {
 			compatible = "mediatek,usb3_sif2";
 			reg = <0x11290000 0x10000>;
+			/* m681 bring-up: USB3 SIF2 unused (USB3 absent). */
+			status = "disabled";
 		};
 
 		mfgsys: mfgsys@13000000 {
 			compatible = "mediatek,mt6755-mfgsys";
 			reg = <0x13000000 0x1000>;
 			#clock-cells = <1>;
+			/* m681 bring-up: MFG power-domain probe disabled to avoid
+			 * MTCMOS pokes; clock-provider registration happens via
+			 * of_clk_init (clk-mt6755.c) regardless of status, so
+			 * <&mfgsys MFG_BG3D> phandle still resolves. Mali also
+			 * disabled -> no MFG consumer probes. */
+			status = "disabled";
 		};
 
 		mfgcfg@13000000 {
@@ -1555,6 +1575,11 @@
 			clocks = <&mfgsys MFG_BG3D>, <&mmsys MM_DISP0_SMI_COMMON>,
 				<&scpsys SCP_SYS_MFG>, <&scpsys SCP_SYS_DIS>;
 			clock-names = "mfg-main", "mfg-smi-common", "mtcmos-mfg", "mtcmos-display";
+			/* m681 bring-up: Mali/MFG MTCMOS bus-hang (l681 M15/v42+v47 wall
+			 * at kbase_platform_driver_init). Disable probe -> kbase driver
+			 * registers but matches no device -> no kbase_probe -> no MFG
+			 * MTCMOS poke. GPU bring-up deferred post-adb. */
+			status = "disabled";
 		};
 
 
