@@ -812,6 +812,9 @@ static int mtk_wdt_probe(struct platform_device *dev)
 	/* Write back INTERVAL REG */
 	mt_reg_sync_writel(interval_val, MTK_WDT_INTERVAL);
 
+	/* m681 bring-up: stub bypass to prevent hang at request_en/mode_set */
+	return 0;
+
 	/* Reset External debug key */
 	mtk_wdt_request_en_set(MTK_WDT_REQ_MODE_SYSRST, WD_REQ_DIS);
 	mtk_wdt_request_en_set(MTK_WDT_REQ_MODE_EINT, WD_REQ_DIS);

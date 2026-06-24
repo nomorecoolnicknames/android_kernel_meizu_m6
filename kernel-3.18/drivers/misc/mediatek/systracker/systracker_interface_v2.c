@@ -809,6 +809,8 @@ static int __init systracker_init(void)
 #ifdef SYSTRACKER_TEST_SUIT
 	systracker_test_init();
 #endif
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xBA); }	/* m681 v31: SYSTRACKER (AXI bus tracker) DISABLED */
+	{ static volatile int forge_systracker_disable = 1; if (forge_systracker_disable) return 0; }	/* v31: skip systracker driver reg -> no systracker_probe -> no BUS_DBG of_iomap + tracker-reg programming (debug-bus wedge class). Debug-only, safe to drop. */
 	err = platform_driver_register(&mt_systracker_drv.driver);
 	if (err)
 		return err;

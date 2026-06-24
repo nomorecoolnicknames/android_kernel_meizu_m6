@@ -448,6 +448,8 @@ static int __init hw_watchpoint_init(void)
 	int err;
 
 	spin_lock_init(&wp_lock);
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC9); }	/* m681 v31: HW-WATCHPOINT DISABLED */
+	{ static volatile int forge_wp_disable = 1; if (forge_wp_disable) return 0; }	/* v31: skip wp_driver registration -> no wp_probe -> no reset_watchpoint() debug-reg access (wedges bus on m681, like display). Debug-only feature, safe to drop. */
 	err = platform_driver_register(&wp_driver);
 	if (err) {
 		pr_err("[MTK WP] watchpoint registration failed\n");
