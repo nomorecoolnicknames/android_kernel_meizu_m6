@@ -230,6 +230,15 @@ mt_pmic_regulator {
 			regulator-max-microvolt = <3300000>;
 			regulator-enable-ramp-delay = <40>;
 			};
+		/* m681: VGP3 rail referenced by wt6755_66_sz_l dws (vcamd_main2/vcamd_sub).
+		 * Body copied verbatim from mt6351.dtsi ldo_vgp3. MT6353 dtsi did not expose
+		 * this rail; the m681 board (MT6353 new-arch driving MT6351 hw) needs it. */
+		mt_pmic_vgp3_ldo_reg: ldo_vgp3 {
+			regulator-name = "vgp3";
+			regulator-min-microvolt = <1000000>;
+			regulator-max-microvolt = <1810000>;
+			regulator-enable-ramp-delay = <264>;
+			};
 		};/* End of ldo_regulators */
 		regulators_supply {
 			compatible = "mediatek,mt_pmic_regulator_supply";
