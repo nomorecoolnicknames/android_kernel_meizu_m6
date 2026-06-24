@@ -1758,7 +1758,17 @@ static s32 __init mt_i2c_init(void)
 {
 #ifdef CONFIG_OF
 	struct device_node *ap_dma_node;
+#endif
 
+	/* m681 bring-up: skip mt_i2c platform_driver_register -> mt_i2c_probe
+	 * hangs the bus on ungated I2C/AP_DMA registers (same wall as l681 M15/v45).
+	 * Skipping the i2c CONTROLLER auto-disarms every i2c-peripheral probe
+	 * (mt6605 NFC, auxadc, pwm, leds, accdet, sm5414/tps65132, CAMERA_HW, ...)
+	 * since their probes never fire without a bus -- no need to skip each.
+	 * TODO post-boot: re-enable after wiring m681 PMIC/clock for I2C domains. */
+	return 0;
+
+#ifdef CONFIG_OF
 	/* ioremap the AP_DMA base and use offset get the I2C DMA base */
 	ap_dma_node = of_find_compatible_node(NULL, NULL, "mediatek,ap_dma");
 	if (!ap_dma_node) {

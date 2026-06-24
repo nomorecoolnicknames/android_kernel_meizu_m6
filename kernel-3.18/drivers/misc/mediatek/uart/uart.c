@@ -2805,6 +2805,12 @@ static int __init mtk_uart_init(void)
 {
 	int ret = 0;
 
+	/* m681 bring-up: skip mtk_uart platform_driver_register -> mtk_uart_probe
+	 * hangs the AXI bus on ungated UART registers (same as l681 M13/v43).
+	 * Kernel ring-buffer console suffices for /init; serial console re-enable
+	 * is a post-boot TODO. */
+	return 0;
+
 	tx_history.buffer = kzalloc(UART_HISTORY_DATA_SIZE, GFP_KERNEL);
 	rx_history.buffer = kzalloc(UART_HISTORY_DATA_SIZE, GFP_KERNEL);
 	tx_history.index = -1;
