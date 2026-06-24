@@ -3563,6 +3563,8 @@ int __init mtkfb_init(void)
 
 	MSG_FUNC_ENTER();
 	DISPMSG("mtkfb_init Enter\n");
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC7); }	/* m681 v30: mtkfb/display DISABLED */
+	{ static volatile int forge_disp_disable = 1; if (forge_disp_disable) return 0; }	/* v30: skip mtkfb+lcm_pinctl registration -> no mtkfb_probe, no primary_display_init (panel/DSI); reach userspace headless */
 	if (platform_driver_register(&lcm_pinctl_gpio_driver) != 0) {
 		printk("unable to register lcm_pinctl gpio driver.\n");
 		r = -ENODEV;

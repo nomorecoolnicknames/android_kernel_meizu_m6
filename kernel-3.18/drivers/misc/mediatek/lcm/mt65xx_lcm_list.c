@@ -20,6 +20,9 @@
 #if defined(ILI9881P_HD_DSI_TXD)
 extern LCM_DRIVER ili9881p_hd_dsi_txd_lcm_drv;
 #endif
+#if defined(ILI9885_FHD_DSI_VDO_TXD1)
+extern LCM_DRIVER ili9885_fhd_dsi_vdo_txd_lcm_drv1;
+#endif
 /* #include <mach/mt_gpio.h> */
 #endif
 LCM_DSI_MODE_CON lcm_dsi_mode;
@@ -39,6 +42,9 @@ LCM_DSI_MODE_CON lcm_dsi_mode;
 LCM_DRIVER *lcm_driver_list[] = {
 #if defined(ILI9881P_HD_DSI_TXD)
 	&ili9881p_hd_dsi_txd_lcm_drv,
+#endif
+#if defined(ILI9885_FHD_DSI_VDO_TXD1)
+	&ili9885_fhd_dsi_vdo_txd_lcm_drv1,
 #endif
 #if defined(OTM1284A_HD720_DSI_VDO_TM)
 	&otm1284a_hd720_dsi_vdo_tm_lcm_drv,
@@ -1051,6 +1057,9 @@ LCM_DRIVER *lcm_driver_list[] = {
 
 unsigned char lcm_name_list[][128] = {
 	"ili9881p_hd_dsi_txd",
+#if defined(ILI9885_FHD_DSI_VDO_TXD1)
+	"ili9885_fhd_dsi_vdo_txd1",
+#endif
 
 #if defined(HX8392A_DSI_CMD)
 	"hx8392a_dsi_cmd",

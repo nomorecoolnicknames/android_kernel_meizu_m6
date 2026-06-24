@@ -370,6 +370,15 @@ static int disp_probe(struct platform_device *pdev)
 				   __FILE__, __LINE__, i, disp_clk_name[i]);
 		else {
 				if (!ddp_set_clk_handle(dispsys_dev->disp_clk[i], i)) {
+					/* m681 v24: SKIP display clk prepare/enable. The DISP MTCMOS
+					 * power-domain enable (DISP_MTCMOS_CLK / SMI_COMMON / SMI_LARB0)
+					 * polls SCPSYS/SPM for the domain to power up; on m681 it never
+					 * does -> silent spin. Defer display to reach userspace+adb;
+					 * clk handles are still registered via ddp_set_clk_handle. */
+					static volatile int forge_skip_disp_clk_en = 1;	/* m681 v30: re-DEFER display clk. v29 PROVED clk_prepare_enable(DISP0_SMI_COMMON, id=0) hard-hangs (stage 0xc2, kick frozen 145) -> SMI common clk/bus wedge on m681. Reaching userspace first; display brought up live from adb. */
+					if (!forge_skip_disp_clk_en) {
+					/* m681 v29: pinpoint which disp clk spins; last 0xC2 aux = clk index i */
+					{ extern void forge_m681_mark_aux(unsigned char, unsigned int); forge_m681_mark_aux(0xC2, (unsigned int)i); }
 					switch (i) {
 					case MUX_MM:
 					case MM_VENCPLL:
@@ -388,12 +397,14 @@ static int disp_probe(struct platform_device *pdev)
 						ddp_clk_prepare(i);
 						break;
 					}
+					}
 				}
 		}
 	}
 #endif /* CONFIG_MTK_CLKMGR */
 	disp_probe_cnt++;
 
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC4); }	/* v28: disp_probe DONE (display clk-enable RE-ENABLED) */
 	return 0;
 }
 static int __init disp_probe_1(void)
@@ -403,6 +414,8 @@ static int __init disp_probe_1(void)
 	int i;
 	struct platform_device *pdev = &mydev;
 
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC5); }	/* m681 v30: disp_probe_1 ENTRY */
+	{ static volatile int forge_disp_disable = 1; if (forge_disp_disable) return 0; }	/* v30: display disabled — skip ioremap/request_irq/m4u (dispsys_dev may be NULL since disp_init skipped) */
 
 	disp_helper_option_init();
 
@@ -534,6 +547,8 @@ static int __init disp_init(void)
 
 	DISPMSG("Register the disp driver\n");
 	init_log_buffer();
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC3); }	/* m681 v30: display DISABLED */
+	{ static volatile int forge_disp_disable = 1; if (forge_disp_disable) return 0; }	/* v30: skip dispsys driver registration -> no disp_probe, no display HW; reach userspace headless */
 	if (platform_driver_register(&dispsys_of_driver)) {
 		DISPERR("failed to register disp driver\n");
 		/* platform_device_unregister(&disp_device); */
