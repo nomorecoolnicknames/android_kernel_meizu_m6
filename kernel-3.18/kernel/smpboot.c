@@ -15,6 +15,10 @@
 
 #include "smpboot.h"
 
+extern void forge_m681_mark(unsigned char stage);
+extern void forge_m681_mark_aux(unsigned char stage, unsigned int aux);
+extern void forge_m681_wdt_kick(void);
+
 #ifdef CONFIG_SMP
 
 #ifdef CONFIG_GENERIC_SMP_IDLE_THREAD
@@ -192,10 +196,35 @@ __smpboot_create_thread(struct smp_hotplug_thread *ht, unsigned int cpu)
 		 * callback. At least the migration thread callback
 		 * requires that the task is off the runqueue.
 		 */
-		if (!wait_task_inactive(tsk, TASK_PARKED))
+		if (ht->thread_comm && strcmp(ht->thread_comm, "migration/%u") == 0) {
+			forge_m681_mark(0xDF);
+		}
+		if (!wait_task_inactive(tsk, TASK_PARKED)) {
+			if (ht->thread_comm && strcmp(ht->thread_comm, "migration/%u") == 0) {
+				forge_m681_mark(0xDE);
+			}
 			WARN_ON(1);
-		else
+		} else {
+			if (ht->thread_comm && strcmp(ht->thread_comm, "migration/%u") == 0) {
+				forge_m681_mark_aux(0xDD, (u32)tsk->state);
+			}
 			ht->create(cpu);
+			if (ht->thread_comm && strcmp(ht->thread_comm, "migration/%u") == 0) {
+				forge_m681_mark(0xDC);
+			}
+		}
+	}
+	if (ht->thread_comm && strcmp(ht->thread_comm, "migration/%u") == 0) {
+		forge_m681_wdt_kick();
+		/* m681 v13: record the RETURN ADDRESS (saved LR / x30 that `ret` will
+		 * consume) as aux.  v12 proved the epilogue is a clean ldp/ret with
+		 * nothing to wedge, yet .part.6 never returns (0xC1 absent), no fault,
+		 * no IRQ.  If aux resolves to smpboot_register_percpu_thread+~0x184
+		 * the LR is intact (wedge is in the ret target); if aux is garbage the
+		 * x30 stack slot was corrupted and `ret` jumps there. The aux being
+		 * written at all also proves mark_aux(0xD7) itself completed. */
+		forge_m681_mark_aux(0xD7,
+			(u32)(unsigned long)__builtin_return_address(0));
 	}
 	return 0;
 }
@@ -299,23 +328,54 @@ static void smpboot_destroy_threads(struct smp_hotplug_thread *ht)
  *
  * Creates and starts the threads on all online cpus.
  */
+
 int smpboot_register_percpu_thread(struct smp_hotplug_thread *plug_thread)
 {
 	unsigned int cpu;
 	int ret = 0;
+
+	if (plug_thread->thread_comm && strcmp(plug_thread->thread_comm, "migration/%u") == 0) {
+		forge_m681_mark(0xF8);
+	}
 	if (!alloc_cpumask_var(&plug_thread->cpumask, GFP_KERNEL))
 		return -ENOMEM;
 	cpumask_copy(plug_thread->cpumask, cpu_possible_mask);
 
+	if (plug_thread->thread_comm && strcmp(plug_thread->thread_comm, "migration/%u") == 0) {
+		forge_m681_mark(0xF9);
+	}
 	get_online_cpus();
 	mutex_lock(&smpboot_threads_lock);
 	for_each_online_cpu(cpu) {
+		if (plug_thread->thread_comm && strcmp(plug_thread->thread_comm, "migration/%u") == 0) {
+			forge_m681_mark(0xFA);
+		}
 		ret = __smpboot_create_thread(plug_thread, cpu);
+		/* m681 v11: UNGATED mark right after the create returns -- no strcmp
+		 * before it -- so 0xC1-as-last == .part.6 returned to caller, while
+		 * 0xD7-as-last == died in the .part.6 epilogue/ret itself. */
+		forge_m681_mark(0xC1);
+		if (plug_thread->thread_comm && strcmp(plug_thread->thread_comm, "migration/%u") == 0) {
+			forge_m681_wdt_kick();
+			forge_m681_mark_aux(0xD6, (u32)ret);
+		}
 		if (ret) {
 			smpboot_destroy_threads(plug_thread);
 			goto out;
 		}
+		if (plug_thread->thread_comm && strcmp(plug_thread->thread_comm, "migration/%u") == 0) {
+			forge_m681_wdt_kick();
+			forge_m681_mark(0xFB);
+		}
 		smpboot_unpark_thread(plug_thread, cpu);
+		if (plug_thread->thread_comm && strcmp(plug_thread->thread_comm, "migration/%u") == 0) {
+			forge_m681_wdt_kick();
+			forge_m681_mark(0xD5);
+		}
+	}
+	if (plug_thread->thread_comm && strcmp(plug_thread->thread_comm, "migration/%u") == 0) {
+		forge_m681_wdt_kick();
+		forge_m681_mark(0xFC);
 	}
 	list_add(&plug_thread->list, &hotplug_threads);
 out:

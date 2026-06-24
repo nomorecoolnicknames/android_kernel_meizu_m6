@@ -1375,8 +1375,22 @@ unsigned long wait_task_inactive(struct task_struct *p, long match_state)
 		if (unlikely(queued)) {
 			ktime_t to = ktime_set(0, NSEC_PER_SEC/HZ);
 
-			set_current_state(TASK_UNINTERRUPTIBLE);
-			schedule_hrtimeout(&to, HRTIMER_MODE_REL);
+			/* m681: during do_pre_smp_initcalls (system_state <
+			 * SYSTEM_RUNNING) the per-cpu hrtimer/tick is not yet
+			 * delivering, so schedule_hrtimeout() sleeps the init
+			 * thread forever and the migration/0 stopper never parks
+			 * (hang at wait_task_inactive). Yield via plain schedule()
+			 * until SYSTEM_RUNNING. Ported from native m681 tree. */
+			if (system_state < SYSTEM_RUNNING) {
+				if (p->state == match_state)
+					break;
+				{ extern void forge_m681_wdt_kick(void); forge_m681_wdt_kick(); }
+				set_current_state(TASK_RUNNING);
+				schedule();
+			} else {
+				set_current_state(TASK_UNINTERRUPTIBLE);
+				schedule_hrtimeout(&to, HRTIMER_MODE_REL);
+			}
 			continue;
 		}
 

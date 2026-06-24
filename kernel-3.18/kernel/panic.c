@@ -80,6 +80,16 @@ void panic(const char *fmt, ...)
 	long i, i_next = 0;
 	int state = 0;
 
+	/* m681 v10: raw snapshot of the panic CALLER (return address) so a
+	 * panic that bypasses die() (e.g. "bad mode", BUG, direct panic) is still
+	 * localised in the forge marker region.  stage 0xFB, latched one-shot. */
+	{
+		extern void forge_m681_fault_snap(unsigned char stage, unsigned int pc,
+						  unsigned int esr, unsigned int addr);
+		forge_m681_fault_snap(0xEB,
+			(unsigned int)(unsigned long)__builtin_return_address(0), 0, 0);
+	}
+
 #ifdef CONFIG_HUAWEI_BFM
 	qcom_set_boot_fail_flag(KERNEL_AP_PANIC);
 #endif

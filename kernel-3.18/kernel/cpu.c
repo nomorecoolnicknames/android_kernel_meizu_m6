@@ -600,6 +600,13 @@ static int _cpu_up(unsigned int cpu, int tasks_frozen)
 	unsigned long mod = tasks_frozen ? CPU_TASKS_FROZEN : 0;
 	struct task_struct *idle;
 
+	/* m681 v15: record EVERY cpu_up attempt with the target cpu number, so if
+	 * the boot still wedges in secondary bring-up after smp_init was forced
+	 * single-core, we learn WHO else calls cpu_up (MTK hotplug?) and for which
+	 * cpu. 0xB8 aux = cpu. */
+	{ extern void forge_m681_mark_aux(unsigned char stage, unsigned int aux);
+	  forge_m681_mark_aux(0xB8, cpu); }
+
 	cpu_hotplug_begin();
 
 	if (cpu_online(cpu) || !cpu_present(cpu)) {

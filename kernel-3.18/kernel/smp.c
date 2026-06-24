@@ -792,13 +792,20 @@ void __init smp_init(void)
 	profile_timestamp_init();
 #endif
 
+	/* m681 v15: FORCE SINGLE-CORE. v13 proved boot reaches smp_init and hangs
+	 * in _cpu_up->smpboot_create_threads (secondary CPU bring-up); maxcpus=1 in
+	 * bootargs did not stop it. Skip ALL secondary cpu_up in source to confirm
+	 * the wall and get a booting 1-core kernel. 0xB7=entered, 0xB6=passed. */
+	{ extern void forge_m681_mark(unsigned char stage); forge_m681_mark(0xB7); }
 	/* FIXME: This should be done in userspace --RR */
 	for_each_present_cpu(cpu) {
+		break;	/* m681 v15: skip every secondary CPU bring-up */
 		if (num_online_cpus() >= setup_max_cpus)
 			break;
 		if (!cpu_online(cpu))
 			cpu_up(cpu);
 	}
+	{ extern void forge_m681_mark(unsigned char stage); forge_m681_mark(0xB6); }
 
 	/* Any cleanup work */
 	smp_announce();
