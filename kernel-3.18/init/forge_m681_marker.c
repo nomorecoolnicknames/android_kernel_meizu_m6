@@ -108,6 +108,14 @@
 #define FORGE_WDT_REGION_SIZE	0x100UL
 #define FORGE_WDT_RESTART_OFF	0x08	/* MTK_WDT_RESTART */
 #define FORGE_WDT_RESTART_KEY	0x1971U	/* MTK_WDT_RESTART_KEY */
+#define FORGE_WDT_MODE_OFF	0x00	/* MTK_WDT_MODE */
+#define FORGE_WDT_LENGTH_OFF	0x04	/* MTK_WDT_LENGTH */
+#define FORGE_WDT_MODE_KEY	0x22000000U
+#define FORGE_WDT_MODE_ENABLE	0x00000001U
+#define FORGE_WDT_MODE_EXTEN	0x00000004U
+#define FORGE_WDT_MODE_AUTO_RESTART 0x00000010U
+#define FORGE_WDT_LENGTH_KEY	0x00000008U
+#define FORGE_WDT_TIMEOUT_SEC	30U
 
 /* Offsets inside the first 512 bytes (never zeroed by ram_console memset_io,
  * which starts at off_linux >= 512). */
@@ -304,6 +312,44 @@ void forge_m681_irq_trace(u32 irqnr, u32 pc)
 EXPORT_SYMBOL(forge_m681_irq_trace);
 
 /*
+ * forge_m681_wdt_arm - explicitly arm the MTK toprgu hardware watchdog.
+ *
+ * mtk_wdt_probe is in the v38 platform denylist (never runs), so nobody
+ * arms the HW WDT.  The forge kick channel only PETS an already-armed
+ * WDT; if it was never armed, petting does nothing and a kernel hang
+ * never triggers a WDT reset (v44 first flash: hung forever, required
+ * manual hard reset, SRAM marker bit-rotted).
+ *
+ * This writes WDT_LENGTH (30s timeout) and WDT_MODE (enable + ext reset
+ * + auto restart + key) using the same register values as the driver's
+ * mtk_wdt_set_timeout() + mtk_wdt_mode_config().  Called once from
+ * forge_m681_marker_late_init() in start_kernel, before any initcalls.
+ */
+static void forge_m681_wdt_arm(void)
+{
+	void __iomem *b = forge_wdt_base;
+	u32 timeout;
+
+	if (!b)
+		return;
+
+	timeout = (FORGE_WDT_TIMEOUT_SEC * (1 << 6)) << 5;
+	writel(timeout | FORGE_WDT_LENGTH_KEY, b + FORGE_WDT_LENGTH_OFF);
+
+	writel(FORGE_WDT_MODE_KEY | FORGE_WDT_MODE_ENABLE |
+	       FORGE_WDT_MODE_EXTEN | FORGE_WDT_MODE_AUTO_RESTART,
+	       b + FORGE_WDT_MODE_OFF);
+
+	writel(FORGE_WDT_RESTART_KEY, b + FORGE_WDT_RESTART_OFF);
+
+	pr_emerg("[FORGE_M681] WDT armed: %us timeout, mode=0x%x length=0x%x\n",
+		 FORGE_WDT_TIMEOUT_SEC,
+		 FORGE_WDT_MODE_KEY | FORGE_WDT_MODE_ENABLE |
+		 FORGE_WDT_MODE_EXTEN | FORGE_WDT_MODE_AUTO_RESTART,
+		 timeout | FORGE_WDT_LENGTH_KEY);
+}
+
+/*
  * forge_m681_wdt_kick - pet the MTK toprgu watchdog from do_one_initcall().
  *
  * No-op until forge_m681_marker_late_init() maps the toprgu block (which happens
@@ -492,6 +538,8 @@ void __init forge_m681_marker_late_init(void)
 	pr_emerg("[FORGE_M681] marker late base=%p base2=%p wdt=%p\n",
 		 forge_spm_base, forge_spm_base2, forge_wdt_base);
 	forge_m681_mark(FORGE_STAGE_MARKER_LATE_INIT);
+
+	forge_m681_wdt_arm();
 
 	/* early_ioremap_reset() already retired the fixmap path before this
 	 * point; the stale early mappings are abandoned, not iounmapped. */
