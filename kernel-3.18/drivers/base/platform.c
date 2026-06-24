@@ -525,6 +525,52 @@ static int platform_drv_probe(struct device *_dev)
 	struct platform_device *dev = to_platform_device(_dev);
 	int ret;
 
+	/* m681 v23: record the platform driver .probe fn ptr of the device being
+	 * probed, so when of_platform_populate (arm64_device_init) wedges in a
+	 * driver probe, the marker aux resolves (System.map) to the hanging probe. */
+	{ extern void forge_m681_mark_aux(unsigned char, unsigned int);
+	  forge_m681_mark_aux(0xC0, (unsigned int)(unsigned long)(drv->probe)); }
+
+	/* m681 v32: central denylist. The m6-graft 3.18 kernel leaves several m681
+	 * peripheral power/clock domains unbrought-up; any driver poking such a block
+	 * in probe wedges the AXI bus (MTK does not fault on unclocked-reg access).
+	 * Skip the NON-ESSENTIAL debug/profiling/multimedia/connectivity probes so we
+	 * reach userspace+adb headless. Only NAMED matches are skipped; essential
+	 * drivers (mmc/usb/pmic/clk/pinctrl/gpio/i2c/uart/rtc/wdt) are not in the list
+	 * and probe normally. Each skip marks 0xCD (aux = skipped probe fn). */
+	{
+		static const char * const forge_deny[] = {
+			"gpufreq", "gpu", "mali", "kbase", "ged", "mt-eem", "ptp_fsm",
+			"ispsys", "fdvt", "seninf", "camera", "venc", "vdec", "vcodec",
+			"mdp", "jpeg", "jpg", "consys", "wmt", "connectivity", "wifi",
+			"wlan", "mediatek,gps", "devapc", "thermal", "systracker",
+			"watchpoint", "freqhop", "wdt", NULL };
+			/* v33: "wdt" skips mtk_wdt_probe -> it calls mtk_wdt_stop() which
+			 * DISABLES the HW watchdog (our recovery-fallback) then hangs at
+			 * watchdog_register_device/toprgu_register_reset_controller. Skipping
+			 * keeps the lk-enabled HW dog alive (forge per-initcall kick via
+			 * forge_wdt_base). /dev/watchdog not needed for adb/logcat. */
+		extern void forge_m681_mark_aux(unsigned char, unsigned int);
+		const char *src = (_dev->driver && _dev->driver->name) ? _dev->driver->name : "";
+		const char *cmp = NULL;
+		char nm[48], cb[72];
+		int k, j;
+
+		for (k = 0; k < 47 && src[k]; k++) { char c = src[k]; nm[k] = (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+		nm[k] = 0;
+		cb[0] = 0;
+		if (_dev->of_node && of_property_read_string(_dev->of_node, "compatible", &cmp) == 0 && cmp) {
+			for (j = 0; j < 71 && cmp[j]; j++) { char c = cmp[j]; cb[j] = (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+			cb[j] = 0;
+		}
+		for (k = 0; forge_deny[k]; k++) {
+			if (strstr(nm, forge_deny[k]) || (cb[0] && strstr(cb, forge_deny[k]))) {
+				forge_m681_mark_aux(0xCD, (unsigned int)(unsigned long)(drv->probe));
+				return -ENODEV;
+			}
+		}
+	}
+
 	ret = of_clk_set_defaults(_dev->of_node, false);
 	if (ret < 0)
 		return ret;

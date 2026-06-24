@@ -224,9 +224,14 @@ static struct platform_device *of_platform_device_create_pdata(
 	    of_node_test_and_set_flag(np, OF_POPULATED))
 		return NULL;
 
+	/* m681 v37: sub-step markers inside of_platform device-create so a wedge
+	 * is pinned to alloc(IRQ map) vs add.  Rolling stage holds the furthest
+	 * sub-step of the hanging node (no inner probe mark for unbound nodes). */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xD1); }
 	dev = of_device_alloc(np, bus_id, parent);
 	if (!dev)
 		goto err_clear_flag;
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xD2); }
 
 	of_dma_configure(&dev->dev);
 	dev->dev.bus = &platform_bus_type;
@@ -237,10 +242,12 @@ static struct platform_device *of_platform_device_create_pdata(
 	 * to do such, possibly using a device notifier
 	 */
 
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xD3); }
 	if (of_device_add(dev) != 0) {
 		platform_device_put(dev);
 		goto err_clear_flag;
 	}
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xD4); }
 
 	return dev;
 
@@ -409,6 +416,45 @@ static int of_platform_bus_create(struct device_node *bus,
 		return 0;
 	}
 
+	/* m681 v38: MASS node-create skip for non-essential peripherals that wedge the
+	 * AXI bus inside of_device_alloc/device_add BEFORE any driver probe runs.
+	 * Root cause: m6-graft leaves several m681 power/clock domains ungated; any
+	 * driver/reg- access to such a block hangs the bus (no fault). Instead of
+	 * one-flash-per-node, skip the whole non-essential set here in ONE build.
+	 * Essentials KEPT (probe normally): mmc0(eMMC=rootfs), uart, i2c controller,
+	 * pwrap(PMIC bus), pinctrl/gpio, rtc, clk controllers, gic/timer/cpuxgpt,
+	 * usb (for adb). PMIC chip driver NOT touched (MT6353 driver has MT6351
+	 * fallback inside, per user). Each skip marks 0xBC (aux = deny index). */
+	{ extern void forge_m681_mark_aux(unsigned char, unsigned int);
+	  static const char * const forge_of_deny[] = {
+		"accdet", "touch", "flashlight", "fingerprint", "eint_fingerprint",
+		"goodix_fp", "nfc", "irq_nfc", "vibrator", "keypad",
+		"charger", "fuelgauge", "fuelguage", "bat_notify", "battery",
+		"bat_metter", "bat_meter", "m4u", "smi", "md_ccif", "ccci",
+		"cmdq", "thermal", "tscpu", "wmt", "consys", "fmradio",
+		"msdc1", "msdc2", "msdc3", "camera", "seninf", "fdvt",
+		"ispsys", "jpeg", "vcodec", "venc", "vdec", "mdp",
+		"irtx", "leds", "als", "gse_1", "gyro", "mse",
+		"mrdump_ext_rst", "eint_wpc", "dsi_te", "usb_typec", "swtp",
+		"ext_buck_oc", "ext_buck_vmd1", "rt5081_pmu_eint", "rt5081_pd",
+		"rf_clock_buffer", "pmic_clock_buffer", "gpufreq", "kbase",
+		"mali", "ged", "mtkfb", "ddp", "disp", "lcm",
+		"cpuhvfs", "vcorefs", "eem", "ptp_fsm", "devapc",
+		"systracker", "watchpoint", "freqhop", "freqhopping",
+		NULL };
+	  const char *ofn = bus->full_name ? bus->full_name : "";
+	  int dk;
+	  for (dk = 0; forge_of_deny[dk]; dk++)
+		if (strstr(ofn, forge_of_deny[dk])) {
+			forge_m681_mark_aux(0xBC, (unsigned int)dk);
+			return 0;
+		}
+	}
+
+	/* m681 v35: name the node about to be device-created so a hang inside
+	 * of_device_alloc/device_add (no driver-probe 0xC0) is pinpointed. */
+	{ extern void forge_m681_mark_ofnode(const char *name);
+	  forge_m681_mark_ofnode(bus->full_name); }
 	dev = of_platform_device_create_pdata(bus, bus_id, platform_data, parent);
 	if (!dev || !of_match_node(matches, bus))
 		return 0;
