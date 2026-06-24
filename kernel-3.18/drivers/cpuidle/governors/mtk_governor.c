@@ -96,6 +96,17 @@ static struct cpuidle_governor mtk_governor = {
  */
 static int __init init_mtk_governor(void)
 {
+#ifdef CONFIG_ARCH_MT6755
+	/*
+	 * m681 bring-up: bypass the MTK cpuidle governor/framework init on
+	 * MT6755. mt_cpuidle_framework_init() maps power/display/audio bases
+	 * and registers hotplug/profile hooks — unsafe and unnecessary for
+	 * single-core bring-up to ADB. Remove once cpuidle framework is
+	 * confirmed safe on this device.
+	 */
+	pr_emerg("[FORGE_M681] init_mtk_governor bypassed on MT6755 (bring-up)\n");
+	return 0;
+#endif
 	/* TODO: check if debugfs_create_file() failed */
 	mt_cpuidle_framework_init();
 	return cpuidle_register_governor(&mtk_governor);

@@ -610,7 +610,10 @@ static void spm_register_init(void)
 	if (!spm_ddrphy_base)
 		spm_err("[DDRPHY] base failed\n");
 #endif
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xB0); }	/* spm_register_init: post all of_iomap, pre vcorefs/GPIO/cirq */
 
+#if 0	/* m681 v22: SKIP vcorefs-EINT setup -- mt_gpio_set_debounce/request_irq on the
+	 * Vcore-DVFS EINT bus-stalls silently on m681 (non-essential Vcore-DVFS-via-EINT). */
 #ifdef SPM_VCORE_EN_MT6755
 	node = of_find_compatible_node(NULL, NULL, "mediatek,spm_vcorefs_start_eint");
 	if (!node) {
@@ -645,6 +648,10 @@ static void spm_register_init(void)
 	spm_err("spm_vcorefs_start_irq = %d, spm_vcorefs_end_irq = %d\n", spm_vcorefs_start_irq,
 		spm_vcorefs_end_irq);
 #endif
+#endif	/* m681 v22: end skip of vcorefs-EINT setup */
+	/* keep the (now-unreferenced) EINT handlers used so -Werror=unused-function is quiet */
+	(void)spm_vcorefs_start_handler; (void)spm_vcorefs_end_handler;
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xB3); }	/* post vcorefs block (skipped) */
 	spm_err("spm_base = %p, spm_irq_0 = %d\n", spm_base, spm_irq_0);
 #if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_MT6757)
 	spm_err("spm_irq_1 = %d, spm_irq_2 = %d, spm_irq_3 = %d\n",
@@ -661,6 +668,7 @@ static void spm_register_init(void)
 		spm_err("find mediatek,GPIO failed\n");
 	if (of_property_read_u32_array(node, "reg", &gpio_base_addr, 1))
 		spm_err("mediatek,GPIO base addr can NOT found!\n");
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xB4); }	/* post GPIO node read, pre cirq */
 
 	/* edge trigger irqs that have to lateched by CIRQ */
 #if defined(CONFIG_ARCH_MT6755)
@@ -717,6 +725,7 @@ static void spm_register_init(void)
 #endif
 	}
 
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xB1); }	/* spm_register_init: before spin_lock + SPM HW writes */
 	spin_lock_irqsave(&__spm_lock, flags);
 
 	/* md resource request selection */
@@ -747,6 +756,7 @@ static void spm_register_init(void)
 	spm_write(PCM_CON0, SPM_REGWR_CFG_KEY | PCM_CK_EN_LSB | PCM_SW_RESET_LSB);
 	spm_write(PCM_CON0, SPM_REGWR_CFG_KEY | PCM_CK_EN_LSB);
 	BUG_ON((spm_read(PCM_FSM_STA) & 0x7fffff) != PCM_FSM_STA_DEF);	/* PCM reset failed */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xB2); }	/* spm_register_init: post PCM reset+BUG_ON */
 
 	/* init PCM control register */
 	spm_write(PCM_CON0, SPM_REGWR_CFG_KEY | PCM_CK_EN_LSB | EN_IM_SLEEP_DVS_LSB);
@@ -812,14 +822,19 @@ int spm_module_init(void)
 	struct wd_api *wd_api;
 #endif
 #endif
+#define FM(s) do { extern void forge_m681_mark(unsigned char); forge_m681_mark(s); } while (0)
+	FM(0xA5);			/* spm_v2 spm_module_init ENTER */
 	spm_register_init();
+	FM(0xA6);			/* post spm_register_init */
 	if (spm_irq_register() != 0)
 		r = -EPERM;
+	FM(0xA7);			/* post spm_irq_register */
 #if !defined(CONFIG_FPGA_EARLY_PORTING)
 #if defined(CONFIG_PM)
 	if (spm_fs_init() != 0)
 		r = -EPERM;
 #endif
+	FM(0xA8);			/* post spm_fs_init */
 
 #if 0
 #ifdef CONFIG_MTK_WD_KICKER
@@ -836,6 +851,7 @@ int spm_module_init(void)
 	spm_sodi_init();
 	spm_mcdi_init();
 	spm_deepidle_init();
+	FM(0xA9);			/* post sodi3/sodi/mcdi/deepidle */
 #if 1				/* FIXME: wait for DRAMC golden setting enable */
 	if (spm_golden_setting_cmp(1) != 0) {
 		/* r = -EPERM; */
@@ -844,9 +860,15 @@ int spm_module_init(void)
 #endif
 
 	spm_set_dummy_read_addr();
+	FM(0xAA);			/* post spm_set_dummy_read_addr — about to do PMIC debug reads */
 
 #if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_MT6757)
 #if !defined(CONFIG_FPGA_EARLY_PORTING)
+	/* m681: GUARD the PMIC vcore debug reads -- pmic_read_interface_nolock
+	 * pwrap-polls for the transaction and hangs silently on m681 (MT6351 hw
+	 * driven by the MT6353 driver). Pure debug prints; safe to skip. volatile
+	 * keeps reg_val/the reads referenced (no -Werror=unused). */
+	{ static volatile int forge_skip_pmic_dbg = 1; if (!forge_skip_pmic_dbg) {
 	/* debug code */
 #if defined(CONFIG_MTK_PMIC_CHIP_MT6353) && defined(CONFIG_ARCH_MT6755)
 	r = pmic_read_interface_nolock(MT6353_WDTDBG_CON1, &reg_val, 0xffff, 0);
@@ -871,9 +893,12 @@ int spm_module_init(void)
 	r = pmic_read_interface_nolock(MT6351_WDTDBG_CON1, &reg_val, 0xffff, 0);
 	spm_crit("[PMIC]wdtdbg_con1-after : 0x%x\n", reg_val);
 #endif
+	} }	/* m681: close forge_skip_pmic_dbg guard */
+	FM(0xAB);			/* post PMIC debug block (skipped) */
 #endif
 #endif
 #endif
+#undef FM
 /* set Vcore DVFS bootup opp by ddr shuffle opp */
 #if defined(CONFIG_ARCH_MT6755)
 	if (spm_read(SPM_POWER_ON_VAL0) & (1 << 14)) {

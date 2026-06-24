@@ -1484,7 +1484,7 @@ static int create_cpuhvfs_debug_fs(struct cpuhvfs_data *cpuhvfs)
 	return 0;
 }
 
-static void init_cpuhvfs_debug_repo(struct cpuhvfs_data *cpuhvfs)
+static void __maybe_unused init_cpuhvfs_debug_repo(struct cpuhvfs_data *cpuhvfs)
 {
 	u32 __iomem *dbg_repo = cpuhvfs->dvfsp->log_repo;
 
@@ -1760,17 +1760,13 @@ int cpuhvfs_module_init(void)
 
 static int cpuhvfs_pre_module_init(void)
 {
-	int r;
 	struct cpuhvfs_data *cpuhvfs = &g_cpuhvfs;
 
-	r = cpuhvfs->dvfsp->init_dvfsp(cpuhvfs->dvfsp);
-	if (r) {
-		cpuhvfs_err("FAILED TO INIT DVFS PROCESSOR (%d)\n", r);
-		return r;
-	}
-
-	init_cpuhvfs_debug_repo(cpuhvfs);
-
+	/* m681 native bring-up: SKIP DVFS-processor init — init_dvfsp loads SPM/PCM
+	 * firmware and spins on a coprocessor handshake that never completes here;
+	 * init_cpuhvfs_debug_repo touches the same coprocessor SRAM. CPU runs at
+	 * default OPP without DVFS. TODO post-boot: bring up hybrid CPU DVFS. */
+	(void)cpuhvfs;
 	return 0;
 }
 fs_initcall(cpuhvfs_pre_module_init);

@@ -4526,6 +4526,10 @@ static int __init _mt_cpufreq_pdrv_init(void)
 	unsigned int cluster_num;
 	int i;
 
+	/* m681 bring-up: skip — probe reads PMIC VSRAM via pwrap + enables GPU/MFG
+	 * MTCMOS (clk_mfg_scp) which bus-stalls; CPU runs at default OPP. */
+	return 0;
+
 	FUNC_ENTER(FUNC_LV_MODULE);
 
 	mt_cpufreq_dts_map();

@@ -369,18 +369,27 @@ static void spm_register_init(void)
 int spm_module_init(void)
 {
 	int r = 0;
+#define FM(s) do { extern void forge_m681_mark(unsigned char); forge_m681_mark(s); } while (0)
 
+	FM(0xA5);			/* enter spm_module_init */
 	spm_register_init();
+	FM(0xA6);			/* post spm_register_init */
 	if (spm_irq_register() != 0)
 		r = -EPERM;
+	FM(0xA7);			/* post spm_irq_register */
 #if defined(CONFIG_PM)
 	if (spm_fs_init() != 0)
 		r = -EPERM;
 #endif
+	FM(0xA8);			/* post spm_fs_init */
 
 	spm_sodi3_init();
+	FM(0xA9);			/* post spm_sodi3_init */
 	spm_sodi_init();
+	FM(0xAA);			/* post spm_sodi_init */
 	spm_deepidle_init();
+	FM(0xAB);			/* post spm_deepidle_init */
+#undef FM
 
 #ifndef CONFIG_MTK_FPGA
 	if (spm_golden_setting_cmp(1) != 0)

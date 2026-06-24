@@ -1318,6 +1318,12 @@ static int __init vcorefs_module_init(void)
 	struct governor_profile *gvrctrl = &governor_ctrl;
 	struct device_node *node;
 
+	/* m681 bring-up: skip vcorefs DVFS -- pwrap PMIC reads return invalid on
+	 * MT6351 hardware driven by the MT6353 chip driver (graft PMIC mismatch),
+	 * so curr_vcore_uv==0 -> BUG_ON panic at :1240. Not needed to reach adb.
+	 * TODO post-boot: re-enable after MT6351 PMIC driver port. */
+	return 0;
+
 	node = of_find_compatible_node(NULL, NULL, "mediatek,mt6755-vcorefs");
 	if (!node)
 		vcorefs_err("find VCORE_DVFS node failed\n");

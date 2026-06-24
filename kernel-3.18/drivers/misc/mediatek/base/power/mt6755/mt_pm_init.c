@@ -506,12 +506,19 @@ static int __init mt_power_management_init(void)
 	pm_power_off = mt_power_off;
 
 #if !defined(CONFIG_MTK_FPGA)
+	/* m681 v16: bisect which power sub-init hangs (last mark before reset wins).
+	 * 0xA0=enter 0xA1=post cpu_dormant 0xA2=post spm 0xA3=post slp 0xA4=post freqhop */
+	{ extern void forge_m681_mark(unsigned char stage); forge_m681_mark(0xA0); }
 	/* cpu dormant driver init */
 	mt_cpu_dormant_init();
+	{ extern void forge_m681_mark(unsigned char stage); forge_m681_mark(0xA1); }
 
 	spm_module_init();
+	{ extern void forge_m681_mark(unsigned char stage); forge_m681_mark(0xA2); }
 	slp_module_init();
+	{ extern void forge_m681_mark(unsigned char stage); forge_m681_mark(0xA3); }
 	mt_freqhopping_init();
+	{ extern void forge_m681_mark(unsigned char stage); forge_m681_mark(0xA4); }
 	/* mt_clkmgr_init(); */
 
 	/* mt_pm_log_init(); // power management log init */

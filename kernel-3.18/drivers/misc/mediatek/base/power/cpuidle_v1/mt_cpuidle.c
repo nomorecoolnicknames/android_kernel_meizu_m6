@@ -1092,7 +1092,18 @@ int mt_cpu_dormant_init(void)
 
 #if !defined(CONFIG_ARCH_MT6580)
 #if defined(CONFIG_ARM_PSCI) || defined(CONFIG_MTK_PSCI)
-	kernel_smc_msg(0, 2, (long) sleep_aee_rec_cpu_dormant_pa);
+	/* m681 v17: SKIP this dormant-record SMC to ATF (SIP 0x820002ff). The m6
+	 * boot wedges silently here on m681 (no kernel exception => an smc that
+	 * never returns from EL3 — m681 ATF doesn't service this m6-vintage SIP).
+	 * The stocktruth (proven m681) dormant-init does NOT issue this SMC. It only
+	 * hands ATF the dormant crash-record PA, non-essential for a bring-up boot.
+	 * volatile guard keeps kernel_smc_msg referenced (else mt_secure_call trips
+	 * -Werror=unused-function) while never executing the SMC at runtime. */
+	{
+		static volatile int forge_m681_skip_dormant_smc = 1;
+		if (!forge_m681_skip_dormant_smc)
+			kernel_smc_msg(0, 2, (long) sleep_aee_rec_cpu_dormant_pa);
+	}
 #endif
 #endif
 
