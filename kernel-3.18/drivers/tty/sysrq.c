@@ -1047,8 +1047,15 @@ static int __sysrq_swap_key_ops(int key, struct sysrq_key_op *insert_op_p,
 	 * A concurrent __handle_sysrq either got the old op or the new op.
 	 * Wait for it to go away before returning, so the code for an old
 	 * op is not freed (eg. on module unload) while it is in use.
+	 *
+	 * m681 bring-up: skip synchronize_rcu() during boot -- in single-core
+	 * (setup_max_cpus=1) + CONFIG_PREEMPT_NONE the RCU grace kthread never
+	 * schedules to end the grace period, freezing boot at pm_sysrq_init.
+	 * (Same root cause as l681/99degree Milestone 2.) Safe at boot: no
+	 * concurrent __handle_sysrq can be running pre-userspace.
 	 */
-	synchronize_rcu();
+	if (system_state == SYSTEM_RUNNING)
+		synchronize_rcu();
 
 	return retval;
 }
