@@ -29,7 +29,7 @@
 
 	/* chosen */
 	chosen {
-		bootargs = "console=tty0 console=ttyMT0,921600n1 root=/dev/ram initrd=0x44000000,0x4b434e loglevel=4 printk.disable_uart=1 maxcpus=1";
+		bootargs = "console=tty0 console=ttyMT0,921600n1 root=/dev/ram initrd=0x44000000,0x4b434e loglevel=4 printk.disable_uart=1 maxcpus=1 clk_ignore_unused";
 
 		/* Real M681 boots through LK, so keep the fallback in sync with LK handoff. */
 		/* fb buffer is reserved using this dts by memory node above */
