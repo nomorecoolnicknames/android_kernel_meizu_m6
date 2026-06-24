@@ -143,12 +143,25 @@ change to 1'b0 HW control, confirm with Peter_SW, SW Haung, Sam Chen, Ricky Wu, 
 	ret = pmic_config_interface(0xC, 0x0, 0x1, 2);
 /* [3:3]: RG_STRUP_AUXADC_RSTB_SEL; Filby, ZF, SW Huang, 12/9 */
 	ret = pmic_config_interface(0xC, 0x1, 0x1, 3);
+/* m681 native bring-up (v39): DO NOT arm the MT6353 power-off sequencer here.
+ * STRUP_CON7 STRUP_PWROFF_SEQ_EN/PREOFF_EN=1 + the STRUP_CON14 PG_H2L_EN rail
+ * fault-enables below fire an immediate HARDWARE power-off on a kernel-only swap
+ * (bootloader leaves the sequencer disarmed; a rail under PG threshold at init
+ * trips it). Stock Flyme (MT6351 init table) never writes STRUP_CON7. Re-enable
+ * post-boot once rails are confirmed stable. RE: pmicre / BRINGUP_STATE_3.18 M11. */
+#if 0
 /* [0:0]: STRUP_PWROFF_SEQ_EN; 12/1 , Kim */
 	ret = pmic_config_interface(0xE, 0x1, 0x1, 0);
 /* [1:1]: STRUP_PWROFF_PREOFF_EN; 12/1 , Kim */
 	ret = pmic_config_interface(0xE, 0x1, 0x1, 1);
+#endif
 /* [15:15]: RG_STRUP_ENVTEM_CTRL; 12/1 , Kim */
 	ret = pmic_config_interface(0x18, 0x1, 0x1, 15);
+/* m681 native bring-up (v39): skip the 12 STRUP_CON14 PG_H2L_EN rail
+ * fault-enables — arming H->L power-good fault detection while the power-off
+ * sequencer would be live fires a hardware power-off if any rail is below
+ * threshold at init. Paired with the STRUP_CON7 skip above. Re-enable post-boot. */
+#if 0
 /* [4:4]: RG_STRUP_VCORE2_PG_H2L_EN; 12/1 , Kim */
 	ret = pmic_config_interface(0x1C, 0x1, 0x1, 4);
 /* [5:5]: RG_STRUP_VMCH_PG_H2L_EN; 12/1 , Kim */
@@ -173,6 +186,7 @@ change to 1'b0 HW control, confirm with Peter_SW, SW Haung, Sam Chen, Ricky Wu, 
 	ret = pmic_config_interface(0x1C, 0x1, 0x1, 14);
 /* [15:15]: RG_STRUP_VAUX18_PG_H2L_EN; 12/1 , Kim */
 	ret = pmic_config_interface(0x1C, 0x1, 0x1, 15);
+#endif
 /* [12:12]: RG_RST_DRVSEL; 12/1 , Kim */
 	ret = pmic_config_interface(0x24, 0x1, 0x1, 12);
 /* [13:13]: RG_EN_DRVSEL; 12/1 , Kim */

@@ -1151,11 +1151,21 @@ static int __init pmic_mt_init(void)
 		PMICLOG("****[pmic_mt_init] Unable to device register(%d)\n", ret);
 		return ret;
 	}
+	/* m681 native bring-up (v41): the m681 PMIC is MT6351 (verified: stock
+	 * flyme7 kernel = "mediatek,mt6351-pmic" / MT6351 pwrap; DTS mt6755.dtsi:604
+	 * declares mt6351 primary, mt6353 fallback). A prior session WRONGLY set
+	 * CONFIG_MTK_PMIC_CHIP_MT6353=y, so this mt6353 driver writes the MT6353
+	 * register map to an MT6351 chip -> wrong power-control regs -> clean HW
+	 * power-off. SKIP registering this driver so its probe (PMIC_INIT_SETTING_V1
+	 * etc.) never writes the MT6351 chip; boot proceeds on LK-configured rails.
+	 * PROPER FIX (post-boot, needed for camera): port the MT6351 PMIC driver. */
+#if 0
 	ret = platform_driver_register(&pmic_mt_driver);
 	if (ret) {
 		PMICLOG("****[pmic_mt_init] Unable to register driver (%d)\n", ret);
 		return ret;
 	}
+#endif
 #endif				/* End of #ifdef CONFIG_OF */
 #else
 	PMICLOG("pmic_regulator_init\n");
