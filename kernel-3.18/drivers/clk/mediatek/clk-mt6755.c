@@ -21,7 +21,7 @@
 #include "clk-pll-v1.h"
 #include "clk-gate-v1.h"
 #include "clk-mt6755-pll.h"
-#define _MUX_CLR_SET_UPDS_
+/* #define _MUX_CLR_SET_UPDS_ */
 #define _MUX_UPDS_
 #ifdef _MUX_UPDS_
 #include "clk-mux.h"
@@ -500,7 +500,7 @@ void __iomem  *scp_base;
 #define LARB_CG   0x00000001
 #define VENC_CG   0x00001111/*set*/
 
-#define CG_BOOTUP_PDN			1
+#define CG_BOOTUP_PDN			0	/* m681: M6-vintage PLL-powerdown hack runs in mt_apmixedsys_init (of_clk_init) and hangs time_init on m681; the native MT6755 tree omits it. Disabled to clear the time_init hang (marker localized stage 0x10 PRE_TIME_INIT, no 0x11). */
 #define ULPOSC_EN BIT(0)
 #define ULPOSC_RST BIT(1)
 #define ULPOSC_CG_EN BIT(2)

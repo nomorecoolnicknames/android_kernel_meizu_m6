@@ -23,6 +23,15 @@
 #include "clk-mtk-v1.h"
 #include "clk-mt6755-pg.h"
 
+/* m681: the MTK power-gating ACK polls (`while (!(spm_read(PWR_STATUS) & MASK)) ;`)
+ * spin FOREVER on m681 because the SCPSYS/SPM power-domain ACK never asserts the
+ * way the m6-vintage code expects -> silent boot hang (first seen as disp_probe ->
+ * DIS_PWR_STA_MASK poll @ clk-mt6755-pg.c:795). IGNORE_PWR_ACK is MTK's sanctioned
+ * compile-time escape that removes ALL these PWR_STATUS ACK waits at once (domains
+ * are still toggled on/off, just not ACK-confirmed). Lets every subsystem's power
+ * domain proceed so the boot can reach userspace. */
+#define IGNORE_PWR_ACK
+
 #include <dt-bindings/clock/mt6755-clk.h>
 
 #define VLTE_SUPPORT
@@ -329,7 +338,7 @@ struct pg_callbacks *register_pg_callback(struct pg_callbacks *pgcb)
 int spm_topaxi_protect(unsigned int mask_value, int en)
 {
 	unsigned long flags;
-	int count = 0;
+	int count __maybe_unused = 0;
 	struct timeval tm_s, tm_e;
 	unsigned int tm_val = 0;
 
@@ -376,7 +385,7 @@ int spm_topaxi_protect(unsigned int mask_value, int en)
 void reset_infra_md(void)
 {
 	unsigned long flags;
-	int count = 0;
+	int count __maybe_unused = 0;
 	u32 infra_topaxi_protecten = 0;
 	u32 infra_topaxi_protecten_1 = 0;
 
@@ -510,7 +519,7 @@ static int spm_mtcmos_ctrl_connsys(int state)
 static int spm_mtcmos_ctrl_mdsys1(int state)
 {
 	int err = 0;
-	int count = 0;
+	int count __maybe_unused = 0;
 
 	/* TINFO="enable SPM register control" */
 	spm_write(POWERON_CONFIG_EN, (SPM_PROJECT_CODE << 16) | (0x1 << 0));
@@ -586,7 +595,7 @@ static int spm_mtcmos_ctrl_mdsys1(int state)
 static int spm_mtcmos_ctrl_mdsys2(int state)
 {
 	int err = 0;
-	int count = 0;
+	int count __maybe_unused = 0;
 	/* TINFO="enable SPM register control" */
 	spm_write(POWERON_CONFIG_EN, (SPM_PROJECT_CODE << 16) | (0x1 << 0));
 
@@ -826,7 +835,7 @@ int spm_mtcmos_ctrl_dis(int state)
 int spm_mtcmos_ctrl_mfg2(int state)
 {
 	int err = 0;
-	int count = 0;
+	int count __maybe_unused = 0;
 
 	/* TINFO="enable SPM register control" */
 	spm_write(POWERON_CONFIG_EN, (SPM_PROJECT_CODE << 16) | (0x1 << 0));
@@ -1230,7 +1239,7 @@ int spm_mtcmos_ctrl_ven(int state)
 int spm_mtcmos_ctrl_mfg_async(int state)
 {
 	int err = 0;
-	int count = 0;
+	int count __maybe_unused = 0;
 	/* TINFO="enable SPM register control" */
 	spm_write(POWERON_CONFIG_EN, (SPM_PROJECT_CODE << 16) | (0x1 << 0));
 
@@ -2090,6 +2099,7 @@ static void __init mt_scpsys_init(struct device_node *node)
 	disable_subsys(SYS_MD2);
 	spm_mtcmos_ctrl_mfg_async(STA_POWER_ON);
 	spm_mtcmos_ctrl_mfg2(STA_POWER_ON);
+	spm_mtcmos_ctrl_dis(STA_POWER_ON);
 }
 CLK_OF_DECLARE(mtk_pg_regs, "mediatek,mt6755-scpsys", mt_scpsys_init);
 void subsys_if_on(void)

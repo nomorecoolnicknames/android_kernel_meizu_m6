@@ -63,12 +63,18 @@ unsigned long profile_pc(struct pt_regs *regs)
 EXPORT_SYMBOL(profile_pc);
 #endif
 
+#include "../../../init/forge_m681_marker.h"
+
 void __init time_init(void)
 {
 	u32 arch_timer_rate;
 
+	forge_m681_mark(FORGE_STAGE_TIME_INIT_ENTRY);			/* 0x51 */
 	of_clk_init(NULL);
+	forge_m681_mark(FORGE_STAGE_TIME_POST_OF_CLK_INIT);		/* 0x52 */
+	forge_m681_mark(FORGE_STAGE_TIME_PRE_CLOCKSOURCE_OF_INIT);	/* 0x53 */
 	clocksource_of_init();
+	forge_m681_mark(FORGE_STAGE_TIME_POST_CLOCKSOURCE_OF_INIT);	/* 0x54 */
 
 	tick_setup_hrtimer_broadcast();
 
@@ -78,4 +84,5 @@ void __init time_init(void)
 
 	/* Calibrate the delay loop directly */
 	lpj_fine = arch_timer_rate / HZ;
+	forge_m681_mark(FORGE_STAGE_TIME_INIT_EXIT);			/* 0x57 */
 }
