@@ -441,6 +441,7 @@ static int of_platform_bus_create(struct device_node *bus,
 		"mali", "ged", "mtkfb", "ddp", "disp", "lcm",
 		"cpuhvfs", "vcorefs", "eem", "ptp_fsm", "devapc",
 		"systracker", "watchpoint", "freqhop", "freqhopping",
+		"toprgu",
 		NULL };
 	  const char *ofn = bus->full_name ? bus->full_name : "";
 	  int dk;

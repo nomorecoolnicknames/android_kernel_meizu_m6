@@ -687,6 +687,16 @@ void forge_m681_mark_level_done(int level)
 }
 EXPORT_SYMBOL(forge_m681_mark_level_done);
 
+/* m681 v51: direct SWRST_KEY write for belt-and-suspenders recovery.
+ * Uses the same toprgu_base/forge_wdt_base fallback as the kick path. */
+void forge_m681_wdt_swrst(void)
+{
+	void __iomem *b = toprgu_base ? toprgu_base : forge_wdt_base;
+	if (b)
+		writel(FORGE_WDT_SWRST_KEY, b + FORGE_WDT_SWRST_OFF);
+}
+EXPORT_SYMBOL(forge_m681_wdt_swrst);
+
 /*
  * Called from arch/arm64/kernel/setup.c right after early_ioremap_init().
  * Maps the marker region via the fixmap so we can mark stages from A04 onward,

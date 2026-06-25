@@ -820,25 +820,23 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	forge_m681_wdt_kick();
 	forge_m681_mark_aux(0xE0, (u32)(unsigned long)fn);
 	forge_m681_set_initcall((u32)(unsigned long)fn);
-	/* m681 v50 DIAGNOSTIC tripwire: raised 50 -> 145 to binary-search the
-	 * silent AXI-hang wall between seq 50 (v49 proven) and seq ~145
-	 * (mtu3d_probe, the next known landmark).  v49 proved panic->SWRST->
-	 * recovery works at seq 50; v50 raises the bar to 145 so:
-	 *   - if kernel reaches 145: tripwire fires -> panic -> recovery ->
-	 *     marker shows seq=145 + 0xEC (mtu3d early-return) present + 0xF2
-	 *   - if kernel wedges at seq N<145 (silent AXI hang): WDT 10s ->
-	 *     recovery -> marker shows seq=N, ENTERED fn=wedged_initcall,
-	 *     no 0xF2/0xF1 (no panic), last DONE = N-1
-	 * Either outcome localises the wall to a single initcall fn.
-	 * v50 also adds initcall-level phase markers (0xE8/0xE9) so the
-	 * marker names the LEVEL (early/core/postcore/arch/subsys/fs/device/
-	 * late) the wall sits in, plus per-level completion counts.
-	 * Rollback: set FORGE_V50_TRIPWIRE_SEQ to 0 (disabled). */
-#define FORGE_V50_TRIPWIRE_SEQ 145
-	if (FORGE_V50_TRIPWIRE_SEQ &&
-	    forge_m681_get_initcall_seq() == FORGE_V50_TRIPWIRE_SEQ) {
-		forge_m681_mark_aux(0xF2, FORGE_V50_TRIPWIRE_SEQ);
-		panic("v50 tripwire @ initcall seq %u", FORGE_V50_TRIPWIRE_SEQ);
+	/* m681 v51 DIAGNOSTIC tripwire: raised 145 -> 250 to binary-search the
+	 * wall beyond pm_sysrq_init (seq 145, v50 proven reached).  v50 proved
+	 * kernel reaches seq 145 but recovery mechanism broke (mtk_wdt_probe
+	 * overrode forge_m681_wdt_arm single-mode with DUAL_MODE+IRQ, so WDT
+	 * timeout generated IRQ instead of reset).  v51 adds "toprgu" to the
+	 * of_platform denylist so mtk_wdt_probe NEVER runs and the
+	 * forge_m681_wdt_arm single-mode-hwreset state survives all initcalls.
+	 * v51 also adds a direct SWRST_KEY write right here in the tripwire
+	 * (belt-and-suspenders with the v48 panic_notifier) so even if the
+	 * notifier chain is broken the reset fires before panic().
+	 * Rollback: set FORGE_V51_TRIPWIRE_SEQ to 0 (disabled). */
+#define FORGE_V51_TRIPWIRE_SEQ 250
+	if (FORGE_V51_TRIPWIRE_SEQ &&
+	    forge_m681_get_initcall_seq() == FORGE_V51_TRIPWIRE_SEQ) {
+		forge_m681_mark_aux(0xF2, FORGE_V51_TRIPWIRE_SEQ);
+		forge_m681_wdt_swrst();
+		panic("v51 tripwire @ initcall seq %u", FORGE_V51_TRIPWIRE_SEQ);
 	}
 	TIME_LOG_START();
 #if defined(CONFIG_MT_ENG_BUILD)

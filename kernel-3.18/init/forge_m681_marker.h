@@ -141,5 +141,10 @@ void forge_m681_mark_ofnode(const char *name);
  * per-initcall fn tracker (0x64/0x6c) that names the exact initcall. */
 void forge_m681_mark_level_enter(int level);
 void forge_m681_mark_level_done(int level);
+/* m681 v51: direct SWRST_KEY write to toprgu+0x14 — belt-and-suspenders
+ * with the v48 panic_notifier.  Used in the v51 tripwire (init/main.c)
+ * so the reset fires even if the notifier chain is broken.  No-op if
+ * neither toprgu_base nor forge_wdt_base is mapped. */
+void forge_m681_wdt_swrst(void);
 
 #endif /* _FORGE_M681_MARKER_H */
