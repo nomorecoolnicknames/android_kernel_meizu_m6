@@ -329,6 +329,12 @@ static int ged_init(void)
 {
 	GED_ERROR err = GED_ERROR_FAIL;
 
+	/* m681 bring-up: GPU DVFS pokes MFG MTCMOS / SPM for GPU power
+	 * domains which hang on MT6750→MT6755 graft. Mali node disabled
+	 * in DTS, no GPU consumer exists. Skip entirely. */
+	pr_emerg("[FORGE_M681] ged_init: GPU DVFS skipped (Mali disabled)\n");
+	return 0;
+
 	gvIOCTLParamBuf = vmalloc(GED_IOCTL_PARAM_BUF_SIZE);
 	if (NULL == gvIOCTLParamBuf)
 	{

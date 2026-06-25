@@ -539,7 +539,11 @@ void __init forge_m681_marker_late_init(void)
 		 forge_spm_base, forge_spm_base2, forge_wdt_base);
 	forge_m681_mark(FORGE_STAGE_MARKER_LATE_INIT);
 
-	forge_m681_wdt_arm();
+	/* m681: forge_m681_wdt_arm() DISABLED — direct writel to toprgu
+	 * 0x10007000 killed boot before marker init (v44b: kick_count=0,
+	 * 18/2048 non-zero bytes). Preloader/lk already arms HW WDT before
+	 * kernel entry; forge_m681_wdt_kick() pets it via RESTART key. */
+	/* forge_m681_wdt_arm(); */
 
 	/* early_ioremap_reset() already retired the fixmap path before this
 	 * point; the stale early mappings are abandoned, not iounmapped. */

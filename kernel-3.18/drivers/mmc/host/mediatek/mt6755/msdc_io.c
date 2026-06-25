@@ -648,10 +648,17 @@ int msdc_get_ccf_clk_pointer(struct platform_device *pdev,
 		pr_err("can not get msdc%d clock control\n", pdev->id);
 		return 1;
 	}
+	/* m681 bring-up: skip clk_prepare — on MT6750→MT6755 graft,
+	 * clk_prepare for MSDC PLL tries to power up PLL via SPM/PMIC
+	 * coordination which deadlocks (l681 M16 fix a). eMMC boot clock
+	 * is already enabled by preloader/lk, so eMMC works without
+	 * clk_prepare. SD/SDIO not needed pre-adb. */
+#if 0
 	if (clk_prepare(host->clock_control)) {
 		pr_err("can not prepare msdc%d clock control\n", pdev->id);
 		return 1;
 	}
+#endif
 
 	return 0;
 }

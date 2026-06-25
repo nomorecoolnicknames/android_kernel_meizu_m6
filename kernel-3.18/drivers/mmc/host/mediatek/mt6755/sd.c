@@ -6086,6 +6086,16 @@ static int msdc_drv_probe(struct platform_device *pdev)
 			mmc->caps2, mmc->pm_caps, host->power_control,
 			hw->request_sdio_eirq, hw->register_pm,
 			mmc->supply.vmmc, mmc->supply.vqmmc);
+	/* m681 bring-up: skip SD/SDIO probe path entirely — only eMMC
+	 * (MSDC_EMMC) needed for rootfs. SD/SDIO msdc_sd_power calls
+	 * poke PMIC GPIOs that hang on MT6750→MT6755 graft (l681 M16
+	 * fix b). Non-eMMC hosts freed, driver returns 0. */
+	if (host->hw->host_function != MSDC_EMMC) {
+		pr_emerg("[FORGE_M681] msdc: non-eMMC host_function=%d, skipping probe\n",
+			 host->hw->host_function);
+		mmc_free_host(mmc);
+		return 0;
+	}
 	if ((host->hw->host_function == MSDC_SD) &&
 	    !(host->mmc->caps & MMC_CAP_NONREMOVABLE)) {
 		/* Since SD card power is default on,
