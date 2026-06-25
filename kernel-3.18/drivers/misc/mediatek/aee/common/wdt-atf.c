@@ -571,6 +571,14 @@ static int __init aee_wdt_init(void)
 {
 	int i;
 	phys_addr_t atf_aee_debug_phy_addr;
+	/* m681 v54 DIAGNOSTIC: skip aee_wdt_init to test if its SMC call
+	 * (mt_secure_call(MTK_SIP_KERNEL_WDT)) causes ATF to intercept
+	 * SWRST_KEY writes and route them to normal-boot instead of recovery.
+	 * v53 proved: SWRST at seq 100 (after aee_wdt_init seq 99) →
+	 * bootreason=wdt_by_pass_pkw → LK boots normal, not recovery.
+	 * v49 proved: SWRST at seq 50 (before aee_wdt_init) → auto-recovery.
+	 * Rollback: remove this early return. */
+	return 0;
 
 	atomic_set(&wdt_enter_fiq, 0);
 	atomic_set(&aee_wdt_zap_lock, 1);

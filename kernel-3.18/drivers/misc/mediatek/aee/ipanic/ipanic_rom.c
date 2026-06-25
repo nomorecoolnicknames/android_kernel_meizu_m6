@@ -726,6 +726,13 @@ static struct notifier_block die_blk = {
 
 int __init aee_ipanic_init(void)
 {
+	/* m681 v54 DIAGNOSTIC: skip aee_ipanic_init to test if its
+	 * panic_notifier registration (panic_blk) interferes with
+	 * forge_m681_panic_handler SWRST recovery.  aee_ipanic registers
+	 * on panic_notifier_list and may hang in mrdump_init/msdc init
+	 * before our handler (priority INT_MAX = run last) gets to write
+	 * SWRST_KEY.  Rollback: remove this early return. */
+	return 0;
 	spin_lock_init(&ipanic_lock);
 
 	mrdump_init();

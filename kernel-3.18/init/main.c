@@ -836,13 +836,13 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	 * are still caught by the HW WDT (bootloop) until we fix LK to boot
 	 * recovery on WDT boot reason.
 	 * Rollback: set FORGE_V52_TRIPWIRE_SEQ to 0 (disabled). */
-#define FORGE_V52_TRIPWIRE_SEQ 242
-#define FORGE_V52_SLOW_INITCALL_THRESH_CYC 100000000ULL /* ~4-8s at 13-24MHz */
-	if (FORGE_V52_TRIPWIRE_SEQ &&
-	    forge_m681_get_initcall_seq() == FORGE_V52_TRIPWIRE_SEQ) {
-		forge_m681_mark_aux(0xF2, FORGE_V52_TRIPWIRE_SEQ);
+#define FORGE_V54_TRIPWIRE_SEQ 100
+#define FORGE_V54_SLOW_INITCALL_THRESH_CYC 100000000ULL
+	if (FORGE_V54_TRIPWIRE_SEQ &&
+	    forge_m681_get_initcall_seq() == FORGE_V54_TRIPWIRE_SEQ) {
+		forge_m681_mark_aux(0xF2, FORGE_V54_TRIPWIRE_SEQ);
 		forge_m681_wdt_swrst();
-		panic("v52 tripwire @ initcall seq %u", FORGE_V52_TRIPWIRE_SEQ);
+		panic("v54 tripwire @ initcall seq %u", FORGE_V54_TRIPWIRE_SEQ);
 	}
 	/* v52: arch-timer snapshot before fn() for post-fn slow watchdog.
 	 * Uses get_cycles() (CNTVCT_EL0) which is a free-running counter
@@ -861,7 +861,7 @@ int __init_or_module do_one_initcall(initcall_t fn)
 			ret = fn();
 #endif
 		__forge_elapsed = get_cycles() - __forge_t0;
-		if (__forge_elapsed > FORGE_V52_SLOW_INITCALL_THRESH_CYC) {
+		if (__forge_elapsed > FORGE_V54_SLOW_INITCALL_THRESH_CYC) {
 			forge_m681_mark_aux(0xF3, (u32)(unsigned long)fn);
 			forge_m681_wdt_swrst();
 			panic("v52 slow initcall %pF took %llu cycles",
