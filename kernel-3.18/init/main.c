@@ -820,33 +820,54 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	forge_m681_wdt_kick();
 	forge_m681_mark_aux(0xE0, (u32)(unsigned long)fn);
 	forge_m681_set_initcall((u32)(unsigned long)fn);
-	/* m681 v51 DIAGNOSTIC tripwire: raised 145 -> 250 to binary-search the
-	 * wall beyond pm_sysrq_init (seq 145, v50 proven reached).  v50 proved
-	 * kernel reaches seq 145 but recovery mechanism broke (mtk_wdt_probe
-	 * overrode forge_m681_wdt_arm single-mode with DUAL_MODE+IRQ, so WDT
-	 * timeout generated IRQ instead of reset).  v51 adds "toprgu" to the
-	 * of_platform denylist so mtk_wdt_probe NEVER runs and the
-	 * forge_m681_wdt_arm single-mode-hwreset state survives all initcalls.
-	 * v51 also adds a direct SWRST_KEY write right here in the tripwire
-	 * (belt-and-suspenders with the v48 panic_notifier) so even if the
-	 * notifier chain is broken the reset fires before panic().
-	 * Rollback: set FORGE_V51_TRIPWIRE_SEQ to 0 (disabled). */
-#define FORGE_V51_TRIPWIRE_SEQ 250
-	if (FORGE_V51_TRIPWIRE_SEQ &&
-	    forge_m681_get_initcall_seq() == FORGE_V51_TRIPWIRE_SEQ) {
-		forge_m681_mark_aux(0xF2, FORGE_V51_TRIPWIRE_SEQ);
+	/* m681 v52 DIAGNOSTIC tripwire: set to 242 (the wall found in v51).
+	 * v51 proved kernel reaches seq 242 (init_clocksource_sysfs entered,
+	 * timekeeping_init_ops last done) but WDT timeout → bootloop (not
+	 * recovery) because MTK WDT reset goes to normal boot, not recovery.
+	 * Only direct SWRST_KEY → recovery.  v52 sets tripwire to 242 so:
+	 *   - kernel reaches 242 → forge_m681_wdt_swrst() → SWRST_KEY → SoC
+	 *     reset → preloader sees SWRST boot reason → LK boots recovery
+	 *   - marker shows seq=242 + 0xF2 + 0xF1 (panic_handler) → confirms
+	 * If this works, v53 skips init_clocksource_sysfs and raises tripwire.
+	 * v52 also adds arch-timer soft SWRST watchdog: if an initcall fn()
+	 * takes > 3 seconds but RETURNS, write SWRST_KEY + mark 0xF3.  This
+	 * catches slow-but-returning initcalls that would otherwise eat the
+	 * WDT window and eventually bootloop.  True hangs (fn never returns)
+	 * are still caught by the HW WDT (bootloop) until we fix LK to boot
+	 * recovery on WDT boot reason.
+	 * Rollback: set FORGE_V52_TRIPWIRE_SEQ to 0 (disabled). */
+#define FORGE_V52_TRIPWIRE_SEQ 242
+#define FORGE_V52_SLOW_INITCALL_THRESH_CYC 100000000ULL /* ~4-8s at 13-24MHz */
+	if (FORGE_V52_TRIPWIRE_SEQ &&
+	    forge_m681_get_initcall_seq() == FORGE_V52_TRIPWIRE_SEQ) {
+		forge_m681_mark_aux(0xF2, FORGE_V52_TRIPWIRE_SEQ);
 		forge_m681_wdt_swrst();
-		panic("v51 tripwire @ initcall seq %u", FORGE_V51_TRIPWIRE_SEQ);
+		panic("v52 tripwire @ initcall seq %u", FORGE_V52_TRIPWIRE_SEQ);
 	}
-	TIME_LOG_START();
+	/* v52: arch-timer snapshot before fn() for post-fn slow watchdog.
+	 * Uses get_cycles() (CNTVCT_EL0) which is a free-running counter
+	 * independent of IRQs.  If fn() returns but took > ~5s, write SWRST
+	 * + mark 0xF3 so the next recovery captures the slow initcall fn. */
+	{
+		u64 __forge_t0 = get_cycles();
+		u64 __forge_elapsed;
+		TIME_LOG_START();
 #if defined(CONFIG_MT_ENG_BUILD)
-	ret = do_one_initcall_debug(fn);
-#else
-	if (initcall_debug)
 		ret = do_one_initcall_debug(fn);
-	else
-		ret = fn();
+#else
+		if (initcall_debug)
+			ret = do_one_initcall_debug(fn);
+		else
+			ret = fn();
 #endif
+		__forge_elapsed = get_cycles() - __forge_t0;
+		if (__forge_elapsed > FORGE_V52_SLOW_INITCALL_THRESH_CYC) {
+			forge_m681_mark_aux(0xF3, (u32)(unsigned long)fn);
+			forge_m681_wdt_swrst();
+			panic("v52 slow initcall %pF took %llu cycles",
+			      fn, __forge_elapsed);
+		}
+	}
 	forge_m681_mark_aux(0xE1, (u32)(unsigned long)fn);
 	forge_m681_set_initcall_done((u32)(unsigned long)fn);
 	TIME_LOG_END();
