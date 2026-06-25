@@ -325,7 +325,7 @@ EXPORT_SYMBOL(forge_m681_irq_trace);
  * mtk_wdt_set_timeout() + mtk_wdt_mode_config().  Called once from
  * forge_m681_marker_late_init() in start_kernel, before any initcalls.
  */
-static void forge_m681_wdt_arm(void)
+static void __maybe_unused forge_m681_wdt_arm(void)
 {
 	void __iomem *b = forge_wdt_base;
 	u32 timeout;
