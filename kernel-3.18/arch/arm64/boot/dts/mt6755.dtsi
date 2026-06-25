@@ -1477,10 +1477,19 @@
 			interrupts = <GIC_SPI 72 IRQ_TYPE_LEVEL_LOW>,
 					<GIC_SPI 73 IRQ_TYPE_LEVEL_LOW>;
 			interrupt-names = "musb-hdrc", "xhci";
-			/* m681 bring-up: USB3 SSUSB absent on this device -> disable
-			 * probe to skip mtu3d_probe -> musb_init_controller -> SSUSB
-			 * MTCMOS poke (AXI bus-hang, l681 M13/v42 wall at seq 145). */
-			status = "disabled";
+			/* m681 v48: status REVERTED TO "okay" (default).  v44 v44 had
+			 * status="disabled" to skip mtu3d_probe entirely, but that also
+			 * removed v43's mtu3d-BUG_ON panic recovery trip-wire AND, more
+			 * importantly, replaced the sw probe wall with a DT-orphansize
+			 * skip that did nothing to advance of_platform_populate past it
+			 * cleanly.  v48 instead patches mtu3d_probe itself (see
+			 * musb_init.c:755 for the v48 BOOT-UNBLOCK early-return + forge
+			 * mark 0xEC) so the probe runs, marks, and returns 0 BEFORE
+			 * platform_device_add(musb) — no musb-hdrc child probe, no
+			 * musb_init_controller, no SSUSB MTCMOS poke, no BUG_ON.  Boot
+			 * reaches post seq 145 with a clean skip in the marker log;
+			 * future bring-up will reintroduce full USB driver init after
+			 * the PMIC MT6351 / power sequencing blocker is resolved. */
 		};
 
 		usb_c_pinctrl:usb_c_pinctrl@0 {

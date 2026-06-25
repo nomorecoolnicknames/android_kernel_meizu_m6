@@ -556,6 +556,10 @@ static int __init irtx_init(void)
 {
 	int ret = 0;
 
+	/* m681 v45: l681-map preemptive skip — IRTX PWM-clk dependency. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+
 	pr_debug("[IRTX] irtx init\n");
 #ifdef CONFIG_OF
 	irtx_driver.driver.of_match_table = irtx_of_ids;

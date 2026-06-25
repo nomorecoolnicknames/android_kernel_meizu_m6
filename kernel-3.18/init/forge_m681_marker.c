@@ -46,6 +46,8 @@
 #include <linux/io.h>
 #include <linux/printk.h>
 #include <linux/types.h>
+#include <linux/notifier.h>	/* m681 v48: atomic_notifier_chain_register + panic_notifier_list */
+#include <linux/notifier.h>	/* (kept; kernel.h pulls it but be explicit for the forge reader) */
 #include <asm/early_ioremap.h>
 
 #include "forge_m681_marker.h"
@@ -113,9 +115,20 @@
 #define FORGE_WDT_MODE_KEY	0x22000000U
 #define FORGE_WDT_MODE_ENABLE	0x00000001U
 #define FORGE_WDT_MODE_EXTEN	0x00000004U
+#define FORGE_WDT_MODE_IRQ	0x00000008U
+#define FORGE_WDT_MODE_DUAL_MODE 0x00000040U
 #define FORGE_WDT_MODE_AUTO_RESTART 0x00000010U
 #define FORGE_WDT_LENGTH_KEY	0x00000008U
 #define FORGE_WDT_TIMEOUT_SEC	30U
+
+/* m681 v47: manual SWRST backstop — see forge_m681_wdt_kick(). */
+#define FORGE_WDT_SWRST_OFF	0x14U
+#define FORGE_WDT_SWRST_KEY	0x1209U
+/* 3.18.140 m6-graft has ~600 module initcalls; threshold is set well above that
+ * so natural initcall flow never trips it, but a pathological loop that keeps
+ * calling do_one_initcall (recursive initcall loop, broken module_init chain,
+ * kthread that re-enters do_one_initcall) cannot keep the WDT pet forever. */
+#define FORGE_WDT_FORCE_SWRESET_THRESHOLD 4000U
 
 /* Offsets inside the first 512 bytes (never zeroed by ram_console memset_io,
  * which starts at off_linux >= 512). */
@@ -312,41 +325,70 @@ void forge_m681_irq_trace(u32 irqnr, u32 pc)
 EXPORT_SYMBOL(forge_m681_irq_trace);
 
 /*
- * forge_m681_wdt_arm - explicitly arm the MTK toprgu hardware watchdog.
+ * forge_m681_wdt_arm - arm the MTK toprgu HW watchdog into single-mode
+ * hw-reset.  Called exactly once, from forge_m681_marker_late_init()
+ * (post mm_init, before any initcalls), using the post-mm_init ioremap
+ * of FORGE_WDT_PHYS_BASE — the path that l681 M18 proved live (kick_count
+ * =676, kickflags=0xC0DE0011 = both base mappings valid).
  *
- * mtk_wdt_probe is in the v38 platform denylist (never runs), so nobody
- * arms the HW WDT.  The forge kick channel only PETS an already-armed
- * WDT; if it was never armed, petting does nothing and a kernel hang
- * never triggers a WDT reset (v44 first flash: hung forever, required
- * manual hard reset, SRAM marker bit-rotted).
+ * v44 WDT was in platform.c denylist and NOT armed → no reset path on hang.
+ * v44b tried to arm it by direct writel from start_kernel (pre-mm_init) —
+ * BROKE boot (kick_count=0): that mapping path is non-functional for SoC
+ * register space that early.  v45 tried instead to let mtk_wdt_probe run
+ * and apply mode_config there — but FACT (v46 handoff §0): probe calls
+ * request_irq at mtk_wdt.c:769 BEFORE the v45 single-mode mode_config at
+ * line 815 is reached, and on the graft tree that request_irq path appears
+ * to wedge; WDT is left in preloader dual-mode+IRQ and AXI bus-hang later
+ * cannot deliver the IRQ → no SWRST, dead device (battery pull = cold
+ * reset = marker wiped).
  *
- * This writes WDT_LENGTH (30s timeout) and WDT_MODE (enable + ext reset
- * + auto restart + key) using the same register values as the driver's
- * mtk_wdt_set_timeout() + mtk_wdt_mode_config().  Called once from
- * forge_m681_marker_late_init() in start_kernel, before any initcalls.
+ * v47 root fix: leave mtk_wdt_probe in the denylist (it doesn't trust the
+ * GIC request_irq path), and arm the WDT ourselves via the l681-proven post-
+ * mm_init ioremap, in MODE read-modify-write ONLY — NO LENGTH reset.
+ *
+ * NO-LENGTH-WRITE is the critical v44b lesson: writing LENGTH resets the
+ * preloader-running counter; if the WDT was already counting down, the reset
+ * can corrupt the state (subsequent pet may not latch, watchdog might expire
+ * immediately or never).  Instead READ the current MODE the preloader left,
+ * clear ONLY DUAL_MODE (0x40) and IRQ (0x08), set KEY|ENABLE|EXTEN|
+ * AUTO_RESTART, write back once.  Preloader's 30s LENGTH survives untouched
+ * and is the timeout we want.  Then a single RESTART_KEY pet so any pre-boot
+ * timeout count is reset to the full 30s window.
+ *
+ * Readback snapshot at 0xE6/0xE7 (mode/length) lets a post-reset marker
+ * decode PROVE the armed state from recovery — the only evidence we had
+ * before was the driver's pr_debug (invisible pre-console).
  */
-static void __maybe_unused forge_m681_wdt_arm(void)
+static void forge_m681_wdt_arm(void)
 {
 	void __iomem *b = forge_wdt_base;
-	u32 timeout;
+	u32 mode;
 
 	if (!b)
 		return;
 
-	timeout = (FORGE_WDT_TIMEOUT_SEC * (1 << 6)) << 5;
-	writel(timeout | FORGE_WDT_LENGTH_KEY, b + FORGE_WDT_LENGTH_OFF);
+	mode = readl(b + FORGE_WDT_MODE_OFF);
+	/* Clear DUAL_MODE + IRQ (preloader arms dual-mode+IRQ).  Keep ENABLE
+	 * (already set by preloader — we re-assert defensively below).  Do NOT
+	 * touch LENGTH (FORGE_WDT_LENGTH_OFF): preloader set a 30s timeout and
+	 * resetting it mid-count is the v44b root cause. */
+	mode &= ~(FORGE_WDT_MODE_DUAL_MODE | FORGE_WDT_MODE_IRQ);
+	mode |= FORGE_WDT_MODE_KEY | FORGE_WDT_MODE_ENABLE |
+		FORGE_WDT_MODE_EXTEN | FORGE_WDT_MODE_AUTO_RESTART;
+	writel(mode, b + FORGE_WDT_MODE_OFF);
 
-	writel(FORGE_WDT_MODE_KEY | FORGE_WDT_MODE_ENABLE |
-	       FORGE_WDT_MODE_EXTEN | FORGE_WDT_MODE_AUTO_RESTART,
-	       b + FORGE_WDT_MODE_OFF);
-
+	/* pet once: reload LENGTH counter to the full 30s window */
 	writel(FORGE_WDT_RESTART_KEY, b + FORGE_WDT_RESTART_OFF);
 
-	pr_emerg("[FORGE_M681] WDT armed: %us timeout, mode=0x%x length=0x%x\n",
-		 FORGE_WDT_TIMEOUT_SEC,
-		 FORGE_WDT_MODE_KEY | FORGE_WDT_MODE_ENABLE |
-		 FORGE_WDT_MODE_EXTEN | FORGE_WDT_MODE_AUTO_RESTART,
-		 timeout | FORGE_WDT_LENGTH_KEY);
+	/* snapshot armed state into the forge SRAM marker (rolling-stage
+	 * channel); a post-reset readback from recovery decodes aux -> the
+	 * raw MODE/LENGTH we just wrote, proving arm-before-hang. */
+	forge_m681_mark_aux(0xE6, readl(b + FORGE_WDT_MODE_OFF));
+	forge_m681_mark_aux(0xE7, readl(b + FORGE_WDT_LENGTH_OFF));
+
+	pr_emerg("[FORGE_M681] v47 WDT armed single-mode-hwreset (RMW, no LENGTH reset): MODE=0x%x LENGTH=0x%x\n",
+		 readl(b + FORGE_WDT_MODE_OFF),
+		 readl(b + FORGE_WDT_LENGTH_OFF));
 }
 
 /*
@@ -367,6 +409,26 @@ void forge_m681_wdt_kick(void)
 	if (b)
 		writel(FORGE_WDT_RESTART_KEY, b + FORGE_WDT_RESTART_OFF);
 
+	/* m681 v47: manual SWRST backstop (handoff §4 option 1C).  If the
+	 * initcall path is recursing oddly (kick_count climbing past the total
+	 * realistic initcall count of ~600 for 3.18.140 m6-graft, threshold
+	 * well above that) while system_state is still pre-RUNNING, the chip
+	 * must NOT be left alive on WDT pets from a broken/looping do_one_initcall
+	 * caller.  Write the MTK_WDT_SWRST key directly — same hardware reset
+	 * path as wdt_arch_reset(): a chip-wide warm reset that PRESERVES the
+	 * preloader reserved SRAM marker @0x44800000 (verified since l681 M1).
+	 * A 0xEA mark right before the SWRST records in the next-recovery
+	 * marker that we forced the reset (vs the natural 30s self-arm timeout
+	 * which would leave the last-initcall aux as the wedged fn).  DIY only:
+	 * the natural 30s self-arm expiry handles the common hang case; this is
+	 * a guarantee for the rare "kicks keep coming but boot never progresses"
+	 * failure mode that a single WDT would otherwise pet forever. */
+	if (system_state < SYSTEM_RUNNING &&
+	    forge_wdt_kick_count >= FORGE_WDT_FORCE_SWRESET_THRESHOLD && b) {
+		forge_m681_mark(0xEA);
+		writel(FORGE_WDT_SWRST_KEY, b + FORGE_WDT_SWRST_OFF);
+	}
+
 	/* TWRP-readable breadcrumb: how many initcalls kicked, and which base
 	 * was live (bit0=our ioremap, bit4=driver toprgu_base). */
 	flags = 0xC0DE0000U | (toprgu_base ? 0x10 : 0) | (forge_wdt_base ? 0x01 : 0);
@@ -380,6 +442,62 @@ void forge_m681_wdt_kick(void)
 	}
 }
 EXPORT_SYMBOL(forge_m681_wdt_kick);
+
+/*
+ * m681 v48: panic-notifier direct-SWRST recovery safety net.
+ *
+ * FACT (5-cycle v44-v47 handoff §0): the toprgu HW timer-WDT expired-time
+ * SWRST does NOT happen reliably on mt6755 graft — preloader bin-string
+ * `"WDT does not trigger reboot"` and the v45/v46/v47 self-arm / SWRST-
+ * backstop changes never produced a warm return.  The ONLY recovery path
+ * that has demonstrably worked on m681 graft so far is the **direct
+ * SWRST_KEY write** that v43's mtu3d BUG_ON(1) -> panic -> wdt_arch_reset()
+ * exercised.  v48 (a) restores that exact SWRST-write path by registering
+ * on the kernel panic_notifier chain, so ANY panic (BUG_ON, OOPS, MCE, OOM)
+ * fires it instead of relying on machine_restart plumbing; v48 (b) keeps
+ * the v47 self-arm + manual SWRST backstop as belt-and-suspenders.
+ *
+ * The notifier is atomic-context safe: it issues only a single mmio writel
+ * to toprgu+0x14 with the MTK_WDT_SWRST_KEY (0x1209) — same constant the
+ * driver's wdt_arch_reset() uses — preceded by a forge_m681_mark(0xF1)
+ * so the next-recovery marker decodes show "0xF1: paniked-and-forced-reset".
+ * A one-shot latch keeps the FIRST panic from being shadowed by a later
+ * call from atomic_notifier_call_chain iterating down several registered
+ * notifiers (us + others).  pr_emerg is best-effort; printk in panic is
+ * safe (logbuf lock held).
+ *
+ * Rollback: comment out the atomic_notifier_chain_register line in the
+ * late_init function below.  No behaviour change on a progressing boot
+ * because panic "doesn't happen" on a healthy boot — pointless to disable.
+ */
+static int forge_panic_latched;
+
+static int forge_m681_panic_handler(struct notifier_block *this,
+				    unsigned long ev, void *ptr)
+{
+	void __iomem *b = toprgu_base ? toprgu_base : forge_wdt_base;
+
+	if (forge_panic_latched)
+		return NOTIFY_DONE;
+	forge_panic_latched = 1;
+
+	forge_m681_mark(0xF1);
+	pr_emerg("[FORGE_M681] panic rv48: writing SWRST_KEY to toprgu+0x14 to force warm reset\n");
+
+	if (b)
+		writel(FORGE_WDT_SWRST_KEY, b + FORGE_WDT_SWRST_OFF);
+
+	/* If the SWRST_KEY write worked we never return; if it didn't (toprgu
+	 * unmapped, write blocked), at least the marker stuck and the next
+	 * reset attempt (manual SWRST backstop in forge_m681_wdt_kick, or
+	 * physical battery pull) carries the 0xF1 evidence. */
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block forge_m681_panic_nb = {
+	.notifier_call = forge_m681_panic_handler,
+	.priority = INT_MAX,	/* run last so other panic handlers log first */
+};
 
 /*
  * m681 v34: dedicated, non-overwritable "current initcall fn" tracker.
@@ -416,6 +534,12 @@ void forge_m681_set_initcall(u32 fn)
 		forge_init_write(forge_spm_base2, fn);
 }
 EXPORT_SYMBOL(forge_m681_set_initcall);
+
+u32 forge_m681_get_initcall_seq(void)
+{
+	return forge_initcall_seq;
+}
+EXPORT_SYMBOL(forge_m681_get_initcall_seq);
 
 void forge_m681_set_initcall_done(u32 fn)
 {
@@ -539,11 +663,25 @@ void __init forge_m681_marker_late_init(void)
 		 forge_spm_base, forge_spm_base2, forge_wdt_base);
 	forge_m681_mark(FORGE_STAGE_MARKER_LATE_INIT);
 
-	/* m681: forge_m681_wdt_arm() DISABLED — direct writel to toprgu
-	 * 0x10007000 killed boot before marker init (v44b: kick_count=0,
-	 * 18/2048 non-zero bytes). Preloader/lk already arms HW WDT before
-	 * kernel entry; forge_m681_wdt_kick() pets it via RESTART key. */
-	/* forge_m681_wdt_arm(); */
+	/* m681 v47: arm the toprgu HW watchdog ourselves using the just-mapped
+	 * post-mm_init forge_wdt_base, applying MODE read-modify-write ONLY
+	 * (no LENGTH reset — the v44b killer).  This restores the warm-reboot
+	 * safety net that v44 lost (mtu3d BUG_ON panic path disabled) and that
+	 * v45 could not recover through mtk_wdt_probe (request_irq wedges before
+	 * the v45 single-mode mode_config is reached).  See forge_m681_wdt_arm()
+	 * header for the full root-cause chain.  forge_wdt_base ioremap above is
+	 * the l681-M18-proven live mapping path; do not call before it succeeds. */
+	forge_m681_wdt_arm();
+
+	/* m681 v48: register the panic-notifier SWRST safety net AFTER arming
+	 * the WDT to guarantee the marker engine + toprgu mapping is live
+	 * before any panic handler can fire.  See forge_m681_panic_handler()
+	 * header for rationale.  Uses the SAME forge_wdt_base mapping the
+	 * arm routine just established (the l681-M18-proven post-mm_init
+	 * ioremap path); toprgu_base from the (denied) driver probe is NULL. */
+	atomic_notifier_chain_register(&panic_notifier_list,
+				       &forge_m681_panic_nb);
+	pr_emerg("[FORGE_M681] v48 panic-SWRST recovery net registered\n");
 
 	/* early_ioremap_reset() already retired the fixmap path before this
 	 * point; the stale early mappings are abandoned, not iounmapped. */

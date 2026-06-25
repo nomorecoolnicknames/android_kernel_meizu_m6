@@ -257,6 +257,10 @@ static int vib_mod_init(void)
 {
 	s32 ret;
 
+	/* m681 v45: l681-map preemptive skip — vibrator PMIC pwrap write. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+
 	VIB_DEBUG("MediaTek MTK vibrator driver register, version %s\n",
 		  VERSION);
 	/* set vibr voltage if needs.  Before MT6320 vibr default voltage=2.8v,

@@ -1174,6 +1174,10 @@ static int __init cmdq_init(void)
 {
 	int status;
 
+	/* m681 v45: l681-map preemptive skip — CMDQ hardware probe. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+
 	CMDQ_MSG("CMDQ driver init begin\n");
 
 	/* Initialize mutex */

@@ -1058,6 +1058,10 @@ static int __init flashlight_init(void)
 {
 	int ret = 0;
 
+	/* m681 v45: l681-map preemptive skip — flashlight driver probe. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+
 	logI("[flashlight_probe] start ~");
 /*wangjijin delet flashcode*/
 /*

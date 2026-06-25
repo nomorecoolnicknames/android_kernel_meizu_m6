@@ -545,11 +545,24 @@ static int platform_drv_probe(struct device *_dev)
 			"mdp", "jpeg", "jpg", "consys", "wmt", "connectivity", "wifi",
 			"wlan", "mediatek,gps", "devapc", "thermal", "systracker",
 			"watchpoint", "freqhop", "wdt", NULL };
-			/* v33: "wdt" skips mtk_wdt_probe -> it calls mtk_wdt_stop() which
-			 * DISABLES the HW watchdog (our recovery-fallback) then hangs at
-			 * watchdog_register_device/toprgu_register_reset_controller. Skipping
-			 * keeps the lk-enabled HW dog alive (forge per-initcall kick via
-			 * forge_wdt_base). /dev/watchdog not needed for adb/logcat. */
+			/* v47: "wdt" RETURNED to denylist. v44+ lost warm-reboot because
+			 * the v43 panic path (mtu3d BUG_ON -> direct SWRST) died with the
+			 * mtu3d DTS-disable; v45 tried to recover by letting mtk_wdt_probe
+			 * run, but FACT (v46 handoff §0): probe calls request_irq (line 769)
+			 * on the graft tree BEFORE the v45 single-mode mode_config (line 815)
+			 * is reached. If request_irq wedges on the GIC/WDT IRQ wiring the
+			 * probe hangs with WDT still in preloader dual-mode+IRQ state —
+			 * AXI bus-hang means IRQ pending never delivered, no SWRST, dead
+			 * device. v47 instead arms the toprgu HW watchdog ourselves via
+			 * the proven ioremap path in forge_m681_marker_late_init()
+			 * (l681 M18: ioremap was live, kick_count=676, flags=0xC0DE0011),
+			 * using MODE read-modify-write ONLY (no LENGTH reset — LENGTH
+			 * reset is what killed v44b). That arms single-mode hw-reset
+			 * BEFORE any initcalls; the per-initcall forge_m681_wdt_kick then
+			 * pets an already-armed WDT, and a genuine hang trips the 30s
+			 * hardware reset independent of CPU state. The probe's own
+			 * mode_config change in mtk_wdt.c remains as defense-in-depth in
+			 * case the deny mechanism ever regresses (driver name aliasing). */
 		extern void forge_m681_mark_aux(unsigned char, unsigned int);
 		const char *src = (_dev->driver && _dev->driver->name) ? _dev->driver->name : "";
 		const char *cmp = NULL;

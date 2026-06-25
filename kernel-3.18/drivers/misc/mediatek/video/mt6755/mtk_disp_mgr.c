@@ -1940,6 +1940,10 @@ static struct platform_device mtk_disp_mgr_device = {
 
 static int __init mtk_disp_mgr_init(void)
 {
+
+	/* m681 v45: l681-map preemptive skip — display manager probe. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
 	pr_debug("mtk_disp_mgr_init\n");
 	if (platform_device_register(&mtk_disp_mgr_device))
 		return -ENODEV;

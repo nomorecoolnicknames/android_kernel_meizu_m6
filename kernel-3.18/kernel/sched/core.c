@@ -1384,7 +1384,15 @@ unsigned long wait_task_inactive(struct task_struct *p, long match_state)
 			if (system_state < SYSTEM_RUNNING) {
 				if (p->state == match_state)
 					break;
-				{ extern void forge_m681_wdt_kick(void); forge_m681_wdt_kick(); }
+				/* m681 v46: REMOVED forge_m681_wdt_kick() from this
+				 * loop. The kick was petting the WDT every iteration,
+				 * preventing WDT timeout on a genuine park-hang → no
+				 * warm-reboot recovery → dead device. Without the kick,
+				 * a genuine hang here trips the WDT after 30s → warm
+				 * reset → marker survives → diagnose. The per-initcall
+				 * kick in do_one_initcall (init/main.c) still covers a
+				 * progressing boot. */
+				{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE9); }
 				set_current_state(TASK_RUNNING);
 				schedule();
 			} else {

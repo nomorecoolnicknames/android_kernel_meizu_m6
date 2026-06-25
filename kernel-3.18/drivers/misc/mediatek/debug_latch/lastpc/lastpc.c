@@ -248,6 +248,10 @@ static int __init lastpc_init(void)
 {
 	int ret = 0;
 
+	/* m681 v45: l681-map preemptive skip — lastpc debug latch probe. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+
 	ret = lastpc_start();
 	if (ret) {
 		pr_err("%s:%d: lastpc_start failed\n", __func__, __LINE__);

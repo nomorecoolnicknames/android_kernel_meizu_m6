@@ -728,6 +728,14 @@ static int mtk_wdt_probe(struct platform_device *dev)
 	struct device_node *node;
 	u32 ints[2] = { 0, 0 };
 
+	/* m681 v46/v47: probe-entry marker.  v47 put "wdt" back in the
+	 * platform.c denylist so this probe normally does NOT run — 0xE5
+	 * firing in a post-reset marker means the deny regressed (driver
+	 * name aliasing / casefold miss) and mtk_wdt_probe actually reached
+	 * entry; if 0xE5+aux (below) is present but later 0xE6/0xE7 are
+	 * NOT, probe wedged inside of_iomap/irq_of_parse_and_map/
+	 * request_irq — Hypothesis A confirmed. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE5); }
 	pr_err("******** MTK WDT driver probe!! ********\n");
 #ifdef CONFIG_OF
 	if (!toprgu_base) {
@@ -737,6 +745,13 @@ static int mtk_wdt_probe(struct platform_device *dev)
 			return -ENODEV;
 		}
 	}
+	/* m681 v46/v47: prove of_iomap succeeded — aux = toprgu_base low32.
+	 * Combined with the entry mark above, distinguishes "probe ran but
+	 * iomap failed" (return -ENODEV early, no 0xE5+aux) from "iomap OK
+	 * and probe wedged downstream on irq_of_parse_and_map/request_irq"
+	 * (0xE5+aux present, no 0xE6/0xE7). */
+	{ extern void forge_m681_mark_aux(unsigned char, unsigned int);
+	  forge_m681_mark_aux(0xE5, (unsigned int)(unsigned long)toprgu_base); }
 	if (!wdt_irq_id) {
 		wdt_irq_id = irq_of_parse_and_map(dev->dev.of_node, 0);
 		if (!wdt_irq_id) {
@@ -797,7 +812,21 @@ static int mtk_wdt_probe(struct platform_device *dev)
 
 #ifdef CONFIG_MTK_WD_KICKER	/* Initialize to dual mode */
 	pr_debug("mtk_wdt_probe : Initialize to dual mode\n");
-	mtk_wdt_mode_config(TRUE, TRUE, TRUE, FALSE, TRUE);
+	/* m681 v45 (defense-in-depth, retained in v47): override dual+IRQ →
+	 * single-mode HW-reset.  v47 keeps "wdt" in the platform.c denylist so
+	 * mtk_wdt_probe normally does NOT run; this mode_config survives only as
+	 * a defensive measure in case the denylist substring match ever misses
+	 * the mtk-wdt driver (alias rename etc).  If probe ever DID run, leaving
+	 * the v43 stock dual+IRQ here would cause the same AXI-IRQ-never-
+	 * delivered no-return failure v46 hit.  l681 M17-18 proven: toprgu WDT
+	 * in DUAL mode cuts a progressing boot (stage-1 LENGTH=30s IRQ expires,
+	 * independent stage-2 INTERVAL begins, RESTART_KEY only reloads stage-1).
+	 * dual_mode=FALSE + irq=FALSE gives a single LENGTH counter: the per-
+	 * initcall forge_m681_wdt_kick RESTART_KEY reliably pets it on a
+	 * progressing boot, a wedged initcall (no kick for 30s) trips a HW reset
+	 * independent of CPU state (AXI bus-hang cannot take IRQ).  The armed
+	 * state is also snapshotted at 0xE6/0xE7 below for marker verification. */
+	mtk_wdt_mode_config(FALSE, FALSE, TRUE, FALSE, TRUE);
 #else				/* Initialize to disable wdt */
 	pr_debug("mtk_wdt_probe : Initialize to disable wdt\n");
 	mtk_wdt_mode_config(FALSE, FALSE, TRUE, FALSE, FALSE);
@@ -812,7 +841,25 @@ static int mtk_wdt_probe(struct platform_device *dev)
 	/* Write back INTERVAL REG */
 	mt_reg_sync_writel(interval_val, MTK_WDT_INTERVAL);
 
-	/* m681 bring-up: stub bypass to prevent hang at request_en/mode_set */
+	/* m681 v45/v47: snapshot the armed WDT state into the forge SRAM marker so
+	 * a post-reset readback from recovery proves the mode/length we wrote.
+	 * v47 normally denies this probe, so 0xE6/0xE7 firing in a capture means
+	 * the v47 self-arm in forge_m681_wdt_arm() was OVERRIDDEN by mtk_wdt_probe
+	 * actually running (deny regression) — the aux bytes then tell us which
+	 * of self-arm vs probe-arm is the live state. */
+	{
+		extern void forge_m681_mark_aux(unsigned char, unsigned int);
+		forge_m681_mark_aux(0xE6, __raw_readl(MTK_WDT_MODE));
+		forge_m681_mark_aux(0xE7, __raw_readl(MTK_WDT_LENGTH));
+		pr_emerg("[FORGE_M681] WDT armed single-mode hw-reset: MODE=0x%x LENGTH=0x%x STATUS=0x%x\n",
+			 __raw_readl(MTK_WDT_MODE), __raw_readl(MTK_WDT_LENGTH),
+			 __raw_readl(MTK_WDT_STATUS));
+	}
+
+	/* m681 bring-up: stub bypass to prevent hang at request_en/mode_set
+	 * (l681 M3: mtk_wdt_request_mode_set(EINT, IRQ_MODE) touches gated EINT
+	 * registers → AXI bus-hang. WDT is already armed above; the EINT debug-key
+	 * wiring is not needed for adb/logcat). */
 	return 0;
 
 	/* Reset External debug key */

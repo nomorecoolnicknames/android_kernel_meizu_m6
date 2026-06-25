@@ -2013,7 +2013,7 @@ EXPORT_SYMBOL(mt_eem_idle_can_enter);
 /*
  * timer for log
  */
-static enum hrtimer_restart eem_log_timer_func(struct hrtimer *timer)
+static enum hrtimer_restart __maybe_unused eem_log_timer_func(struct hrtimer *timer)
 {
 	struct eem_det *det;
 
@@ -3662,7 +3662,7 @@ static const struct of_device_id mt_eem_of_match[] = {
 };
 #endif
 
-static struct platform_driver eem_driver = {
+static struct platform_driver __maybe_unused eem_driver = {
 	.remove     = NULL,
 	.shutdown   = NULL,
 	.probe      = eem_probe,
@@ -4414,7 +4414,7 @@ PROC_FOPS_RO(eem_status);
 PROC_FOPS_RW(eem_cur_volt);
 PROC_FOPS_RW(eem_offset);
 
-static int create_procfs(void)
+static int __maybe_unused create_procfs(void)
 {
 	struct proc_dir_entry *eem_dir = NULL;
 	struct proc_dir_entry *det_dir = NULL;
@@ -4888,6 +4888,10 @@ int __init eem_init(void)
 #endif
 {
 	int err = 0;
+	(void)err;
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+#if 0
 #ifdef __KERNEL__
 	struct device_node *node = NULL;
 #endif
@@ -4959,6 +4963,7 @@ int __init eem_init(void)
 	FUNC_EXIT(FUNC_LV_MODULE);
 
 	return 0;
+#endif /* 0 */
 }
 
 static void __exit eem_exit(void)

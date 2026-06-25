@@ -1178,6 +1178,10 @@ static struct platform_device *mt_snd_device;
 static int __init mt_soc_snd_init(void)
 {
 	int ret;
+
+	/* m681 v45: l681-map preemptive skip — sound card probe with AFE off. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
 	struct snd_soc_card *card = &snd_soc_card_mt;
 
 	pr_debug("mt_soc_snd_init card addr = %p\n", card);

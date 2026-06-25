@@ -1079,6 +1079,10 @@ static int __init kpd_mod_init(void)
 {
 	int r;
 
+	/* m681 v45: l681-map preemptive skip — keypad. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+
 	r = platform_driver_register(&kpd_pdrv);
 	if (r) {
 		kpd_info("register driver failed (%d)\n", r);

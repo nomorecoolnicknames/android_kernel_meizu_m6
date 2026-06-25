@@ -769,6 +769,25 @@ static int mtu3d_probe(struct platform_device *pdev)
 	}
 #endif
 
+	/* m681 v48 BOOT-UNBLOCK: cut mtu3d_probe here, BEFORE platform_device_add
+	 * (musb_init_controller runs from the musb-hdrc child probe whose creation
+	 * we abort by returning early).  l681 M13 + v43/v44 handoff §0: the
+	 * musb-hdrc -> mtu3d_musb_init -> SSUSB MTCMOS power-on poke wedges the
+	 * AXI bus on m681 graft (no SCP_SYS_MFG / SSUSB MTCMOS ungated by lk),
+	 * triggers BUG_ON(1) inside the musb glue -> panic.  v43 used that very
+	 * panic (it auto-magically reached wdt_arch_reset via the BUG_ON path)
+	 * as a recovery trip-wire; v44 disabled this usb0 DTS node to skip the
+	 * wall entirely but then lost the panic-recovery trip-wire AND could not
+	 * progress past seq 145 — every later hang hangs silently (HW WDT timer
+	 * proven unreliable on this graft via v45/v46/v47 cycling).  v48 cuts
+	 * the probe instead of the DTS so of_platform_populate still walks the
+	 * node (cleaner skip — no odd DT-orphan in the parent chain), leaves the
+	 * forge marker 0xEC as "I ran here", and lets boot proceed past seq 145
+	 * without the MTCMOS poke.  Rollback: delete this block. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xEC); }
+	pr_err("[FORGE_M681] mtu3d_probe: skipping musb_init_controller (MTCMOS wall), boot proceeds past seq 145\n");
+	return 0;
+
 
 	glue = kzalloc(sizeof(*glue), GFP_KERNEL);
 	if (!glue) {

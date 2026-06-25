@@ -1727,6 +1727,10 @@ static int __init mt_spi_init(void)
 {
 	int ret;
 
+	/* m681 v45: l681-map preemptive skip — SPI controller. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+
 	pr_debug("SPI init!\n");
 	ret = platform_driver_register(&mt_spi_driver);
 	return ret;

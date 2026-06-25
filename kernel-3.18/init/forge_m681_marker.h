@@ -121,6 +121,7 @@ void forge_m681_wdt_kick(void);	/* m681 v56: pet MTK WDT per-initcall */
  * named even when it does platform probing. */
 void forge_m681_set_initcall(u32 fn);
 void forge_m681_set_initcall_done(u32 fn);
+u32 forge_m681_get_initcall_seq(void);
 /* m681 v35: name every of_platform node reaching device-create (diag 0x80..0xac). */
 void forge_m681_mark_ofnode(const char *name);
 

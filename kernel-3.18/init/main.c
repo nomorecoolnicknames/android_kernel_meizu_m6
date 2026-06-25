@@ -820,6 +820,20 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	forge_m681_wdt_kick();
 	forge_m681_mark_aux(0xE0, (u32)(unsigned long)fn);
 	forge_m681_set_initcall((u32)(unsigned long)fn);
+	/* m681 v49 DIAGNOSTIC tripwire: deliberate panic at initcall seq 50 to
+	 * prove the v48 panic_notifier -> SWRST_KEY recovery path fires when
+	 * kernel reaches a known seq.  v43 already proved BUG_ON->panic->
+	 * wdt_arch_reset->SWRST returns the device to recovery; this tripwire
+	 * moves that proof to an arbitrary seq so we can binary-search the
+	 * silent AXI-hang wall.  If kernel never reaches seq 50 the tripwire
+	 * never fires and the marker diag (0x68) will show the last seq seen.
+	 * Rollback: set FORGE_V49_TRIPWIRE_SEQ to 0 (disabled). */
+#define FORGE_V49_TRIPWIRE_SEQ 50
+	if (FORGE_V49_TRIPWIRE_SEQ &&
+	    forge_m681_get_initcall_seq() == FORGE_V49_TRIPWIRE_SEQ) {
+		forge_m681_mark_aux(0xF2, FORGE_V49_TRIPWIRE_SEQ);
+		panic("v49 tripwire @ initcall seq %u", FORGE_V49_TRIPWIRE_SEQ);
+	}
 	TIME_LOG_START();
 #if defined(CONFIG_MT_ENG_BUILD)
 	ret = do_one_initcall_debug(fn);

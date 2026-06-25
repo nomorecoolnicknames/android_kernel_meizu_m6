@@ -688,6 +688,10 @@ static int __init mtk_soc_platform_init(void)
 {
 	int ret;
 
+	/* m681 v45: l681-map preemptive skip — FTX MMIO with SCP_SYS_AUD off. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+
 	PRINTK_AUD_FMTX("%s\n", __func__);
 #ifndef CONFIG_OF
 	soc_mtkfmtx_dev = platform_device_alloc(MT_SOC_FM_MRGTX_PCM, -1);

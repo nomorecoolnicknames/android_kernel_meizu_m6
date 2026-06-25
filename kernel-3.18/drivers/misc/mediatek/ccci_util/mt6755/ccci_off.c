@@ -226,6 +226,10 @@ static struct platform_driver ccci_off_dev_drv = {
 static int __init ccci_off_init(void)
 {
 	int ret;
+
+	/* m681 v45: l681-map preemptive skip — MD1 MTCMOS + PMIC VMODEM. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
 #if defined(CONFIG_MTK_CLKMGR)
 	pr_debug("ccci_off_init 1\n");
 	ret = ccci_md_off();

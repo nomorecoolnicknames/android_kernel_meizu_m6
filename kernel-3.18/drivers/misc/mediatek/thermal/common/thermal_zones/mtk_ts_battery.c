@@ -630,6 +630,11 @@ static int __init mtktsbattery_init(void)
 	int err = 0;
 	struct proc_dir_entry *entry = NULL;
 	struct proc_dir_entry *mtktsbattery_dir = NULL;
+	(void)entry; (void)mtktsbattery_dir;
+
+	/* m681 v45: l681-map preemptive skip — thermal battery. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
 
 	mtktsbattery_dprintk("[mtktsbattery_init]\n");
 

@@ -573,9 +573,13 @@ static const struct file_operations mtktspmic_ate_fops = {
 static int __init mtktspmic_init(void)
 {
 	int err = 0;
-
 	struct proc_dir_entry *entry = NULL;
 	struct proc_dir_entry *mtktspmic_dir = NULL;
+	(void)entry; (void)mtktspmic_dir;
+
+	/* m681 v45: l681-map preemptive skip — thermal PMIC. TODO post-boot: re-enable. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
 
 	mtktspmic_info("[mtktspmic_init]\n");
 

@@ -871,6 +871,10 @@ static int __init inet6_init(void)
 	struct list_head *r;
 	int err = 0;
 
+	/* m681 v45: l681-map preemptive skip — DIAGNOSTIC: WDT-cutter at ~95s, revert post-boot. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
+	return 0;
+
 	BUILD_BUG_ON(sizeof(struct inet6_skb_parm) > FIELD_SIZEOF(struct sk_buff, cb));
 
 	/* Register the socket-side information for inet6_create.  */
