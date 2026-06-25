@@ -179,6 +179,12 @@ static u32 forge_wdt_kick_count;
 /* Diagnostic offsets in the marker page (free; real slots start at 0x100). */
 #define FORGE_DIAG_KICKCNT_OFF	0x40
 #define FORGE_DIAG_KICKFLAGS_OFF	0x44
+/* m681 v50: initcall-level phase tracking diag offsets. */
+#define FORGE_DIAG_LEVEL_ENTER_BASE	0xB0
+#define FORGE_DIAG_LEVEL_DONE_BASE	0xC0
+#define FORGE_DIAG_LASTGOOD_SEQ_OFF	0xD0
+#define FORGE_DIAG_LASTGOOD_SEQ_INV_OFF	0xD4
+#define FORGE_DIAG_BOOTPHASE_OFF	0xD8
 
 static const unsigned long forge_m681_slot_offsets[] = {
 	FORGE_MARKER_LEGACY_OFF,
@@ -543,10 +549,20 @@ EXPORT_SYMBOL(forge_m681_get_initcall_seq);
 
 void forge_m681_set_initcall_done(u32 fn)
 {
-	if (forge_spm_base)
+	/* m681 v50: mirror last-good seq (0xD0) + guard (0xD4) so a reader
+	 * gets the seq of the last initcall that returned without needing
+	 * to cross-reference 0x68 (current seq) vs 0x6c (last done fn). */
+	u32 seq = forge_initcall_seq;
+	if (forge_spm_base) {
 		writel(fn, forge_spm_base + 0x6c);
-	if (forge_spm_base2)
+		writel(seq, forge_spm_base + FORGE_DIAG_LASTGOOD_SEQ_OFF);
+		writel(~seq, forge_spm_base + FORGE_DIAG_LASTGOOD_SEQ_INV_OFF);
+	}
+	if (forge_spm_base2) {
 		writel(fn, forge_spm_base2 + 0x6c);
+		writel(seq, forge_spm_base2 + FORGE_DIAG_LASTGOOD_SEQ_OFF);
+		writel(~seq, forge_spm_base2 + FORGE_DIAG_LASTGOOD_SEQ_INV_OFF);
+	}
 }
 EXPORT_SYMBOL(forge_m681_set_initcall_done);
 
@@ -598,6 +614,78 @@ void forge_m681_mark_ofnode(const char *name)
 		forge_ofnode_write(forge_spm_base2, w);
 }
 EXPORT_SYMBOL(forge_m681_mark_ofnode);
+
+/*
+ * m681 v50: initcall-level phase markers + per-level completion counters.
+ *
+ * do_initcall_level() calls mark_level_enter(level) before the level's
+ * initcall loop and mark_level_done(level) after it.  The rolling-stage
+ * channel records 0xE8/0xE9 (aux=level) so a post-reset marker decode
+ * immediately names the LEVEL the boot wall sits in — early/core/postcore/
+ * arch/subsys/fs/device/late — complementing the per-initcall fn tracker
+ * (0x64/0x6c) that names the exact initcall.
+ *
+ * Per-level initcall completion counts are kept in diag offsets
+ *   0xB0+level*4 (enter count, incremented on each enter)
+ *   0xC0+level*4 (done count, incremented on each done)
+ * so a reader can tell whether the wall is at the START of a level
+ * (enter>0, done=0) or MIDDLE (done>0, enter>done+1).
+ *
+ * Additionally, the "last-good seq" (seq of the last initcall that
+ * returned) is mirrored to diag 0xD0 so the reader doesn't need to
+ * cross-reference 0x68 (current seq) with 0x6c (last done fn) to
+ * compute it.
+ *
+ * diag layout (v50 additions):
+ *   0xB0..0xB7 = per-level enter count (u8 each, 8 levels packed)
+ *   0xC0..0xC7 = per-level done count  (u8 each, 8 levels packed)
+ *   0xD0       = last-good initcall seq (u32, written in set_initcall_done)
+ *   0xD4       = last-good initcall seq guard (~seq)
+ *   0xD8       = boot-phase owner: current initcall level (u32)
+ */
+static u8 forge_level_enter_count[8];
+static u8 forge_level_done_count[8];
+
+static void forge_level_write_counts(void __iomem *b)
+{
+	int i;
+	for (i = 0; i < 8; i++) {
+		writel(forge_level_enter_count[i],
+		       b + FORGE_DIAG_LEVEL_ENTER_BASE + i * 4);
+		writel(forge_level_done_count[i],
+		       b + FORGE_DIAG_LEVEL_DONE_BASE + i * 4);
+	}
+}
+
+void forge_m681_mark_level_enter(int level)
+{
+	if (level < 0 || level >= 8)
+		return;
+	forge_level_enter_count[level]++;
+	forge_m681_mark_aux(FORGE_STAGE_INITCALL_LEVEL_ENTER, (u32)level);
+	if (forge_spm_base) {
+		writel((u32)level, forge_spm_base + FORGE_DIAG_BOOTPHASE_OFF);
+		forge_level_write_counts(forge_spm_base);
+	}
+	if (forge_spm_base2) {
+		writel((u32)level, forge_spm_base2 + FORGE_DIAG_BOOTPHASE_OFF);
+		forge_level_write_counts(forge_spm_base2);
+	}
+}
+EXPORT_SYMBOL(forge_m681_mark_level_enter);
+
+void forge_m681_mark_level_done(int level)
+{
+	if (level < 0 || level >= 8)
+		return;
+	forge_level_done_count[level]++;
+	forge_m681_mark_aux(FORGE_STAGE_INITCALL_LEVEL_DONE, (u32)level);
+	if (forge_spm_base)
+		forge_level_write_counts(forge_spm_base);
+	if (forge_spm_base2)
+		forge_level_write_counts(forge_spm_base2);
+}
+EXPORT_SYMBOL(forge_m681_mark_level_done);
 
 /*
  * Called from arch/arm64/kernel/setup.c right after early_ioremap_init().

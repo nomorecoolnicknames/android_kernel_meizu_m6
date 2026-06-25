@@ -820,19 +820,25 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	forge_m681_wdt_kick();
 	forge_m681_mark_aux(0xE0, (u32)(unsigned long)fn);
 	forge_m681_set_initcall((u32)(unsigned long)fn);
-	/* m681 v49 DIAGNOSTIC tripwire: deliberate panic at initcall seq 50 to
-	 * prove the v48 panic_notifier -> SWRST_KEY recovery path fires when
-	 * kernel reaches a known seq.  v43 already proved BUG_ON->panic->
-	 * wdt_arch_reset->SWRST returns the device to recovery; this tripwire
-	 * moves that proof to an arbitrary seq so we can binary-search the
-	 * silent AXI-hang wall.  If kernel never reaches seq 50 the tripwire
-	 * never fires and the marker diag (0x68) will show the last seq seen.
-	 * Rollback: set FORGE_V49_TRIPWIRE_SEQ to 0 (disabled). */
-#define FORGE_V49_TRIPWIRE_SEQ 50
-	if (FORGE_V49_TRIPWIRE_SEQ &&
-	    forge_m681_get_initcall_seq() == FORGE_V49_TRIPWIRE_SEQ) {
-		forge_m681_mark_aux(0xF2, FORGE_V49_TRIPWIRE_SEQ);
-		panic("v49 tripwire @ initcall seq %u", FORGE_V49_TRIPWIRE_SEQ);
+	/* m681 v50 DIAGNOSTIC tripwire: raised 50 -> 145 to binary-search the
+	 * silent AXI-hang wall between seq 50 (v49 proven) and seq ~145
+	 * (mtu3d_probe, the next known landmark).  v49 proved panic->SWRST->
+	 * recovery works at seq 50; v50 raises the bar to 145 so:
+	 *   - if kernel reaches 145: tripwire fires -> panic -> recovery ->
+	 *     marker shows seq=145 + 0xEC (mtu3d early-return) present + 0xF2
+	 *   - if kernel wedges at seq N<145 (silent AXI hang): WDT 10s ->
+	 *     recovery -> marker shows seq=N, ENTERED fn=wedged_initcall,
+	 *     no 0xF2/0xF1 (no panic), last DONE = N-1
+	 * Either outcome localises the wall to a single initcall fn.
+	 * v50 also adds initcall-level phase markers (0xE8/0xE9) so the
+	 * marker names the LEVEL (early/core/postcore/arch/subsys/fs/device/
+	 * late) the wall sits in, plus per-level completion counts.
+	 * Rollback: set FORGE_V50_TRIPWIRE_SEQ to 0 (disabled). */
+#define FORGE_V50_TRIPWIRE_SEQ 145
+	if (FORGE_V50_TRIPWIRE_SEQ &&
+	    forge_m681_get_initcall_seq() == FORGE_V50_TRIPWIRE_SEQ) {
+		forge_m681_mark_aux(0xF2, FORGE_V50_TRIPWIRE_SEQ);
+		panic("v50 tripwire @ initcall seq %u", FORGE_V50_TRIPWIRE_SEQ);
 	}
 	TIME_LOG_START();
 #if defined(CONFIG_MT_ENG_BUILD)
@@ -902,6 +908,8 @@ static void __init do_initcall_level(int level)
 {
 	initcall_t *fn;
 
+	forge_m681_mark_level_enter(level);
+
 	strcpy(initcall_command_line, saved_command_line);
 	parse_args(initcall_level_names[level],
 		   initcall_command_line, __start___param,
@@ -911,6 +919,8 @@ static void __init do_initcall_level(int level)
 
 	for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++)
 		do_one_initcall(*fn);
+
+	forge_m681_mark_level_done(level);
 }
 
 static void __init do_initcalls(void)

@@ -103,6 +103,12 @@
 #define FORGE_STAGE_CPUIDLE_GOV_ENTRY		0xF0
 #define FORGE_STAGE_CPUIDLE_GOV_BYPASS		0xF1
 
+/* m681 v50: initcall-level phase markers (0xE8 enter / 0xE9 done).
+ * aux = level number 0-7 (early/core/postcore/arch/subsys/fs/device/late).
+ * Per-level completion counts in diag region 0xB0+level*4. */
+#define FORGE_STAGE_INITCALL_LEVEL_ENTER	0xE8
+#define FORGE_STAGE_INITCALL_LEVEL_DONE		0xE9
+
 /*
  * Pointer to the ioremap()ed marker region; NULL until
  * forge_m681_marker_early_init() has run.  Exposed so other early code in this
@@ -124,5 +130,16 @@ void forge_m681_set_initcall_done(u32 fn);
 u32 forge_m681_get_initcall_seq(void);
 /* m681 v35: name every of_platform node reaching device-create (diag 0x80..0xac). */
 void forge_m681_mark_ofnode(const char *name);
+
+/* m681 v50: initcall-level phase markers.  do_initcall_level() calls
+ * mark_level_enter() before the level loop and mark_level_done() after.
+ * Stage 0xE8 = level entered (aux=level 0-7), 0xE9 = level complete.
+ * Per-level initcall completion counts are kept in diag 0xB0+level*4.
+ * Level names: 0=early, 1=core, 2=postcore, 3=arch, 4=subsys, 5=fs,
+ * 6=device, 7=late.  This lets a single SRAM marker capture identify
+ * which initcall LEVEL the boot wall sits in, complementing the
+ * per-initcall fn tracker (0x64/0x6c) that names the exact initcall. */
+void forge_m681_mark_level_enter(int level);
+void forge_m681_mark_level_done(int level);
 
 #endif /* _FORGE_M681_MARKER_H */
