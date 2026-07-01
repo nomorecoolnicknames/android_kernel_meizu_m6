@@ -329,11 +329,12 @@ static int ged_init(void)
 {
 	GED_ERROR err = GED_ERROR_FAIL;
 
-	/* m681 bring-up: GPU DVFS pokes MFG MTCMOS / SPM for GPU power
-	 * domains which hang on MT6750→MT6755 graft. Mali node disabled
-	 * in DTS, no GPU consumer exists. Skip entirely. */
-	pr_emerg("[FORGE_M681] ged_init: GPU DVFS skipped (Mali disabled)\n");
-	return 0;
+	/* m681 v185: ENABLE ged_init (was skipped headless). MFG domain IS powered
+	 * at of_clk_init (mt_scpsys_init powers mfg_async+mfg2), and the device now
+	 * boots stably (WDT kicker v184) so a GPU-init spin is observable live
+	 * rather than fatal. Mali+mfgsys DTS nodes re-enabled too. Re-add `return 0`
+	 * here to roll back if GED wedges. */
+	pr_emerg("[FORGE_M681] v185 ged_init: ENABLED (Mali/MFG bring-up)\n");
 
 	gvIOCTLParamBuf = vmalloc(GED_IOCTL_PARAM_BUF_SIZE);
 	if (NULL == gvIOCTLParamBuf)

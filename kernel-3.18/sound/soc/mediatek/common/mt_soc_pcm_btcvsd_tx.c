@@ -418,6 +418,14 @@ static int __init mtk_btcvsd_tx_soc_platform_init(void)
 {
 	int ret;
 
+	/* m681 v65: skip — btcvsd (BT-SCO audio, common/, CONFIG_MTK_BTCVSD_ALSA)
+	 * registers a platform driver whose probe touches the ungated BTCVSD HW
+	 * (and likely schedules async work that AXI-wedges the bus when the main
+	 * thread first sleeps ~deferred_probe_initcall; consistent culprit v62-v64,
+	 * IRQ=0).  Non-essential for userspace+adb.  Rollback: remove this return. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xAE); }
+	return 0;
+
 	pr_warn("+%s\n", __func__);
 #ifndef CONFIG_OF
 	soc_mtk_btcvsd_tx_dev = platform_device_alloc(MT_SOC_BTCVSD_TX_PCM, -1);

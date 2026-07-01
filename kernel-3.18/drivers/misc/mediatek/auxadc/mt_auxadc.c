@@ -1927,6 +1927,7 @@ static int __init mt_auxadc_init(void)
 	int ret;
 
 	/* m681 v45: l681-map preemptive skip — auxadc PMIC read, -ETIMEDOUT. TODO post-boot: re-enable. */
+		/* m681 v139: re-skip (rollback to v128 base, peripherals off) */
 	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
 	return 0;
 

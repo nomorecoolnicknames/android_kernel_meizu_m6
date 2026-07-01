@@ -1640,7 +1640,14 @@ static s32 mt_i2c_probe(struct platform_device *pdev)
 	i2c->adap.owner = THIS_MODULE;
 	i2c->adap.algo = &mt_i2c_algorithm;
 	i2c->adap.algo_data = NULL;
-	i2c->adap.timeout = 2 * HZ;	/*2s */
+	/* m681 v222: fail-fast i2c timeout. Was 2*HZ (2s). With the bus newly alive,
+	 * client probes (lcd_bias / camera / charger / sensors) talk to absent or
+	 * stuck chips; each transfer then waits the full 2s, and a probe doing many
+	 * register reads stalls the WHOLE boot for minutes (adapter-add never
+	 * returns -> no adbd). 100ms still covers any real i2c transfer (small reads
+	 * at 400kHz are <10ms) but lets an absent chip fail fast so the boot survives
+	 * and the bus comes up. Keeps every client enabled (incl. lcd_bias). */
+	i2c->adap.timeout = HZ / 10;	/* 100ms fail-fast (was 2s) */
 	i2c->adap.retries = 1;	/*DO NOT TRY */
 	/*need GFP_DMA32 flag to confirm DMA alloc PA is 32bit range */
 	i2c->dma_buf.vaddr =
@@ -1680,6 +1687,20 @@ static s32 mt_i2c_probe(struct platform_device *pdev)
 	/* pdata= dev_get_platdata(i2c->adap.dev.parent); */
 	I2CLOG("i2c-bus%d speed is %dKhz\n", i2c->id, i2c->default_speed);
 
+	/* m681 v219 BISECT result: probe register access (init_hw) + irq are FINE
+	 * (reached adbd). v220: adapter-add RE-ENABLED; the ft5x26 i2c client on i2c0
+	 * is disabled in meizu_m681.dts to isolate whether a CLIENT transfer is the
+	 * hang. If this boots, the i2c adapters come up cleanly. */
+	pr_err("[FORGE_M681] v220: i2c_add_numbered_adapter bus%d (client ft5x26 disabled in DT)\n",
+	       i2c->id);
+	/* m681 v239g: i2c bus2+ SKIP — bus2/3 adapter registration hangs boot
+	 * (5s bootloop). Only i2c0+i2c1 enabled (touch/display path). Sensors
+	 * on i2c2 need a separate fix (modalias or adapter timeout). */
+	if (i2c->id > 1) {
+		pr_err("[FORGE_M681] v239g: SKIP adapter-add bus%d (i2c0+i2c1 only)\n", i2c->id);
+		return 0;
+	}
+	pr_err("[FORGE_M681] v239g: i2c_add_numbered_adapter bus%d\n", i2c->id);
 	i2c_set_adapdata(&i2c->adap, i2c);
 	ret = i2c_add_numbered_adapter(&i2c->adap);
 	if (ret) {
@@ -1760,13 +1781,64 @@ static s32 __init mt_i2c_init(void)
 	struct device_node *ap_dma_node;
 #endif
 
-	/* m681 bring-up: skip mt_i2c platform_driver_register -> mt_i2c_probe
-	 * hangs the bus on ungated I2C/AP_DMA registers (same wall as l681 M15/v45).
-	 * Skipping the i2c CONTROLLER auto-disarms every i2c-peripheral probe
-	 * (mt6605 NFC, auxadc, pwm, leds, accdet, sm5414/tps65132, CAMERA_HW, ...)
-	 * since their probes never fire without a bus -- no need to skip each.
-	 * TODO post-boot: re-enable after wiring m681 PMIC/clock for I2C domains. */
-	return 0;
+	/* m681 v213: i2c CONTROLLER RE-ENABLED. It was skipped (return 0) because
+	 * mt_i2c_probe hung on ungated I2C/AP_DMA registers (l681 M15/v45 wall). The
+	 * boot cmdline now carries clk_ignore_unused, which keeps the INFRA_I2C and
+	 * INFRA_AP_DMA gates ON at boot, so register access should no longer hang. Re-enabling the
+	 * bus is the common unblock for sensors (MPU6515/CM36686/ST480), touch (ft5x26),
+	 * and the boot-completion gate (sensors HAL -> ISensors -> SystemServer).
+	 * If this hangs early, the I2C clock domain still needs explicit enable here. */
+	pr_err("[FORGE_M681] v213 mt_i2c_init: RE-ENABLED i2c controller registration\n");
+
+	/* m681 v216: DIRECTLY ungate the INFRA I2C + AP_DMA clock gates before the
+	 * controller probe touches I2C/AP_DMA registers. mt_i2c_clock_enable()'s
+	 * clk_prepare_enable() returns success but the gate doesn't actually open on
+	 * this graft (infrasys CCF provider half-up) -> register access hung -> the
+	 * historic 'return 0' skip. Poke the infracfg (0x10001000) CG CLR regs (write
+	 * to CLR = UNGATE/enable): infra0 CLR@+0x84 bits 11..14 = I2C0..3; infra1
+	 * CLR@+0x8c bit 18 = AP_DMA; infra2 CLR@+0xa8 bit 7 = I2C4. clk_ignore_unused
+	 * (cmdline) keeps them on. This is the deferred "wire I2C clock/power" TODO. */
+	{
+		void __iomem *infra = ioremap(0x10001000UL, 0x1000);
+		void __iomem *diag;
+		u32 sta0 = 0xdead0000U, sta1 = 0xdead0001U;
+
+		if (infra) {
+			writel((1U << 11) | (1U << 12) | (1U << 13) | (1U << 14),
+			       infra + 0x84);	/* I2C0..3 ungate */
+			writel((1U << 18), infra + 0x8c);	/* AP_DMA ungate */
+			writel((1U << 7), infra + 0xa8);	/* I2C4 ungate */
+			mb();
+			sta0 = readl(infra + 0x90);	/* infra0 CG status: I2C0-3 bits 11-14, 0=ungated */
+			sta1 = readl(infra + 0x94);	/* infra1 CG status: AP_DMA bit 18, 0=ungated */
+			pr_err("[FORGE_M681] v216: ungated INFRA I2C0-4 + AP_DMA CGs (CLR 0x84/0x8c/0xa8), sta0=0x%08x sta1=0x%08x\n",
+			       sta0, sta1);
+			iounmap(infra);
+		} else {
+			pr_err("[FORGE_M681] v216: infracfg ioremap FAILED - i2c clocks NOT ungated\n");
+		}
+
+		/* m681 v217: CLEAN-CHANNEL diag. The forge ring @0x44800000 reads
+		 * bit-corrupted via TWRP /dev/mem (preloader-region decay). The
+		 * 0x444f0000 page (just past the pstore region) reads CLEAN. Write the
+		 * i2c CG status as raw u32s, TRIPLED for host-side per-bit voting, so we
+		 * can confirm whether the gates actually opened even without adbd.
+		 * Read phys 0x444f0300 (sig 0xF6810217), +0x304 sta0, +0x308 sta1
+		 * (copies at +0x40, +0x80). sta0 bits 11-14 == 0 => I2C0-3 clock ON;
+		 * sta1 bit 18 == 0 => AP_DMA ON. */
+		diag = ioremap(0x444f0000UL, 0x1000);
+		if (diag) {
+			int k;
+
+			for (k = 0; k < 3; k++) {
+				writel(0xF6810217U, diag + 0x300 + k * 0x40);
+				writel(sta0,        diag + 0x304 + k * 0x40);
+				writel(sta1,        diag + 0x308 + k * 0x40);
+			}
+			mb();
+			iounmap(diag);
+		}
+	}
 
 #ifdef CONFIG_OF
 	/* ioremap the AP_DMA base and use offset get the I2C DMA base */

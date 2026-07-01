@@ -376,6 +376,20 @@ int __cpuinit dbgregs_hotplug_callback(struct notifier_block *nfb, unsigned long
 		return NOTIFY_OK;
 
 	register_wp_context(&wp_context);
+	/* m681 v156: NULL-guard the per-CPU CoreSight debug-register restore. The
+	 * HW watchpoint driver (wp_probe, hw_watchpoint.c) is disabled on this graft
+	 * (forge_wp_disable v31: its reset_watchpoint() wedges the unpowered debug
+	 * APB), so debug_regs[] is never of_iomap'd and stays NULL. Without this
+	 * check, CPU_STARTING of every secondary does cs_cpu_write(NULL, EDLAR,...)
+	 * -> data-abort -> "Kernel panic: Fatal exception" in secondary_start_kernel
+	 * -> forge warm-reset at ~1.6s. THIS was the real SMP wall (CPU1 powers on,
+	 * runs as swapper/1, then dies here -- NOT an AXI power wedge). This is a
+	 * correct defensive check, not a feature kill: when the watchpoint driver is
+	 * properly enabled (debug_regs mapped) the guard is a no-op and CoreSight
+	 * debug-reg save/restore works normally. */
+	if (!wp_context || !wp_context->debug_regs)
+		return NOTIFY_OK;
+
 	cs_cpu_write(wp_context->debug_regs[this_cpu], EDLAR, UNLOCK_KEY);
 	cs_cpu_write(wp_context->debug_regs[this_cpu], OSLAR_EL1, ~UNLOCK_KEY);
 	for_each_online_cpu(i) {

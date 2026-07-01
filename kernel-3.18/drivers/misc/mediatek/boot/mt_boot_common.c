@@ -64,6 +64,17 @@ static int __init dt_get_boot_common(unsigned long node, const char *uname, int 
 
 	if (tags) {
 		g_boot_mode = tags->bootmode;
+		/* m681 v214: LK hands off charger/KPOC boot_mode whenever the device is
+		 * USB-powered, so the kernel runs the power-off-charging animation (the
+		 * "charging battery" the user sees) instead of booting full Android. With
+		 * i2c now alive (v213) the battery/charger driver actually services that
+		 * KPOC loop and never reaches Android. Force NORMAL_BOOT for bring-up. */
+		if (g_boot_mode == KERNEL_POWER_OFF_CHARGING_BOOT ||
+		    g_boot_mode == LOW_POWER_OFF_CHARGING_BOOT) {
+			pr_err("[FORGE_M681] v214: override KPOC boot_mode %d -> NORMAL_BOOT\n",
+			       g_boot_mode);
+			g_boot_mode = NORMAL_BOOT;
+		}
 		atomic_set(&g_boot_status, 1);
 	} else {
 		pr_warn("'atag,boot' is not found\n");

@@ -162,7 +162,17 @@ int flashlight_gpio_set(int pin , int state)
 {
 	int ret = 0;
 
-	if (IS_ERR(flashlight_pinctrl)) {
+	/*
+	 * [FORGE_M681] v225: flashlight_pinctrl is a static pointer (zero-init ->
+	 * NULL).  The AW3643 platform driver that would call flashlight_gpio_init()
+	 * (devm_pinctrl_get + state lookups) is commented out in leds_strobe.c, so
+	 * the pinctrl handle and its states stay NULL.  IS_ERR(NULL) is false, so
+	 * the old guard fell through and reached pinctrl_select_state(NULL, NULL),
+	 * which oopsed in leds_AW3643_hwen_on() during the strobe_main i2c probe and
+	 * panicked the kernel before adbd (survivor log v224: leds_AW3643_hwen_on
+	 * +0x34 -> Fatal exception).  Treat NULL as "pinctrl not available" too.
+	 */
+	if (IS_ERR_OR_NULL(flashlight_pinctrl)) {
 		logI("%s : set err, flashlight_pinctrl not available\n", __func__);
 		return -1;
 	}
@@ -170,20 +180,20 @@ int flashlight_gpio_set(int pin , int state)
 	switch (pin) {
 	/* M6: AW3643 HWEN drive enabled */
 	case FLASHLIGHT_PIN_HWEN:
-		if (state == STATE_LOW && !IS_ERR(flashlight_hwen_low))
+		if (state == STATE_LOW && !IS_ERR_OR_NULL(flashlight_hwen_low))
 			pinctrl_select_state(flashlight_pinctrl, flashlight_hwen_low);
-		else if (state == STATE_HIGH && !IS_ERR(flashlight_hwen_high))
+		else if (state == STATE_HIGH && !IS_ERR_OR_NULL(flashlight_hwen_high))
 			pinctrl_select_state(flashlight_pinctrl, flashlight_hwen_high);
 		else
 			logI("%s : set err, pin(%d) state(%d)\n", __func__, pin, state);
 		break;
 	case FLASHLIGHT_PIN_TORCH:
-        if (state == STATE_LOW && !IS_ERR(flashlight_torch_low)){
+        if (state == STATE_LOW && !IS_ERR_OR_NULL(flashlight_torch_low)){
             wake_unlock(&flashlight_control_lock);
             wakelockcount = 0;
             pinctrl_select_state(flashlight_pinctrl, flashlight_torch_low);
         }
-        else if (state == STATE_HIGH && !IS_ERR(flashlight_torch_high)){
+        else if (state == STATE_HIGH && !IS_ERR_OR_NULL(flashlight_torch_high)){
             wake_lock(&flashlight_control_lock);
             wakelockcount = 1;
             pinctrl_select_state(flashlight_pinctrl, flashlight_torch_high);
@@ -199,9 +209,9 @@ int flashlight_gpio_set(int pin , int state)
             }
 		break;
 	case FLASHLIGHT_PIN_FLASH:
-		if (state == STATE_LOW && !IS_ERR(flashlight_flash_low))
+		if (state == STATE_LOW && !IS_ERR_OR_NULL(flashlight_flash_low))
 			pinctrl_select_state(flashlight_pinctrl, flashlight_flash_low);
-		else if (state == STATE_HIGH && !IS_ERR(flashlight_flash_high))
+		else if (state == STATE_HIGH && !IS_ERR_OR_NULL(flashlight_flash_high))
 			pinctrl_select_state(flashlight_pinctrl, flashlight_flash_high);
 		else {
 			logI("%s : set err, pin(%d) state(%d)\n", __func__, pin, state);
@@ -1059,6 +1069,7 @@ static int __init flashlight_init(void)
 	int ret = 0;
 
 	/* m681 v45: l681-map preemptive skip — flashlight driver probe. TODO post-boot: re-enable. */
+		/* m681 v139: re-skip (rollback to v128 base, peripherals off) */
 	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
 	return 0;
 

@@ -256,6 +256,12 @@ void mtk_wdt_restart(enum wd_restart_type type)
 
 	/* pr_debug("WDT:[mtk_wdt_restart] type  =%d, pid=%d\n",type,current->pid); */
 
+	/* m681 v141: dog-pet ON. The mcregistry-exec wall is fixed (v140) and the
+	 * boot now PROGRESSES cleanly past post-fs-data to zygote-start with
+	 * android_usb ready -> it needs >30s (zygote preload + system_server) to
+	 * reach adbd/boot_completed, so the kicker-OFF 30s WDT was killing a healthy
+	 * boot. Re-enable the kicker to give the progressing boot time to reach adb.
+	 * [[feedback_never_disarm_wdt]] */
 	if (type == WD_TYPE_NORMAL) {
 		/* printk("WDT:ext restart\n" ); */
 		spin_lock(&rgu_reg_operation_spinlock);
@@ -312,6 +318,25 @@ void aee_wdt_dump_reg(void)
 */
 }
 
+/* m681 v194: standard PSCI SYSTEM_RESET (fn id 0x84000009) issued as a raw
+ * SMC. noinline so the call boundary saves caller-saved regs the ATF may
+ * clobber (same trick mt_secure_call() relies on). The DT declares psci 0.1
+ * so the kernel never wired arm_pm_restart=psci_sys_reset; but m681's ATF
+ * honors custom SMCs (cpuxgpt 0x82000201 is proven), so the standard PSCI 0.2
+ * reset is very likely implemented and gives a clean instant SoC reset. */
+static noinline void forge_psci_system_reset(void)
+{
+#ifdef CONFIG_ARM64
+	register u64 reg0 __asm__("x0") = 0x84000009UL;
+	register u64 reg1 __asm__("x1") = 0;
+	register u64 reg2 __asm__("x2") = 0;
+	register u64 reg3 __asm__("x3") = 0;
+
+	__asm__ __volatile__("smc #0\n" : "+r"(reg0)
+		: "r"(reg1), "r"(reg2), "r"(reg3) : "memory");
+#endif
+}
+
 void wdt_arch_reset(char mode)
 {
 	unsigned int wdt_mode_val;
@@ -351,7 +376,57 @@ void wdt_arch_reset(char mode)
 	udelay(100);
 	mt_reg_sync_writel(MTK_WDT_SWRST_KEY, MTK_WDT_SWRST);
 	pr_debug("wdt_arch_reset: SW_reset happen\n");
+
+	/* m681 v186: the SWRST above is INEFFECTIVE on this m6-graft (the RGU
+	 * SW-reset is not honored), so every reboot otherwise dead-hangs in the
+	 * while(1) below with the dog DISABLED (ENABLE was just cleared) and IRQs
+	 * off -> the SoC never resets and needs a battery pull (user-confirmed
+	 * 2026-06-28). The HW-WDT *timeout* reset DOES work here (it guillotined
+	 * boot at ~16s pre-kicker; the forge 5s hrtimer kicker pets this very
+	 * block, proving the writes land). So arm a SHORT (~2s) HW-reboot-mode
+	 * timeout and let the dog reset us. IRQs are already disabled
+	 * (machine_restart -> local_irq_disable) so the forge kicker cannot
+	 * re-pet during the spin. rtc_mark_*() already ran in arch_reset() so
+	 * 'reboot recovery' still lands in TWRP. Rollback: delete this block.
+	 * See BRINGUP_STATE_3.18.md 2026-06-28. */
+	/* m681 v193: v186 (short LENGTH + MODE without AUTO_RESTART) did NOT reset
+	 * (backlight stayed lit). Use the PROVEN dog config that forge_m681_wdt_arm()
+	 * arms at late_init and that historically guillotines the boot: keep the
+	 * preloader's ~30s LENGTH UNTOUCHED (writing a short LENGTH likely broke v186),
+	 * clear DUAL_MODE|IRQ, set KEY|ENABLE|EXTEN|AUTO_RESTART, then pet RESTART. With
+	 * IRQs off (machine_restart) the kicker can't pet -> dog times out (~30s) and
+	 * HW-resets. rtc_mark_*() already ran in arch_reset() -> 'reboot recovery'. */
+	/* m681 v194: v186 (short LENGTH, NO AUTO_RESTART) and v193 (AUTO_RESTART +
+	 * 30s LENGTH) both failed to reset -- v193's 30s dog is out-paced by the
+	 * forge 5s hrtimer kicker (RESTART). Two-pronged fix:
+	 *  (1) PRIMARY: PSCI SYSTEM_RESET SMC 0x84000009 (forge_psci_system_reset).
+	 *      ATF honors custom SMCs here, so a clean instant reset is expected.
+	 *  (2) FALLBACK: arm the dog with AUTO_RESTART *and* a SHORT ~2s LENGTH
+	 *      (count=2*64=128 -> (128<<5)|KEY=0x1008). 2s < the 5s kicker period,
+	 *      so the dog fires before the next pet even if a secondary CPU's
+	 *      kicker survived smp_send_stop (SMP stop is unreliable on graft).
+	 * Arm dog FIRST (insurance), then SMC, then spin. rtc_mark_*() already ran
+	 * in arch_reset() so 'reboot recovery' still lands in TWRP.
+	 * Rollback: restore the v193 block. See BRINGUP_STATE_3.18.md 2026-06-28. */
+	{
+		u32 m = __raw_readl(MTK_WDT_MODE);
+		m &= ~(MTK_WDT_MODE_DUAL_MODE | MTK_WDT_MODE_IRQ);
+		m |= MTK_WDT_MODE_KEY | MTK_WDT_MODE_ENABLE |
+		     MTK_WDT_MODE_EXTEN | MTK_WDT_MODE_AUTO_RESTART;
+		/* SHORT ~2s timeout: count = value_sec*64, LENGTH = (count<<5)|KEY */
+		mt_reg_sync_writel(((2u * (1u << 6)) << 5) | MTK_WDT_LENGTH_KEY,
+				   MTK_WDT_LENGTH);
+		mt_reg_sync_writel(m, MTK_WDT_MODE);
+		mt_reg_sync_writel(MTK_WDT_RESTART_KEY, MTK_WDT_RESTART);
+	}
+	pr_emerg("[FORGE_M681] v194 wdt_arch_reset: armed 2s AUTO_RESTART dog MODE=0x%x LEN=0x%x; trying PSCI SYSTEM_RESET SMC 0x84000009\n",
+		 __raw_readl(MTK_WDT_MODE), __raw_readl(MTK_WDT_LENGTH));
+
 	spin_unlock(&rgu_reg_operation_spinlock);
+
+	/* PRIMARY: PSCI SYSTEM_RESET. Returns only if the ATF does not honor it. */
+	forge_psci_system_reset();
+	pr_emerg("[FORGE_M681] v194 PSCI SYSTEM_RESET returned (ATF declined) -> waiting for 2s dog timeout\n");
 
 	while (1) {
 		wdt_dump_reg();

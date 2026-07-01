@@ -3842,6 +3842,7 @@ static int kbase_platform_device_probe(struct platform_device *pdev)
 	int err = 0;
 
 
+	pr_emerg("[FORGE_MALI] v191 kbase_platform_device_probe ENTRY — probe IS being called for %s\n", dev_name(&pdev->dev));
 	pr_alert("[MALI] Midgard r12p1-01alp0 DDK kernel device driver. GPU probe() begin.\n");
 
 #ifdef CONFIG_OF
@@ -4295,6 +4296,15 @@ static int __init kbase_driver_init(void)
 		return ret;
 #endif
 	ret = platform_driver_register(&kbase_platform_driver);
+	/* m681 v191: diagnose why kbase probe never fires (mali@13040000 stays
+	 * unbound, ZERO kbase dmesg). Print the registered driver name + of_match. */
+	pr_emerg("[FORGE_MALI] v191 kbase reg ret=%d name=%s of_match=%p comp0=%s comp1=%s\n",
+		ret, kbase_platform_driver.driver.name,
+		(void *)kbase_platform_driver.driver.of_match_table,
+		kbase_platform_driver.driver.of_match_table ?
+			kbase_platform_driver.driver.of_match_table[0].compatible : "<null>",
+		kbase_platform_driver.driver.of_match_table ?
+			kbase_platform_driver.driver.of_match_table[1].compatible : "<null>");
 #ifdef CONFIG_MALI_PLATFORM_FAKE
 	if (ret)
 		kbase_platform_fake_unregister();

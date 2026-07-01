@@ -1877,6 +1877,9 @@ static void protect_ap_region(void)
 	dram_size = get_max_DRAM_size();
 
 	ap_mem_mpu_id = AP_REGION_ID;
+	/* m681 v232: REVERTED the v231 d4-open — the EMI MPU violation @0xb8200000 was the
+	 * MODEM (CRDISPATCH_KEY .../MDMCU, ccci/md denied), NOT disp_rdma_0; opening d4 left
+	 * the violation unchanged and rdma_eof still 0. Display stall is unrelated to EMI. */
 	ap_mem_mpu_attr = SET_ACCESS_PERMISSON(FORBIDDEN,
 	NO_PROTECTION, FORBIDDEN, NO_PROTECTION, FORBIDDEN,
 	FORBIDDEN, FORBIDDEN, NO_PROTECTION);

@@ -2600,6 +2600,13 @@ static int __init tscpu_init(void)
 	/* m681 v45: l681-map preemptive skip — thermal BUG_ON softening. TODO post-boot: re-enable. */
 	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
 
+	/* m681 v56: CONFIRMED NATURAL WALL (v55, seq 456): tscpu_init wedges the
+	 * AXI bus inside CPU thermal-zone setup (thermal controller / AUXADC block
+	 * ungated in m6-graft).  Skip the whole init — CPU thermal is non-essential
+	 * for userspace+adb.  Rollback: remove this return. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xBD); }
+	return 0;
+
 	tscpu_printk("tscpu_init\n");
 
 	err = platform_driver_register(&mtk_thermal_driver);

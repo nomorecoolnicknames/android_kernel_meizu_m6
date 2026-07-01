@@ -1593,6 +1593,14 @@ static int __init mt_soc_snd_init(void)
 #endif
 	pr_debug("mt_soc_snd_init card addr = %p\n", card);
 
+	/* m681 v58: CONFIRMED NATURAL WALL (v56/v57, seq 630): mt_soc_snd_init
+	 * wedges the AXI bus inside snd_soc_register_card (AFE / audio front-end
+	 * block ungated in m6-graft).  m681 builds the mt_soc_audio_6750 variant
+	 * (NOT 6755).  Audio non-essential for userspace+adb.  Skip the whole
+	 * card registration.  Rollback: remove this return. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xBF); }
+	return 0;
+
 	mt_snd_device = platform_device_alloc("soc-audio", -1);
 	if (!mt_snd_device) {
 		pr_err("mt6589_probe  platform_device_alloc fail\n");

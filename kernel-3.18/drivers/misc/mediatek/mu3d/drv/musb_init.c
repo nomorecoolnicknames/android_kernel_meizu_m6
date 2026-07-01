@@ -784,10 +784,15 @@ static int mtu3d_probe(struct platform_device *pdev)
 	 * node (cleaner skip — no odd DT-orphan in the parent chain), leaves the
 	 * forge marker 0xEC as "I ran here", and lets boot proceed past seq 145
 	 * without the MTCMOS poke.  Rollback: delete this block. */
+	/* m681 v127: RE-ENABLED — let mtu3d_probe init the USB controller. The v48
+	 * skip avoided the SSUSB MTCMOS power-on poke wedging the AXI bus, but that
+	 * wedge was a frozen-arch-timer symptom (the MTCMOS poke polls/udelays). The
+	 * timer is NOW FIXED (cpuxgpt via SMC, [[m6graft_timer_FIXED]]) so the poke
+	 * should complete -> USB device controller comes up -> adb enumerates. Safe to
+	 * test: kicker OFF -> a wedge/panic warm-resets, and the eMMC klog dumper
+	 * (expdb) captures the exact wedge point. Rollback: restore `return 0;`. */
 	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xEC); }
-	pr_err("[FORGE_M681] mtu3d_probe: skipping musb_init_controller (MTCMOS wall), boot proceeds past seq 145\n");
-	return 0;
-
+	pr_err("[FORGE_M681] v127 mtu3d_probe: RE-ENABLING musb_init_controller (timer fixed)\n");
 
 	glue = kzalloc(sizeof(*glue), GFP_KERNEL);
 	if (!glue) {

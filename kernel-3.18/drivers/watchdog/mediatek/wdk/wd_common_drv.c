@@ -495,7 +495,7 @@ static int kwdt_thread(void *arg)
 					if (local_bit == wk_check_kick_bit()) {
 						printk_deferred("[WDK]: kick Ex WDT,RT[%lld]\n",
 								sched_clock());
-						mtk_wdt_restart(WD_TYPE_NORMAL);	/* for KICK external wdt */
+						mtk_wdt_restart(WD_TYPE_NORMAL);	/* v125: re-enabled (stock-like WDT mgmt, timer fixed) */
 						local_bit = 0;
 					}
 					kick_bit = local_bit;

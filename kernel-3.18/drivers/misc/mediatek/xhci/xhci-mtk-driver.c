@@ -823,6 +823,14 @@ int mtk_xhci_eint_iddig_init(void)
 	int iddig_gpio, iddig_debounce;
 	u32 ints[2] = {0, 0};
 
+	/* m681 v71: skip — THE boot-final wall (v68-v70, seq 764, inside MTK
+	 * xhci_hcd_init).  This maps the USB-OTG IDDIG pin via irq_of_parse_and_map
+	 * on the eintc EINT controller (0x1000b000), ungated in m6-graft -> the
+	 * EINT map / IRQ wedges the AXI bus (an IRQ during xhci_hcd_init, which is
+	 * why that no-op-looking initcall never returned).  OTG host/ID detection
+	 * is non-essential; the adb USB gadget runs in device mode regardless.
+	 * Rollback: remove this return. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xA9); } /* m681 v91: un-skip — "no-op initcall never returned" = udelay-hang signature, udelay now works */
 
 	node = of_find_compatible_node(NULL, NULL, "mediatek,usb3_xhci");
 	if (node) {

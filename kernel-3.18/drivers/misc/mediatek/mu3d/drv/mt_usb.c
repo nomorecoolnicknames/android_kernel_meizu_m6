@@ -226,6 +226,49 @@ void mt_usb_connect(void)
 }
 EXPORT_SYMBOL_GPL(mt_usb_connect);
 
+#ifdef FORGE_M6_USB_PERIPHERAL_BRINGUP
+/* m681 v149: the VBUS/charger detect path that normally calls mt_usb_connect()
+ * lives in the battery/charger driver and the charger HW detect does not assert
+ * "cable in" on this graft, so the gadget never connects and adb never
+ * enumerates even though adbd is up and has opened the functionfs. Force the
+ * connect ourselves: once the gadget driver (adbd ffs) is bound, set usb_rdy
+ * (open connection_work's gate) and kick connection_work -> musb_start ->
+ * D+ pullup -> host enumerates adb. Keep kicking for ~2min to cover slow init. */
+extern void set_usb_rdy(void);
+static struct delayed_work forge_usb_kick_work;
+static int forge_usb_kick_n;
+static void forge_usb_kick_fn(struct work_struct *w)
+{
+	struct musb *musb = _mu3d_musb;
+	/* v151 A/B: observe-only for the first ~20s (n<10), then start kicking.
+	 * v150 kicked from n=0 (+7s) and the kworker went silent after one tick
+	 * (musb_start fatal/hang at +7s). Here we (1) watch whether softconnect
+	 * rises on its own, (2) prove whether the EARLY kick is the killer by
+	 * surviving the observe phase, (3) test a LATE kick at +27s. */
+	int do_kick = (forge_usb_kick_n >= 10);
+
+	pr_emerg("[FORGE_M681] v151 n=%d musb=%p gdrv=%p softconn=%d rdy=%d kick=%d\n",
+		 forge_usb_kick_n, musb,
+		 musb ? musb->gadget_driver : NULL,
+		 musb ? musb->softconnect : -1,
+		 is_usb_rdy() ? 1 : 0, do_kick);
+	if (musb && do_kick) {
+		set_usb_rdy();
+		schedule_delayed_work(&musb->connection_work, 0);
+	}
+	if (++forge_usb_kick_n < 60)
+		schedule_delayed_work(&forge_usb_kick_work, msecs_to_jiffies(2000));
+}
+static int __init forge_usb_kick_init(void)
+{
+	INIT_DELAYED_WORK(&forge_usb_kick_work, forge_usb_kick_fn);
+	schedule_delayed_work(&forge_usb_kick_work, msecs_to_jiffies(7000));
+	pr_emerg("[FORGE_M681] v151 USB observer+late-kicker armed\n");
+	return 0;
+}
+late_initcall(forge_usb_kick_init);
+#endif
+
 void mt_usb_disconnect(void)
 {
 	os_printk(K_INFO, "%s+\n", __func__);

@@ -1275,14 +1275,23 @@ void smi_bus_optimization(int optimization_larbs, int smi_profile)
 		int larb_mask = 1 << i;
 
 		if (optimization_larbs & larb_mask) {
-			SMIDBG(1, "enable clock%d\n", i);
+			/* m681 v174: bisect the SMI probe wedge (SMI proven the wedger,
+			 * v172/v173). Mark each larb clk_enable to klog (visible only if
+			 * we boot). */
+			pr_emerg("[FORGE_SMI] v174 larb%d clk_enable ENTER\n", i);
 			larb_clock_enable(i, 1);
+			pr_emerg("[FORGE_SMI] v174 larb%d clk_enable DONE\n", i);
 
 		} else {
 			SMIMSG("Larb:%d optimization disabled\n", i);
 		}
 	}
 
+	/* m681 v174 result: skipping this block STILL wedged -> the hang is in
+	 * larb_clock_enable above (a VDE/ISP/VEN mtcmos power-on), NOT here. v175
+	 * restricts bus_optimization to larb0 (DIS, powered), so this block now only
+	 * touches larb0 registers and is safe to run -> RE-ENABLED. */
+	pr_emerg("[FORGE_SMI] v175 larb reg access block (larb0 only)\n");
 	if (enable_bw_optimization) {
 		SMIDBG(1, "dump register before setting\n");
 		if (smi_debug_level)
@@ -2348,6 +2357,14 @@ static void smi_driver_setting(void)
 #ifdef SMI_PARAM_BUS_OPTIMIZATION
 	bus_optimization = SMI_PARAM_BUS_OPTIMIZATION;
 #endif
+	/* m681 v175: restrict SMI bus-optimization to larb0 (display, behind the DIS
+	 * MTCMOS domain which is powered on at of_clk_init). The default 0x7F also
+	 * powers larb1/2/3 = VDE/ISP/VEN domains, which are NOT powered at boot and
+	 * whose spm_mtcmos_ctrl_{vde,isp2,ven} have UNBOUNDED SRAM_PDN_ACK polls ->
+	 * the SMI probe wedge (proven v172-v174: SMI un-denied hangs in
+	 * larb_clock_enable, not the larb register access). Display needs only larb0,
+	 * so optimize just it and never touch the codec/camera domains. */
+	bus_optimization = 0x1;
 
 #ifdef SMI_PARAM_ENABLE_IOCTL
 	enable_ioctl = SMI_PARAM_ENABLE_IOCTL;

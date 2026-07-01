@@ -62,6 +62,12 @@ static irqreturn_t kbase_job_irq_handler(int irq, void *data)
 #endif /* CONFIG_MALI_DEBUG */
 	spin_unlock_irqrestore(&kbdev->pm.backend.gpu_powered_lock, flags);
 
+	/* m681 v235: does the GPU JOB-done IRQ fire? No dumps => IRQ never reaches CPU
+	 * (GIC/wiring) -> kbase never signals the mali_fence -> HWComposer times out -> black.
+	 * val=0 dumps => IRQ fires but GPU reports no job-done. val!=0 => job path works. */
+	{ static int _jc; if (_jc < 12) { _jc++;
+	  pr_emerg("[FORGE_GPU] job_irq#%d: irq=%d JOB_IRQ_STATUS=0x%x\n", _jc, irq, val); } }
+
 	if (!val)
 		return IRQ_NONE;
 
@@ -199,6 +205,12 @@ int kbase_set_custom_irq_handler(struct kbase_device *kbdev,
 		dev_err(kbdev->dev, "You have CONFIG_SPARSE_IRQ support enabled - is the interrupt number correct for this configuration?\n");
 #endif /* CONFIG_SPARSE_IRQ */
 	}
+
+	/* m681 v235: confirm the GPU IRQs (JOB=0/MMU=1/GPU=2) actually register. irq=0 or
+	 * result!=0 => the GPU interrupt is not wired -> handler never runs -> jobs never
+	 * report done -> mali_fence stuck -> black panel. */
+	pr_emerg("[FORGE_GPU] install_irq type=%d irq=%d flags=0x%lx result=%d\n",
+		 irq_type, kbdev->irqs[irq_type].irq, kbdev->irqs[irq_type].flags, result);
 
 	return result;
 }
