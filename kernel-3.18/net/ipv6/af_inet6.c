@@ -871,9 +871,13 @@ static int __init inet6_init(void)
 	struct list_head *r;
 	int err = 0;
 
-	/* m681 v45: l681-map preemptive skip — DIAGNOSTIC: WDT-cutter at ~95s, revert post-boot. */
-	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
-	return 0;
+	/* m681 v228b: RE-ENABLE IPv6. The v45 diagnostic `return 0` here (a "WDT-cutter at
+	 * ~95s" probe, marked "revert post-boot" then forgotten) skipped the ENTIRE IPv6
+	 * registration, so AF_INET6 never registered. netd then failed: RouteController init
+	 * -> "Address family not supported by protocol" (EAFNOSUPPORT) -> `bandwidth enable` /
+	 * `strict enable` failed -> NetworkManagement/NetworkPolicy/Connectivity.systemReady()
+	 * timed out -> system_server crash-loop -> no boot_completed. The v45 WDT issue is long
+	 * obsolete (timer/i2c/sensors all fixed since). FACT: netd EAFNOSUPPORT in v228a capture. */
 
 	BUILD_BUG_ON(sizeof(struct inet6_skb_parm) > FIELD_SIZEOF(struct sk_buff, cb));
 

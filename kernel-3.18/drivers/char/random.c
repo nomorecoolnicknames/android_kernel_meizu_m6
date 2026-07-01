@@ -1544,14 +1544,17 @@ SYSCALL_DEFINE3(getrandom, char __user *, buf, size_t, count,
 	if (flags & GRND_RANDOM)
 		return _random_read(flags & GRND_NONBLOCK, buf, count);
 
-	if (unlikely(nonblocking_pool.initialized == 0)) {
-		if (flags & GRND_NONBLOCK)
-			return -EAGAIN;
-		wait_event_interruptible(urandom_init_wait,
-					 nonblocking_pool.initialized);
-		if (signal_pending(current))
-			return -ERESTARTSYS;
-	}
+	/* m681 v142: do NOT block on the never-initialized entropy pool. This
+	 * headless board has no hw_random and almost no interrupt entropy, so the
+	 * nonblocking pool never reaches the getrandom() init threshold and the
+	 * Android zygote (ART runtime) blocks FOREVER here at startup -> boot never
+	 * reaches system_server / boot_completed (klog: zygote launches, socket
+	 * created, then silence). Serve urandom-quality bytes immediately during
+	 * bring-up. NOT crypto-strong; revisit with a real entropy source. Only the
+	 * getrandom() syscall path (post-boot, userspace) is affected. */
+	if (unlikely(nonblocking_pool.initialized == 0))
+		pr_notice_once("m681: getrandom served pre-init (entropy starved) comm=%s\n",
+			       current->comm);
 	return urandom_read(NULL, buf, count, NULL);
 }
 

@@ -144,9 +144,12 @@ static int selinux_set_mapping(struct policydb *pol,
 
 		p_out->value = string_to_security_class(pol, p_in->name);
 		if (!p_out->value) {
-			printk(KERN_INFO
-			       "SELinux:  Class %s not defined in policy.\n",
-			       p_in->name);
+			/* m681 v80: silenced -- the m6-graft kernel's SELinux defines
+			 * many classes/perms the donor sepolicy lacks; permissive +
+			 * allow_unknown still loads the policy, but the thousands of
+			 * per-class/per-perm KERN_INFO prints to the ttyMT0 serial
+			 * console stall init for >30s, before adbd starts, and the WDT
+			 * resets.  Drop the spam; the load logic is unchanged. */
 			if (pol->reject_unknown)
 				goto err;
 			p_out->num_perms = 0;
@@ -164,9 +167,7 @@ static int selinux_set_mapping(struct policydb *pol,
 			p_out->perms[k] = string_to_av_perm(pol, p_out->value,
 							    p_in->perms[k]);
 			if (!p_out->perms[k]) {
-				printk(KERN_INFO
-				       "SELinux:  Permission %s in class %s not defined in policy.\n",
-				       p_in->perms[k], p_in->name);
+				/* m681 v80: silenced (see Class case above) */
 				if (pol->reject_unknown)
 					goto err;
 				print_unknown_handle = true;

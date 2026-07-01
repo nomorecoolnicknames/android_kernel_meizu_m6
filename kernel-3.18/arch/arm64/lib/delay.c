@@ -27,9 +27,22 @@
 void __delay(unsigned long cycles)
 {
 	cycles_t start = get_cycles();
+	/* m681 v90: the m6-graft never enables the ARM architected system counter
+	 * (wrong timer DT binding skips enable_cpuxgpt), so get_cycles() ==
+	 * arch_counter_get_cntvct() is FROZEN and this loop would spin forever
+	 * (proven v88: msdc udelay(10) never returns).  Bound the spin with a
+	 * cpu_relax cap so udelay()/mdelay() always return.  On a WORKING counter
+	 * the real (get_cycles - start) condition exits long before the cap
+	 * (cap = 256x the timer-tick count, >> the ~100 cpu cycles per 13MHz tick);
+	 * on a frozen counter the cap yields an over-approximate, never-too-short
+	 * delay.  Remove once CNTVCT actually runs. */
+	unsigned long guard = (cycles << 8) + 0x10000UL;
 
-	while ((get_cycles() - start) < cycles)
+	while ((get_cycles() - start) < cycles) {
 		cpu_relax();
+		if (!guard--)
+			break;
+	}
 }
 EXPORT_SYMBOL(__delay);
 

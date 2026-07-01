@@ -354,6 +354,12 @@ static int __init xfrm6_tunnel_init(void)
 {
 	int rv;
 
+	/* m681 v59: WEDGED HERE (v58, seq 722 = ~95% of level-6 initcalls, just
+	 * past musb USB probe).  IPv6 IPsec tunnel, non-essential for userspace+
+	 * adb.  Skip so the boot can finish initcalls and reach userspace.
+	 * Rollback: remove this return. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xB9); } /* m681 v91: un-skip — pure-software init, was likely mis-skipped during blind phase */
+
 	xfrm6_tunnel_spi_kmem = kmem_cache_create("xfrm6_tunnel_spi",
 						  sizeof(struct xfrm6_tunnel_spi),
 						  0, SLAB_HWCACHE_ALIGN,

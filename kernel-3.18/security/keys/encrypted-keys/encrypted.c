@@ -1022,6 +1022,13 @@ static int __init init_encrypted(void)
 {
 	int ret;
 
+	/* m681 v60: WEDGED HERE (v59) — first level-7 late_initcall reached after
+	 * skipping xfrm6.  init_encrypted allocates crypto (ecb(aes) ASYNC) which
+	 * can bind the ungated MTK HW crypto engine -> AXI wedge.  Encrypted keys
+	 * non-essential for userspace+adb.  Skip.  Rollback: remove this return. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xB5); }
+	return 0;
+
 	ret = encrypted_shash_alloc();
 	if (ret < 0)
 		return ret;
