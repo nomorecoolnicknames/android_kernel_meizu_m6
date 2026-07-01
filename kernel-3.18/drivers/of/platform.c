@@ -426,22 +426,34 @@ static int of_platform_bus_create(struct device_node *bus,
 	 * usb (for adb). PMIC chip driver NOT touched (MT6353 driver has MT6351
 	 * fallback inside, per user). Each skip marks 0xBC (aux = deny index). */
 	{ extern void forge_m681_mark_aux(unsigned char, unsigned int);
+	  extern int forge_should_skip_display(void);
+	  /* always-deny: non-display peripherals that wedge the bus / are unused */
 	  static const char * const forge_of_deny[] = {
-		"accdet", "touch", "flashlight", "fingerprint", "eint_fingerprint",
-		"goodix_fp", "nfc", "irq_nfc", "vibrator", "keypad",
-		"charger", "fuelgauge", "fuelguage", "bat_notify", "battery",
-		"bat_metter", "bat_meter", "m4u", "smi", "md_ccif", "ccci",
-		"cmdq", "thermal", "tscpu", "wmt", "consys", "fmradio",
-		"msdc1", "msdc2", "msdc3", "camera", "seninf", "fdvt",
-		"ispsys", "jpeg", "vcodec", "venc", "vdec", "mdp",
-		"irtx", "leds", "als", "gse_1", "gyro", "mse",
-		"mrdump_ext_rst", "eint_wpc", "dsi_te", "usb_typec", "swtp",
-		"ext_buck_oc", "ext_buck_vmd1", "rt5081_pmu_eint", "rt5081_pd",
-		"rf_clock_buffer", "pmic_clock_buffer", "gpufreq", "kbase",
-		"mali", "ged", "mtkfb", "ddp", "disp", "lcm",
-		"cpuhvfs", "vcorefs", "eem", "ptp_fsm", "devapc",
-		"systracker", "watchpoint", "freqhop", "freqhopping",
+		/* m681 v239h11: mass un-deny low-risk peripherals.
+		 * Touch ft5436 probed (pinctrl+power OK, i2c 0x38 no ACK — chip hw issue).
+		 * Display+codecs working. Now enabling camera/sd/flashlight/debug.
+		 * Still denied: modem (ccci), wifi (wmt/consys), thermal (hangs on PPM),
+		 * DVFS (cpuhvfs/vcorefs/eem/ptp_fsm — may break display power), watchdog.
+		 * NFC/usb_typec/swtp/eint_wpc STAY denied — no HW (m681 has no NFC,
+		 * no type-C, no wireless charging). */
+		"nfc", "irq_nfc",
+		"usb_typec", "swtp", "eint_wpc",
+		"md_ccif", "ccci",
+		"thermal", "tscpu", "wmt", "consys", "fmradio",
+		"cpuhvfs", "vcorefs", "eem", "ptp_fsm",
 		"toprgu",
+		NULL };
+	  /* m681 v164: the WHOLE display stack -- denied ONLY when the self-healing
+	   * gate says to skip (i.e. the previous boot wedged here). Otherwise all of
+	   * it probes at once (user request: bring the display up in one shot). */
+	  /* m681 v176: SMI is now fixed (v175, bus_optimization=larb0). Un-deny M4U
+	   * too -> the WHOLE display stack is un-denied again. M4U (subsys_initcall,
+	   * IOMMU) configures larb port-security by writing SMI larb registers; if it
+	   * iterates the unpowered VDE/ISP/VEN larbs it may bus-hang like SMI did.
+	   * lands `device` => M4U is safe, full stack up (surfaceflinger should get a
+	   * path); lands recovery => M4U needs the same larb0-restriction / bounded
+	   * mtcmos treatment. */
+	  static const char * const forge_display_deny[] = {
 		NULL };
 	  const char *ofn = bus->full_name ? bus->full_name : "";
 	  int dk;
@@ -450,6 +462,12 @@ static int of_platform_bus_create(struct device_node *bus,
 			forge_m681_mark_aux(0xBC, (unsigned int)dk);
 			return 0;
 		}
+	  if (forge_should_skip_display())
+		for (dk = 0; forge_display_deny[dk]; dk++)
+			if (strstr(ofn, forge_display_deny[dk])) {
+				forge_m681_mark_aux(0xBD, (unsigned int)dk);
+				return 0;
+			}
 	}
 
 	/* m681 v35: name the node about to be device-created so a hang inside

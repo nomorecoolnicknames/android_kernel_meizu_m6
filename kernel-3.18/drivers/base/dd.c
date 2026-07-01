@@ -184,6 +184,16 @@ static int deferred_probe_initcall(void)
 	if (WARN_ON(!deferred_wq))
 		return -ENOMEM;
 
+	/* m681 v64: do NOT enable/trigger/flush the synchronous deferred re-probe.
+	 * The leftover deferred drivers are non-essential MTK peripherals (audio
+	 * AFE/codec via common/ btcvsd etc.) whose re-probe wedges the ungated AXI
+	 * bus and hangs this late_initcall right before userspace.  Essential
+	 * drivers (mmc, musb UDC) already probed directly; the USB gadget/adb is
+	 * configured by userspace.  Leaving deferred-probe disabled (enable stays
+	 * false) lets the boot reach userspace+adb.  Rollback: remove this return. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xAF); }
+	return 0;
+
 	driver_deferred_probe_enable = true;
 	driver_deferred_probe_trigger();
 	/* Sort as many dependencies as possible before exiting initcalls */
@@ -307,6 +317,29 @@ static int really_probe(struct device *dev, struct device_driver *drv)
 		printk(KERN_ERR "%s: driver_sysfs_add(%s) failed\n",
 			__func__, dev_name(dev));
 		goto probe_failed;
+	}
+
+	/* m681 v61: name every driver about to probe so a wedge inside a deferred
+	 * i2c/spi/etc probe — which has no platform_drv_probe 0xC0 mark — is
+	 * pinpointed.  Reuses the of-node name field (diag 0x80..0xac); the last
+	 * name before a hang in deferred_probe_initcall = the wedging driver.
+	 * v63: also a GENERIC denylist (all buses).  The deferred audio (ASoC)
+	 * probes wedge the ungated AFE/codec block; the whole family shares the
+	 * "mt-soc"/"mt_soc" driver-name prefix (codec/dai/pcm/btcvsd/anc/hp-
+	 * impedance) and no essential driver uses it.  Reject the match. */
+	{ extern void forge_m681_mark_ofnode(const char *name);
+	  extern void forge_m681_mark_aux(unsigned char, unsigned int);
+	  extern void forge_m681_emmc_mark(const char *tag);
+	  const char *dn = drv->name ? drv->name : dev_name(dev);
+	  forge_m681_mark_ofnode(dn);
+	  /* m681 v171: synchronous eMMC marker (survives a display bus-hang wedge;
+	   * DRAM/SPM post-mortem channels are dead). No-op for non-display names. */
+	  forge_m681_emmc_mark(dn);
+	  if (dn && (strstr(dn, "mt-soc") || strstr(dn, "mt_soc"))) {
+		forge_m681_mark_aux(0xB4, 0);
+		ret = -ENODEV;
+		goto probe_failed;
+	  }
 	}
 
 	if (dev->bus->probe) {

@@ -540,7 +540,14 @@ static int platform_drv_probe(struct device *_dev)
 	 * and probe normally. Each skip marks 0xCD (aux = skipped probe fn). */
 	{
 		static const char * const forge_deny[] = {
-			"gpufreq", "gpu", "mali", "kbase", "ged", "mt-eem", "ptp_fsm",
+			/* m681 v192: GPU FAMILY UN-DENIED ("gpufreq","gpu","mali","kbase","ged"
+			 * removed) so the mali@13040000 platform device finally MATCHES the kbase
+			 * "mali" driver and kbase_platform_device_probe runs. This forge gate
+			 * (v45 era) was THE reason kbase never bound (probe never called, no
+			 * /dev/mali, EGL_NOT_INITIALIZED). MFG MTCMOS poll is BOUNDED in stock
+			 * (spm_mtcmos_ctrl_mfg, #ifndef IGNORE_PWR_ACK) so power-on should not
+			 * wedge like the unbounded SMI/M4U larbs did. */
+			"mt-eem", "ptp_fsm",
 			"ispsys", "fdvt", "seninf", "camera", "venc", "vdec", "vcodec",
 			"mdp", "jpeg", "jpg", "consys", "wmt", "connectivity", "wifi",
 			"wlan", "mediatek,gps", "devapc", "thermal", "systracker",
