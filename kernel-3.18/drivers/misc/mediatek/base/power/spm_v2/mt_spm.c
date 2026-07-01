@@ -1078,7 +1078,14 @@ int spm_load_pcm_firmware(struct platform_device *pdev)
 #endif
 
 	if (spm_fw_count == check_spm_fw_count) {
-		vcorefs_late_init_dvfs();
+		/* m681 v205: PCM firmware loads ~8.7s (after /system mount via spm_loader);
+		 * vcorefs_late_init_dvfs() then runs VCORE-DVFS on an SPM that the bring-up
+		 * keeps un-initialised (recipe: "SPM vcorefs keep skipped"). Suspected cpu0
+		 * stall -> HW-WDT reset right at this point. Instrument + skip to test. */
+		pr_emerg("[FORGE_DISP] spm: PRE vcorefs_late_init_dvfs (cpu0-stall suspect)\n");
+		{ static volatile int forge_skip_vcorefs = 1;
+		  if (!forge_skip_vcorefs) vcorefs_late_init_dvfs(); }
+		pr_emerg("[FORGE_DISP] spm: POST vcorefs_late_init_dvfs (skipped=1)\n");
 		dyna_load_pcm_done = 1;
 	}
 #else

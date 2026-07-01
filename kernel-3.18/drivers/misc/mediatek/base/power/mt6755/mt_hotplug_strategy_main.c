@@ -560,6 +560,17 @@ static int __init hps_init(void)
 
 	hps_warn("hps_init\n");
 
+	/* m681 v76: skip the whole MTK HPS (hotplug strategy) governor.  hps_init
+	 * (late_initcall) starts the hps_main kthread which calls cpu_up(N>0) at
+	 * runtime to online secondary CPUs via the "mt-boot" enable-method, which
+	 * touches the unpowered/unclocked MT6755 CPU domain -> silent AXI wedge
+	 * (THE final boot wall, 0xD7).  The v75 _cpu_up guard blocked the HW hit
+	 * but left hps_main spinning on -EINVAL, starving the single core.  Not
+	 * starting HPS at all lets the boot reach userspace.  SMP/hotplug power
+	 * domains are a later job.  Rollback: remove this return. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xA7); }
+	return 0;
+
 	/* hps_cpu_init() must before hps_core_init() */
 	r = hps_cpu_init();
 	if (r)
