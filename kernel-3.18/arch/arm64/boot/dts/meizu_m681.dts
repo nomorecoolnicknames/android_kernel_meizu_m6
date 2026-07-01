@@ -148,12 +148,25 @@
 /* end sensor */
 };
 
-/* TOUCH: INT=GPIO1, RST=GPIO10, vtouch=VLDO28, i2c0.
- * FT5436@0x38 confirmed via on-device i2c0 scan. */
+/* TOUCH: ported verbatim from meizu_m6.dts — touch worked on m6, same MT6755
+ * family/routing (INT=GPIO1, RST=GPIO42, vtouch=VLDO28, i2c0). m681 panel chip
+ * confirmed via on-device i2c0 scan; ft5x26@0x38 enabled as the m6-proven default. */
 &touch {
 	bus_type = "i2c";
 	bus_id = <0>;
+	/* M6: stock Flyme DTB powers the touch panel from vldo28 (vtouch-supply =
+	 * ldo_vldo28), NOT the SoC-default "vtouch" rail. mt6755.dtsi inherits
+	 * vtouch-supply=<&mt_pmic_vtouch_ldo_reg>, but this PMIC has no VTOUCH LDO
+	 * -> regulator_get(vtouch) returns -EPROBE_DEFER forever -> VLDO28 never
+	 * enabled -> GT9xx chip unpowered -> i2c no-ACK at 0x5d (only bias 0x3e
+	 * answers on i2c-0). Re-point the supply at the real rail so the framework
+	 * enables it. FACT: live LDO_VLDO28_STATUS=0 before, stock vtouch-supply=
+	 * ldo_vldo28; FORGE I2C0 SCAN showed only 0x3e ACK. */
 	vtouch-supply = <&mt_pmic_vldo28_ldo_reg>;
+	/* M6: ft5x26 takes its touch IRQ via irq_of_parse_and_map(touch_node,0).
+	 * Stock Flyme touch node has interrupt-parent=<&eintc> interrupts=<1 2>
+	 * (EINT line 1 = GPIO1 INT, type 2 = falling edge). GT9xx never reached
+	 * IRQ setup (died at i2c-test) so this was latent; ft5x26 needs it. */
 	interrupt-parent = <&eintc>;
 	interrupts = <1 2>;
 	debounce = <1 0>;
@@ -169,16 +182,17 @@
 	x_max_mt = <720>;
 	y_max_mt = <1280>;
 	goodix,product_id = "GT917D";
-	goodix,test-types = <0x80007>;
+	goodix,test-types = <0x80007>;/*test types*/
 	goodix,panel-max = <3948>;
 	goodix,panel-min = <1897>;
 	goodix,panel-deviation = <400>;
 	goodix,key-max = <0>;
 	goodix,key-min = <0>;
-	goodix,key-nc = <0>;
+	goodix,key-nc = <0>;/*key test not check*/
 	goodix,special_raw_data_limit = <>;
 	goodix,shortcircut-threshold = <0>;
 	fw_upgrade_delay = <30000>;
+	/* stock Flyme DTB value (chip outputs 1080x1920-space coords) */
 	tpd-resolution = <1080 1920>;
 	use-tpd-button = <0>;
 	tpd-key-num = <3>;
@@ -225,6 +239,7 @@
 	};
 	ctp_pins_rst_output0: rstoutput0 {
 		pins_cmd_dat {
+			/* m681 stock (cust_gpio_usage.h): touch RST = GPIO10 */
 			pins = <PINMUX_GPIO10__FUNC_GPIO10>;
 			slew-rate = <1>;
 			bias-pull-up;
@@ -242,7 +257,14 @@
 };
 
 &i2c0 {
-	cap_touch@48 { status = "disabled"; };
+	/* donor (Honor "Jim") himax addr 0x48 from drvgen cust.dtsi — real M6 has no chip there */
+	cap_touch@48 {
+		status = "disabled";
+	};
+	/* stock Flyme 7.1.2.0G DTB claims Goodix GT9xx@0x5d, but THIS unit's panel
+	 * is Focaltech FT5x46@0x38 (verified live: chip-id reg 0xA3=0x54="FT5x46",
+	 * 0xA8 vendor=0x80). Goodix driver no-ACKs at 0x5d forever. Disable the
+	 * Goodix node, bind the FT5x26 driver at 0x38 instead. */
 	cap_touch@5d {
 		compatible = "mediatek,cap_touch";
 		reg = <0x5d>;
@@ -251,8 +273,15 @@
 	ft5436@38 {
 		compatible = "mediatek,ft5436_touch";
 		reg = <0x38>;
+		/* m681 v239h9: switched from ft5x26 to stock ft5436 driver */
 		status = "okay";
 	};
+};
+
+/* m681 v239: re-enable i2c clients. The v221 mass-disable was a workaround for
+ * a boot hang caused by the disp_input_config struct mismatch (fixed in v238b).
+ * Enable touch (i2c0), lcd_bias (i2c1), and sensors (i2c2) one step at a time. */
+&i2c0 {
 	camera_main@10 { status = "disabled"; };
 	camera_main_af@0c { status = "disabled"; };
 	camera_sub@3c { status = "disabled"; };

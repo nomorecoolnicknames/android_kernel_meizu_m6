@@ -1,0 +1,24 @@
+# Meizu M6 (mtk-kpd) keylayout
+# Android input device "mtk-kpd": bus=0x0019 vendor=0x2454 product=0x6500
+# EventHub resolves Vendor_2454_Product_6500.kl BEFORE Generic.kl, so this
+# overrides the stock fallback that mapped scancode 102 -> MOVE_HOME
+# (the "scroll to top of list" behavior reported on the capacitive Home button).
+#
+# Ground truth (live, device 711HEBSR277K5):
+#   - mtk-kpd (event1) advertises only scancodes 102,114,115,116,129,193,408
+#     (from /proc/bus/input/devices KEY bitmap). It can physically emit 102.
+#   - Before fix dumpsys input showed KeyLayoutFile=/system/usr/keylayout/Generic.kl
+#     and Generic.kl:124 "key 102 MOVE_HOME".
+#   - After placing this file + reboot, dumpsys input shows
+#     KeyLayoutFile=/system/usr/keylayout/Vendor_2454_Product_6500.kl and
+#     injecting scancode 102 on event1 sends the device Home (Settings->launcher).
+#
+# Install: push to /system/usr/keylayout/ (chmod 644, restorecon), survives reboot.
+
+key 102   HOME
+key 158   BACK
+key 139   MENU
+key 129   MENU
+key 114   VOLUME_DOWN
+key 115   VOLUME_UP
+key 116   POWER

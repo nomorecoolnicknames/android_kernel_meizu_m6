@@ -1,0 +1,26 @@
+# build artifacts (out-of-tree build lives in /home/n8n/m681-marker-build/out, but guard anyway)
+*.o
+*.o.*
+*.a
+*.ko
+*.mod
+*.mod.c
+*.cmd
+*.s
+*.su
+.tmp_*
+/vmlinux
+/vmlinux.o
+/System.map
+/Module.symvers
+/modules.builtin
+/modules.order
+*.order
+*.builtin
+.config.old
+*.dtb
+*.dtb.S
+*.dtbo
+arch/*/boot/Image*
+arch/*/boot/zImage*
+.omc/

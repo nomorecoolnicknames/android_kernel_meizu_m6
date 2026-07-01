@@ -1554,8 +1554,9 @@
 			 * MTCMOS pokes; clock-provider registration happens via
 			 * of_clk_init (clk-mt6755.c) regardless of status, so
 			 * <&mfgsys MFG_BG3D> phandle still resolves. Mali also
-			 * disabled -> no MFG consumer probes. */
-			status = "disabled";
+			 * disabled -> no MFG consumer probes.
+			 * m681 v185: ENABLED (MFG powered at boot, device stable). */
+			status = "okay";
 		};
 
 		mfgcfg@13000000 {
@@ -1587,8 +1588,9 @@
 			/* m681 bring-up: Mali/MFG MTCMOS bus-hang (l681 M15/v42+v47 wall
 			 * at kbase_platform_driver_init). Disable probe -> kbase driver
 			 * registers but matches no device -> no kbase_probe -> no MFG
-			 * MTCMOS poke. GPU bring-up deferred post-adb. */
-			status = "disabled";
+			 * MTCMOS poke. GPU bring-up deferred post-adb.
+			 * m681 v185: ENABLED -> kbase_probe runs -> /dev/mali (EGL for SF). */
+			status = "okay";
 		};
 
 
