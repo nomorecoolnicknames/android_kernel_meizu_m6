@@ -2297,13 +2297,24 @@ int m4u_reg_init(m4u_domain_t *m4u_domain, unsigned long ProtectPA, int m4u_id)
 				M4UINFO("init larb %d error\n", i);
 			else {
 				gLarbBaseAddr[i] = (unsigned long)of_iomap(node, 0);
-				/* set mm engine domain */
-				larb_clock_on(i);
-				M4U_WriteReg32(gLarbBaseAddr[i], SMI_LARB_DOMN_0, DOMAIN_VALUE);
-				M4U_WriteReg32(gLarbBaseAddr[i], SMI_LARB_DOMN_1, DOMAIN_VALUE);
-				M4U_WriteReg32(gLarbBaseAddr[i], SMI_LARB_DOMN_2, DOMAIN_VALUE);
-				M4U_WriteReg32(gLarbBaseAddr[i], SMI_LARB_DOMN_3, DOMAIN_VALUE);
-				larb_clock_off(i);
+				/* m681 v178: THE M4U wedge. Only larb0 sits behind the DIS
+				 * domain (powered at of_clk_init). larb1/2/3/4 = VDE/ISP/VEN/MJC
+				 * are NOT powered at boot, and larb_clock_on(i) ->
+				 * spm_mtcmos_ctrl_{vde,isp2,ven} has an UNBOUNDED SRAM_PDN_ACK
+				 * poll -> infinite hang (identical root cause to the SMI wedge,
+				 * fixed in v175). Map every larb base, but only clock+program
+				 * larb0 (all display needs). */
+				if (i == 0) {
+					/* set mm engine domain */
+					larb_clock_on(i);
+					M4U_WriteReg32(gLarbBaseAddr[i], SMI_LARB_DOMN_0, DOMAIN_VALUE);
+					M4U_WriteReg32(gLarbBaseAddr[i], SMI_LARB_DOMN_1, DOMAIN_VALUE);
+					M4U_WriteReg32(gLarbBaseAddr[i], SMI_LARB_DOMN_2, DOMAIN_VALUE);
+					M4U_WriteReg32(gLarbBaseAddr[i], SMI_LARB_DOMN_3, DOMAIN_VALUE);
+					larb_clock_off(i);
+				} else {
+					pr_emerg("[FORGE_M4U] v178 larb%d clock/program SKIPPED (unpowered domain)\n", i);
+				}
 				M4UINFO("init larb %d, 0x%lx\n", i, gLarbBaseAddr[i]);
 			}
 		}
@@ -2483,7 +2494,14 @@ int m4u_hw_init(struct m4u_device *m4u_dev, int m4u_id)
 
 	/* config MDP related port default use M4U */
 
-	if (0 == m4u_id) {
+	/* m681 v177: localize the M4U probe wedge (M4U un-denied WEDGES, v176).
+	 * The only SMI-larb register write in m4u_hw_init is m4u_config_port (writes
+	 * gLarbBaseAddr[larb] for the MDP ports). If the larb owning MDP is not
+	 * clocked at M4U subsys_initcall time, that write bus-hangs. SKIP these and
+	 * mark: boots => config_port was the hang; recovery => the hang is earlier
+	 * (m4u_reg_init / monitor / smi_larb_clock_prepare). */
+	pr_emerg("[FORGE_M4U] v177 reached MDP port-config (about to SKIP)\n");
+	if (0 && (0 == m4u_id)) {
 		M4U_PORT_STRUCT port;
 
 		port.Direction = 0;
@@ -2501,6 +2519,7 @@ int m4u_hw_init(struct m4u_device *m4u_dev, int m4u_id)
 		port.ePortID = M4U_PORT_MDP_WROT;
 		m4u_config_port(&port);
 	}
+	pr_emerg("[FORGE_M4U] v177 m4u_hw_init DONE (config_port skipped)\n");
 
 	return 0;
 }

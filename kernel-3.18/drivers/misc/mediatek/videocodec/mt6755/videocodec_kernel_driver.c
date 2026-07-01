@@ -83,6 +83,7 @@ static dev_t vcodec_devno = MKDEV(VCODEC_DEV_MAJOR_NUMBER, 0);
 static struct cdev *vcodec_cdev;
 static struct class *vcodec_class;
 static struct device *vcodec_device;
+static int vcodec_probed;
 
 #ifndef CONFIG_MTK_CLKMGR
 static struct clk *clk_MT_CG_DISP0_SMI_COMMON;  /* MM_DISP0_SMI_COMMON */
@@ -95,6 +96,23 @@ static struct clk *clk_MT_CG_VENC_LARB;         /* VENC_LARB */
 static struct clk *clk_MT_SCP_SYS_VDE;          /* SCP_SYS_VDE */
 static struct clk *clk_MT_SCP_SYS_VEN;          /* SCP_SYS_VEN */
 static struct clk *clk_MT_SCP_SYS_DIS;          /* SCP_SYS_DIS */
+
+/* m681 v236: NULL-safe clk helpers for the manual-init path (no platform_device when
+ * CLK_OF_DECLARE claimed the vdec_gcon node, so devm_clk_get never ran and the clk
+ * pointers stay NULL). With clk_ignore_unused the clocks are already ON, so a NULL
+ * skip is safe for bring-up. */
+static inline int vcodec_clk_prepare_enable(struct clk *c)
+{
+	if (IS_ERR_OR_NULL(c))
+		return 0;
+	return clk_prepare_enable(c);
+}
+static inline void vcodec_clk_disable_unprepare(struct clk *c)
+{
+	if (IS_ERR_OR_NULL(c))
+		return;
+	clk_disable_unprepare(c);
+}
 #endif
 
 static DEFINE_MUTEX(IsOpenedLock);
@@ -153,6 +171,11 @@ static VAL_UINT32_T gu4VdecLockThreadId;
 #undef MODULE_MFV_LOGD
 #define MODULE_MFV_LOGD(...)
 #endif
+
+/* m681 v230d: force this file's error log to always print so we can see the silent
+ * vcodec_probe failure (which devm_clk_get / device_create fails -> no /dev/Vcodec). */
+#undef MODULE_MFV_LOGE
+#define MODULE_MFV_LOGE(...) pr_err(__VA_ARGS__)
 
 /* VENC physical base address */
 #undef VENC_BASE
@@ -241,32 +264,32 @@ void vdec_power_on(void)
 	/* enable_clock(MT_CG_INFRA_L2C_SRAM, "VDEC"); */
 #endif
 #else
-	ret = clk_prepare_enable(clk_MT_SCP_SYS_DIS);
+	ret = vcodec_clk_prepare_enable(clk_MT_SCP_SYS_DIS);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][vdec_power_on] clk_MT_SCP_SYS_DIS is not enabled, ret = %d\n", ret);
 	}
 
-	ret = clk_prepare_enable(clk_MT_CG_DISP0_SMI_COMMON);
+	ret = vcodec_clk_prepare_enable(clk_MT_CG_DISP0_SMI_COMMON);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][vdec_power_on] clk_MT_CG_DISP0_SMI_COMMON is not enabled, ret = %d\n",
 		    ret);
 	}
 
-	ret = clk_prepare_enable(clk_MT_SCP_SYS_VDE);
+	ret = vcodec_clk_prepare_enable(clk_MT_SCP_SYS_VDE);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][vdec_power_on] clk_MT_SCP_SYS_VDE is not enabled, ret = %d\n", ret);
 	}
 
-	ret = clk_prepare_enable(clk_MT_CG_VDEC0_VDEC);
+	ret = vcodec_clk_prepare_enable(clk_MT_CG_VDEC0_VDEC);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][vdec_power_on] clk_MT_CG_VDEC0_VDEC is not enabled, ret = %d\n", ret);
 	}
 
-	ret = clk_prepare_enable(clk_MT_CG_VDEC1_LARB);
+	ret = vcodec_clk_prepare_enable(clk_MT_CG_VDEC1_LARB);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][vdec_power_on] clk_MT_CG_VDEC1_LARB is not enabled, ret = %d\n", ret);
@@ -290,11 +313,11 @@ void vdec_power_off(void)
 		/* disable_clock(MT_CG_INFRA_L2C_SRAM, "VDEC"); */
 #endif
 #else
-		clk_disable_unprepare(clk_MT_CG_VDEC1_LARB);
-		clk_disable_unprepare(clk_MT_CG_VDEC0_VDEC);
-		clk_disable_unprepare(clk_MT_SCP_SYS_VDE);
-		clk_disable_unprepare(clk_MT_CG_DISP0_SMI_COMMON);
-		clk_disable_unprepare(clk_MT_SCP_SYS_DIS);
+		vcodec_clk_disable_unprepare(clk_MT_CG_VDEC1_LARB);
+		vcodec_clk_disable_unprepare(clk_MT_CG_VDEC0_VDEC);
+		vcodec_clk_disable_unprepare(clk_MT_SCP_SYS_VDE);
+		vcodec_clk_disable_unprepare(clk_MT_CG_DISP0_SMI_COMMON);
+		vcodec_clk_disable_unprepare(clk_MT_SCP_SYS_DIS);
 #endif
 	}
 	mutex_unlock(&VdecPWRLock);
@@ -319,32 +342,32 @@ void venc_power_on(void)
 	enable_clock(MT_CG_INFRA_L2C_SRAM, "VENC");
 #endif
 #else
-	ret = clk_prepare_enable(clk_MT_SCP_SYS_DIS);
+	ret = vcodec_clk_prepare_enable(clk_MT_SCP_SYS_DIS);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][venc_power_on] clk_MT_SCP_SYS_DIS is not enabled, ret = %d\n", ret);
 	}
 
-	ret = clk_prepare_enable(clk_MT_CG_DISP0_SMI_COMMON);
+	ret = vcodec_clk_prepare_enable(clk_MT_CG_DISP0_SMI_COMMON);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][venc_power_on] clk_MT_CG_DISP0_SMI_COMMON is not enabled, ret = %d\n",
 		    ret);
 	}
 
-	ret = clk_prepare_enable(clk_MT_SCP_SYS_VEN);
+	ret = vcodec_clk_prepare_enable(clk_MT_SCP_SYS_VEN);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][venc_power_on] clk_MT_SCP_SYS_VEN is not enabled, ret = %d\n", ret);
 	}
 
-	ret = clk_prepare_enable(clk_MT_CG_VENC_VENC);
+	ret = vcodec_clk_prepare_enable(clk_MT_CG_VENC_VENC);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][venc_power_on] clk_MT_CG_VENC_VENC is not enabled, ret = %d\n", ret);
 	}
 
-	ret = clk_prepare_enable(clk_MT_CG_VENC_LARB);
+	ret = vcodec_clk_prepare_enable(clk_MT_CG_VENC_LARB);
 	if (ret) {
 		/* print error log & error handling */
 		MODULE_MFV_LOGE("[VCODEC][ERROR][venc_power_on] clk_MT_CG_VENC_LARB is not enabled, ret = %d\n", ret);
@@ -370,11 +393,11 @@ void venc_power_off(void)
 		disable_clock(MT_CG_INFRA_L2C_SRAM, "VENC");
 #endif
 #else
-		clk_disable_unprepare(clk_MT_CG_VENC_LARB);
-		clk_disable_unprepare(clk_MT_CG_VENC_VENC);
-		clk_disable_unprepare(clk_MT_SCP_SYS_VEN);
-		clk_disable_unprepare(clk_MT_CG_DISP0_SMI_COMMON);
-		clk_disable_unprepare(clk_MT_SCP_SYS_DIS);
+		vcodec_clk_disable_unprepare(clk_MT_CG_VENC_LARB);
+		vcodec_clk_disable_unprepare(clk_MT_CG_VENC_VENC);
+		vcodec_clk_disable_unprepare(clk_MT_SCP_SYS_VEN);
+		vcodec_clk_disable_unprepare(clk_MT_CG_DISP0_SMI_COMMON);
+		vcodec_clk_disable_unprepare(clk_MT_SCP_SYS_DIS);
 #endif
 		MODULE_MFV_LOGD("[VCODEC] venc_power_off -\n");
 	}
@@ -2168,6 +2191,8 @@ static int vcodec_probe(struct platform_device *dev)
 	int ret;
 
 	MODULE_MFV_LOGD("+vcodec_probe\n");
+	pr_err("[FORGE_VCODEC] +vcodec_probe ENTER\n");
+	vcodec_probed = 1;
 
 	mutex_lock(&DecEMILock);
 	gu4DecEMICounter = 0;
@@ -2209,6 +2234,9 @@ static int vcodec_probe(struct platform_device *dev)
 	}
 
 	vcodec_device = device_create(vcodec_class, NULL, vcodec_devno, NULL, VCODEC_DEVNAME);
+	pr_err("[FORGE_VCODEC] device_create=%s devno=%d:%d; entering irq+clk block\n",
+	       IS_ERR_OR_NULL(vcodec_device) ? "FAIL" : "ok",
+	       MAJOR(vcodec_devno), MINOR(vcodec_devno));
 
 	if (request_irq(VDEC_IRQ_ID , (irq_handler_t)video_intr_dlr, IRQF_TRIGGER_LOW, VCODEC_DEVNAME, NULL) < 0) {
 		/* Add one line comment for avoid kernel coding style, WARNING:BRACES: */
@@ -2478,7 +2506,66 @@ static int __init vcodec_driver_init(void)
 	register_swsusp_restore_noirq_func(ID_M_VCODEC, vcodec_pm_restore_noirq, NULL);
 #endif
 
-	return platform_driver_register(&vcodec_driver);
+	{
+		int _r;
+		struct device_node *_n = of_find_compatible_node(NULL, NULL, "mediatek,mt6755-vdec_gcon");
+		pr_err("[FORGE_VCODEC] driver_init: vdec_gcon node %s, avail=%d; registering driver\n",
+		       _n ? "FOUND" : "MISSING", _n ? of_device_is_available(_n) : -1);
+		_r = platform_driver_register(&vcodec_driver);
+		pr_err("[FORGE_VCODEC] platform_driver_register=%d probed=%d\n", _r, vcodec_probed);
+
+		/* m681 v236 BOOT-UNBLOCK: CLK_OF_DECLARE(mtk_vdecsys,"mediatek,mt6755-vdecsys")
+		 * claims the vdec_gcon node at early boot, so NO platform_device is ever created
+		 * for it -> vcodec_probe never fires -> no /dev/Vcodec, no IRQ request. The driver
+		 * already got all register bases + IRQs manually via of_find_compatible_node above.
+		 * Fall back to creating the char device + requesting IRQs directly. clk pointers
+		 * stay NULL (clk_ignore_unused keeps clocks ON; vcodec_clk_* helpers skip NULL). */
+		if (_r == 0 && !vcodec_probed) {
+			int _cr;
+			pr_err("[FORGE_VCODEC] probe did NOT fire (CLK_OF_DECLARE claimed node) -> MANUAL INIT\n");
+			_cr = register_chrdev_region(vcodec_devno, 1, VCODEC_DEVNAME);
+			if (_cr) { pr_err("[FORGE_VCODEC] manual: register_chrdev_region FAIL=%d\n", _cr); }
+			else {
+				vcodec_cdev = cdev_alloc();
+				vcodec_cdev->owner = THIS_MODULE;
+				vcodec_cdev->ops = &vcodec_fops;
+				_cr = cdev_add(vcodec_cdev, vcodec_devno, 1);
+				if (_cr) { pr_err("[FORGE_VCODEC] manual: cdev_add FAIL=%d\n", _cr); }
+				vcodec_class = class_create(THIS_MODULE, VCODEC_DEVNAME);
+				if (!IS_ERR(vcodec_class)) {
+					vcodec_device = device_create(vcodec_class, NULL, vcodec_devno, NULL, VCODEC_DEVNAME);
+					if (IS_ERR(vcodec_device))
+						pr_err("[FORGE_VCODEC] manual: device_create FAIL=%ld\n", PTR_ERR(vcodec_device));
+					else
+						pr_err("[FORGE_VCODEC] manual: /dev/%s created OK\n", VCODEC_DEVNAME);
+				}
+			}
+			if (request_irq(VDEC_IRQ_ID, (irq_handler_t)video_intr_dlr, IRQF_TRIGGER_LOW, VCODEC_DEVNAME, NULL) < 0)
+				pr_err("[FORGE_VCODEC] manual: VDEC request_irq FAIL (irq=%d)\n", VDEC_IRQ_ID);
+			else {
+				disable_irq(VDEC_IRQ_ID);
+				pr_err("[FORGE_VCODEC] manual: VDEC irq=%d OK\n", VDEC_IRQ_ID);
+			}
+			if (request_irq(VENC_IRQ_ID, (irq_handler_t)video_intr_dlr2, IRQF_TRIGGER_LOW, VCODEC_DEVNAME, NULL) < 0)
+				pr_err("[FORGE_VCODEC] manual: VENC request_irq FAIL (irq=%d)\n", VENC_IRQ_ID);
+			else {
+				disable_irq(VENC_IRQ_ID);
+				pr_err("[FORGE_VCODEC] manual: VENC irq=%d OK\n", VENC_IRQ_ID);
+			}
+#ifndef CONFIG_MTK_CLKMGR
+			clk_MT_CG_DISP0_SMI_COMMON = clk_get(NULL, "MT_CG_DISP0_SMI_COMMON");
+			clk_MT_CG_VDEC0_VDEC = clk_get(NULL, "MT_CG_VDEC0_VDEC");
+			clk_MT_CG_VDEC1_LARB = clk_get(NULL, "MT_CG_VDEC1_LARB");
+			clk_MT_CG_VENC_VENC = clk_get(NULL, "MT_CG_VENC_VENC");
+			clk_MT_CG_VENC_LARB = clk_get(NULL, "MT_CG_VENC_LARB");
+			clk_MT_SCP_SYS_VDE = clk_get(NULL, "MT_SCP_SYS_VDE");
+			clk_MT_SCP_SYS_VEN = clk_get(NULL, "MT_SCP_SYS_VEN");
+			clk_MT_SCP_SYS_DIS = clk_get(NULL, "MT_SCP_SYS_DIS");
+			pr_err("[FORGE_VCODEC] manual: clk_get done (NULL=skipped, clk_ignore_unused keeps ON)\n");
+#endif
+		}
+		return _r;
+	}
 }
 
 static void __exit vcodec_driver_exit(void)
