@@ -770,8 +770,10 @@ int spm_mtcmos_ctrl_dis(int state)
 		/* TINFO="Set SRAM_PDN = 1" */
 		spm_write(DIS_PWR_CON, spm_read(DIS_PWR_CON) | DIS_SRAM_PDN);
 		/* TINFO="Wait until DIS_SRAM_PDN_ACK = 1" */
-		while (!(spm_read(DIS_PWR_CON) & DIS_SRAM_PDN_ACK))
-			;
+		/* m681 v168: BOUNDED (see power-on note) */
+		{ int _m681_t = 0;
+		  while (!(spm_read(DIS_PWR_CON) & DIS_SRAM_PDN_ACK) && ++_m681_t < 2000000)
+			cpu_relax(); }
 		/* Need hf_fmm_ck for SRAM PDN delay IP. */
 		/* TINFO="Set PWR_ISO = 1" */
 		spm_write(DIS_PWR_CON, spm_read(DIS_PWR_CON) | PWR_ISO);
@@ -815,8 +817,17 @@ int spm_mtcmos_ctrl_dis(int state)
 		/* TINFO="Set SRAM_PDN = 0" */
 		spm_write(DIS_PWR_CON, spm_read(DIS_PWR_CON) & ~(0x1 << 8));
 		/* TINFO="Wait until DIS_SRAM_PDN_ACK = 0" */
-		while (spm_read(DIS_PWR_CON) & DIS_SRAM_PDN_ACK)
-			;
+		/* m681 v168 REJECTED-as-root-cause (kept as harmless safety cap):
+		 * the theory that THIS poll spun forever and was "the display boot
+		 * wall" is FALSE. mt_scpsys_init (CLK_OF_DECLARE, line ~2110) powers DIS
+		 * on UNCONDITIONALLY at of_clk_init in EVERY boot; display-denied builds
+		 * boot fine, so this ack DOES clear here and DIS powers up. The real
+		 * display wedge is elsewhere (TBD via forge_spm_dump + graceful-fail
+		 * bring-up from a booting build). Cap stays: bounded is strictly safer
+		 * than an unbounded spin, but it is NOT the fix. */
+		{ int _m681_t = 0;
+		  while ((spm_read(DIS_PWR_CON) & DIS_SRAM_PDN_ACK) && ++_m681_t < 2000000)
+			cpu_relax(); }
 		/* Need hf_fmm_ck for SRAM PDN delay IP. */
 		/* TINFO="Release bus protect" */
 #if 0
@@ -1544,8 +1555,18 @@ static int CONN_sys_enable_op(struct subsys *sys)
 }
 static int MFG_sys_enable_op(struct subsys *sys)
 {
+	int _r;
 	spm_mtcmos_ctrl_mfg_async(STA_POWER_ON);
-	return spm_mtcmos_ctrl_mfg2(STA_POWER_ON);
+	_r = spm_mtcmos_ctrl_mfg2(STA_POWER_ON);
+	/* m681 v234: IGNORE_PWR_ACK skips the MFG PWR_STATUS verify. Dump it: if MFG(bit4)
+	 * stays 0 after power-on, the GPU domain never truly powers -> shader cores dead ->
+	 * GPU jobs never complete -> mali_fence never signals -> HWComposer times out ->
+	 * SurfaceFlinger composes nothing -> BLACK PANEL. This is the suspected display root. */
+	{ unsigned int _s = spm_read(PWR_STATUS), _s2 = spm_read(PWR_STATUS_2ND);
+	  static int _mc; if (_mc < 8) { _mc++;
+	  pr_emerg("[FORGE_MFG] MFG pwron#%d: PWR_STATUS=0x%x 2ND=0x%x MFG(bit4)=%d ASYNC(bit23)=%d\n",
+	           _mc, _s, _s2, !!(_s & MFG_PWR_STA_MASK), !!(_s & MFG_ASYNC_PWR_STA_MASK)); } }
+	return _r;
 }
 static int DIS_sys_enable_op(struct subsys *sys)
 {
@@ -2100,6 +2121,21 @@ static void __init mt_scpsys_init(struct device_node *node)
 	spm_mtcmos_ctrl_mfg_async(STA_POWER_ON);
 	spm_mtcmos_ctrl_mfg2(STA_POWER_ON);
 	spm_mtcmos_ctrl_dis(STA_POWER_ON);
+	/* m681 display root-probe: IGNORE_PWR_ACK masks the in-sequence DIS PWR_STATUS
+	 * wait, so the forge author never CONFIRMED SYS_DIS actually powers (the open
+	 * "real display wedge is elsewhere" TODO). Confirm it here, BOUNDED, and log to
+	 * klog/pstore. bit3 (DIS_PWR_STA_MASK) = SYS_DIS powered. If bit3=0 -> domain
+	 * never powers (R1/R3 secure-SMC like cpuxgpt); if bit3=1 -> domain is up and
+	 * the wall is the MMSYS CG ungate (handled in ddp_drv.c disp_probe_1). */
+	{
+		unsigned int _s = 0, _s2 = 0; int _t = 0;
+		while ((!((_s = spm_read(PWR_STATUS)) & DIS_PWR_STA_MASK)
+			|| !((_s2 = spm_read(PWR_STATUS_2ND)) & DIS_PWR_STA_MASK))
+			&& ++_t < 200000)
+			cpu_relax();
+		pr_emerg("[FORGE_DISP] SYS_DIS pwron: PWR_STATUS=0x%x 2ND=0x%x DIS_PWR_CON=0x%x bit3=%d spins=%d\n",
+			_s, _s2, spm_read(DIS_PWR_CON), !!(_s & DIS_PWR_STA_MASK), _t);
+	}
 }
 CLK_OF_DECLARE(mtk_pg_regs, "mediatek,mt6755-scpsys", mt_scpsys_init);
 void subsys_if_on(void)

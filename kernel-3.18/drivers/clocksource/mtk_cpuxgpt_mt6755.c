@@ -343,6 +343,22 @@ irq4=%d, irq5=%d, irq6=%d, irq7=%d\n", */
 /* cpuxgpt_regs, cpuxgpt_irq[0], cpuxgpt_irq[1], cpuxgpt_irq[2], cpuxgpt_irq[3], cpuxgpt_irq[4], cpuxgpt_irq[5], */
 /* cpuxgpt_irq[6], cpuxgpt_irq[7]); */
 
+	/* m681 v89: ENABLE the architected system counter (CNTVCT) here.
+	 * setup_syscnt() in mtk_timer_mt6755.c (mt_gpt_init, compatible
+	 * "mediatek,apxgpt") normally does set_cpuxgpt_clk()+enable_cpuxgpt(),
+	 * but the m6-graft timer DT node (apxgpt@10008000) is compatible
+	 * "mediatek,mt6577-timer", so the generic mtk_timer.c binds instead and
+	 * NEVER enables the cpuxgpt -> CNTVCT free-running counter stays OFF.
+	 * Proven (v88 udelay bracket): get_cycles()==arch_counter_get_cntvct()
+	 * never advances, so __delay()/udelay() spin forever and hrtimers never
+	 * fire.  This driver DOES bind (cpuxgpt@10200000) and has just mapped the
+	 * base + set mt_cpuxgpt_base_phys, so start the counter now.  Writes go via
+	 * mcusys SMC (CONFIG_MTK_PSCI=y) since MCUSYS is ATF write-protected.
+	 * Rollback: delete these two calls. */
+	pr_emerg("[FORGE_M681] v89 enabling cpuxgpt system counter (CNTVCT)\n");
+	__cpuxgpt_set_clk(CLK_DIV2);	/* 13MHz / DIV2, matches setup_syscnt() */
+	__cpuxgpt_enable();		/* set EN_CPUXGPT -> CNTVCT free-runs */
+
 		/* gpt_update_unlock(save_flags); */
 }
 

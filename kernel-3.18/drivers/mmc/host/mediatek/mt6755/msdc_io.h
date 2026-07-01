@@ -316,6 +316,22 @@ extern u32 *hclks_msdc_all[];
 
 int msdc_get_ccf_clk_pointer(struct platform_device *pdev,
 	struct msdc_host *host);
+/* m681 v84: clk_prepare is #if0'd in msdc_io.c (it tried to power MSDCPLL via
+ * SPM/PMIC and deadlocked), so prepare_count==0 and clk_enable() WARNs at
+ * drivers/clk/clk.c:1147 (__clk_enable) WITHOUT enabling anything — the
+ * mmc_power_up -> msdc_ungate_clock -> msdc_clksrc_onoff -> clk_enable path
+ * (v83 backtrace) floods WARNs and never refcounts the clock.  The eMMC HW
+ * clock is already ON (preloader/LK/TWRP read eMMC; INFRA1_CG bit2=0 leaves
+ * MSDC0 ungated), so the CCF enable is unnecessary.  Make these no-ops to kill
+ * the WARN and let the eMMC path proceed past msdc_ungate_clock to set_ios
+ * (forge marks C3+).  SD/SDIO still skip msdc_add_host, so unaffected.
+ * Value (0) keeps `(void)msdc_clk_enable(host)` / `if(msdc_clk_enable(host))`
+ * call sites valid (success).  Rollback: restore clk_enable/clk_disable. */
+/* m681 v98: RESTORED real clk_enable/disable (was ((void)0) in v84).  With
+ * clk_prepare restored (msdc_io.c) prepare_count>0, so clk_enable no longer
+ * WARNs at clk.c:1147 and ACTUALLY enables the controller source clock ->
+ * MSDC_CFG_CKSTB asserts -> SCLK runs -> commands complete.  If this re-WARNs
+ * or hangs, revert both this and the msdc_io.c clk_prepare. */
 #define msdc_clk_enable(host) clk_enable(host->clock_control)
 #define msdc_clk_disable(host) clk_disable(host->clock_control)
 

@@ -487,7 +487,20 @@ static void __init arch_counter_register(unsigned type)
 	cyclecounter.shift = clocksource_counter.shift;
 	timecounter_init(&timecounter, &cyclecounter, start_count);
 
-	/* 56 bits minimum, so we assume worst case rollover */
+	/* TIMERFIX-C2-ARCH: do NOT register the architected counter as sched_clock
+	 * on the m6-graft.  CNTVCT is FROZEN here (donor secure firmware never
+	 * enables the system counter), so this would freeze sched_clock/local_clock/
+	 * printk-timestamps.  mtk_timer.c (TIMERFIX-C2) registers the real 13MHz
+	 * GPT2 counter (0x10008028) as sched_clock instead.  arm_arch_timer inits
+	 * AFTER mtk_timer (link order: mtk_timer.o before arm_arch_timer.o), and
+	 * sched_clock_register() lets a later EQUAL-rate registration override, so
+	 * leaving this call would clobber the good GPT2 sched_clock with the frozen
+	 * counter.  Skipping it: if mtk's is present it stays; otherwise sched_clock
+	 * falls back to the (advancing) jiffies reader -- both are non-frozen.
+	 * C2-ARCH REVERTED (v119): restored the line below to return to the known-good
+	 * baseline (arch sched_clock, equal 13MHz rate, overrides mtk's) while the
+	 * GPT2-counter-counts question is settled by the forge wdt-kick probe. */
+	/* (56 bits minimum, so we assume worst case rollover) */
 	sched_clock_register(arch_timer_read_counter, 56, arch_timer_rate);
 }
 

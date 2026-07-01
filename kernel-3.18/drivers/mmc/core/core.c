@@ -2868,6 +2868,10 @@ void mmc_power_up(struct mmc_host *host, u32 ocr)
 	host->ios.power_mode = MMC_POWER_UP;
 	/* Set initial state and call mmc_set_ios */
 	mmc_set_initial_state(host);
+	/* m681 v110: localize the mmc_power_up hang (eMMC reaches C5 in this 1st
+	 * set_ios but mmc_power_up never returns). Gate on NONREMOVABLE. */
+#define FORGE_PU(c) do { if (host->caps & MMC_CAP_NONREMOVABLE) { extern void forge_m681_diag(unsigned int, u32); forge_m681_diag(0xA0u, (c)); } } while (0)
+	FORGE_PU(0xA1u);	/* after 1st set_ios (POWER_UP) */
 
 	/* Try to set signal voltage to 3.3V but fall back to 1.8v or 1.2v */
 	if (__mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_330) == 0)
@@ -2876,25 +2880,34 @@ void mmc_power_up(struct mmc_host *host, u32 ocr)
 		dev_dbg(mmc_dev(host), "Initial signal voltage of 1.8v\n");
 	else if (__mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_120) == 0)
 		dev_dbg(mmc_dev(host), "Initial signal voltage of 1.2v\n");
+	FORGE_PU(0xA2u);	/* after signal-voltage */
 
 	/*
 	 * This delay should be sufficient to allow the power supply
 	 * to reach the minimum voltage.
 	 */
-	mmc_delay(10);
+	/* m681 v111: mdelay (bounded busy-wait, __delay fallback-capped) instead of
+	 * mmc_delay->msleep: the eMMC power-up hangs HERE (probe A2 reached, A3 not)
+	 * because msleep's timer-driven wakeup never fires on the frozen-arch-timer
+	 * graft (see m6graft_frozen_arch_timer). mdelay can't sleep -> can't wedge. */
+	mdelay(10);
 
 	host->ios.clock = host->f_init;
 
 	host->ios.power_mode = MMC_POWER_ON;
+	FORGE_PU(0xA3u);	/* pre 2nd set_ios (POWER_ON, sets f_init clock) */
 	mmc_set_ios(host);
+	FORGE_PU(0xA4u);	/* after 2nd set_ios */
 
 	/*
 	 * This delay must be at least 74 clock sizes, or 1 ms, or the
 	 * time required to reach a stable voltage.
 	 */
-	mmc_delay(10);
+	mdelay(10);	/* v111: see above — avoid msleep on frozen-timer graft */
+	FORGE_PU(0xA5u);	/* pre clk_release (mmc_power_up about to return) */
 
 	mmc_host_clk_release(host);
+#undef FORGE_PU
 }
 
 void mmc_power_off(struct mmc_host *host)
@@ -3643,13 +3656,26 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 	pr_info("%s: %s: trying to init card at %u Hz\n",
 		mmc_hostname(host), __func__, host->f_init);
 #endif
+	/* m681 v108: per-step localization for eMMC — diag 0x88 = furthest step
+	 * reached before the stall (0xB0..0xB7). CLEAN offset (v99 used 0xEC which
+	 * COLLIDED with forge_m681_bump(2)=C9). v108 FIX: gate on MMC_CAP_NONREMOVABLE
+	 * (the eMMC), NOT host->index==0 — the eMMC's mmc->index is NOT 0 (ida order),
+	 * so v99/v107's index==0 gate never fired (0x88 showed stale data). */
+#define FORGE_RS(code) do { if (host->caps & MMC_CAP_NONREMOVABLE) { extern void forge_m681_diag(unsigned int, u32); forge_m681_diag(0x88u, (code)); } } while (0)
 	mmc_power_up(host, host->ocr_avail);
+	/* v109: UNGATED proof that mmc_power_up RETURNED, for ALL hosts, index in
+	 * bits[15:8]. Cross-ref with 0x94(eMMC index): if 0x9C high byte == eMMC index,
+	 * power_up returned for the eMMC; if not, it hung inside (FORGE_RS(0xB0) below
+	 * would then never fire for the eMMC). */
+	{ extern void forge_m681_diag(unsigned int, u32); forge_m681_diag(0x9Cu, 0xB0000000u | ((u32)host->index << 8) | (host->caps & MMC_CAP_NONREMOVABLE ? 1u : 0u)); }
+	FORGE_RS(0xB0u);	/* post power_up */
 
 	/*
 	 * Some eMMCs (with VCCQ always on) may not be reset after power up, so
 	 * do a hardware reset if possible.
 	 */
 	mmc_hw_reset_for_init(host);
+	FORGE_RS(0xB1u);	/* post hw_reset_for_init */
 
 	/*
 	 * sdio_reset sends CMD52 to reset card.  Since we do not know
@@ -3657,24 +3683,31 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 	 * should be ignored by SD/eMMC cards.
 	 */
 	sdio_reset(host);
+	FORGE_RS(0xB2u);	/* post sdio_reset (CMD52) */
 	mmc_go_idle(host);
+	FORGE_RS(0xB3u);	/* post mmc_go_idle (CMD0) */
 
 	mmc_send_if_cond(host, host->ocr_avail);
+	FORGE_RS(0xB4u);	/* post mmc_send_if_cond (CMD8) */
 
 	/* Order's important: probe SDIO, then SD, then MMC */
 	err = mmc_attach_sdio(host);
+	FORGE_RS(0xB5u);	/* post attach_sdio */
 	if (host->index == 2)
 		pr_warn("M6 MMC2 try_freq attach_sdio ret=%d bus_ops=%p card=%p\n",
 			err, host->bus_ops, host->card);
 	if (!err)
 		return 0;
 	err = mmc_attach_sd(host);
+	FORGE_RS(0xB6u);	/* post attach_sd */
 	if (host->index == 2)
 		pr_warn("M6 MMC2 try_freq attach_sd ret=%d bus_ops=%p card=%p\n",
 			err, host->bus_ops, host->card);
 	if (!err)
 		return 0;
+	FORGE_RS(0xB7u);	/* pre attach_mmc */
 	err = mmc_attach_mmc(host);
+	if (host->caps & MMC_CAP_NONREMOVABLE) { extern void forge_m681_diag(unsigned int, u32); forge_m681_diag(0x8Cu, 0xA77AC000u | ((u32)err & 0xFFFFu)); } /* attach_mmc err */
 	if (host->index == 2)
 		pr_warn("M6 MMC2 try_freq attach_mmc ret=%d bus_ops=%p card=%p\n",
 			err, host->bus_ops, host->card);

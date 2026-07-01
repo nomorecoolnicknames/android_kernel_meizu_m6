@@ -781,4 +781,14 @@ int gpt_set_clk(unsigned int id, unsigned int clksrc, unsigned int clkdiv)
 EXPORT_SYMBOL(gpt_set_clk);
 
 /************************************************************************************************/
-CLOCKSOURCE_OF_DECLARE(mtk_apxgpt, "mediatek,apxgpt", mt_gpt_init);
+/* m681 v93: was "mediatek,apxgpt" — but the DT timer node apxgpt@10008000 is
+ * compatible "mediatek,mt6755-timer","mediatek,mt6577-timer" (NO "apxgpt"), so
+ * this driver never bound and the generic mtk_timer.c (mt6577) took the node
+ * WITHOUT setup_syscnt()->enable_cpuxgpt() -> the ARM architected counter
+ * (CNTVCT) stayed frozen -> udelay()/hrtimers dead (the root cause).  The
+ * MT6757/P20 4.4 tree declares "mediatek,mt6757-timer" matching ITS node's
+ * first compatible — replicate that here so mt_gpt_init binds (scores higher
+ * than the mt6577 generic on the node's 2nd compatible) and enables the system
+ * counter natively.  If it works, heartbeat@0xFC>0 and the __delay() fallback
+ * can be dropped. */
+CLOCKSOURCE_OF_DECLARE(mtk_apxgpt, "mediatek,mt6755-timer", mt_gpt_init);

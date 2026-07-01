@@ -204,6 +204,15 @@ u64 mtk_timer_get_cnt(u8 timer)
 	return cnt;
 }
 
+/* TIMERFIX-C2: sched_clock read of the GPT2 free-run counter (phys 0x10008028,
+ * 13MHz, 32-bit).  Registered from mtk_timer_init() so scheduler/printk time
+ * advances despite the frozen ARM CNTVCT.  mtk_evt is assigned before the
+ * sched_clock_register() call, so it is valid here. */
+static u64 notrace mtk_gpt_sched_read(void)
+{
+	return (u64)readl_relaxed(mtk_evt->gpt_base + TIMER_CNT_REG(GPT_CLK_SRC));
+}
+
 static void __init mtk_timer_init(struct device_node *node)
 {
 	struct mtk_clock_event_device *evt;
@@ -292,8 +301,30 @@ static void __init mtk_timer_init(struct device_node *node)
 	mtk_timer_setup(evt, 6, TIMER_CTRL_OP_FREERUN, TIMER_CLK_SRC_SYS13M, true);
 	#endif
 	mtk_timer_setup(evt, GPT_CLK_SRC, TIMER_CTRL_OP_FREERUN, TIMER_CLK_SRC_SYS13M, true);
+	/* TIMERFIX-C1: the m6-graft secure firmware (MT6750-donor preloader/LK/ATF)
+	 * never enables the ARM architected system counter, so the default ktime
+	 * clocksource "arch_sys_counter" (CNTVCT, rating 400) is FROZEN -> reads a
+	 * constant -> CLOCK_MONOTONIC never advances -> hrtimers/nanosleep/msleep
+	 * hang and userspace init stalls.  GPT2 (programmed FREERUN @ SYS13M just
+	 * above) is a genuine 13MHz free-running up-counter at phys 0x10008028 (DTS
+	 * apxgpt2_count); this very GPT block also drives the working jiffies tick,
+	 * so the counter demonstrably runs.  Raise this clocksource's rating from
+	 * 300 to 450 so timekeeping selects the REAL counter over the frozen arch
+	 * one (450 > 400).  No firmware/SMC involved.  Revert: change 450 back to
+	 * 300.  Pre-flash check: read 0x10008028 twice from TWRP /dev/mem (must
+	 * increment), or boot current kernel with cmdline clocksource=apxgpt. */
 	clocksource_mmio_init(evt->gpt_base + TIMER_CNT_REG(GPT_CLK_SRC),
-			node->name, rate1, 300, 32, clocksource_mmio_readl_up);
+			node->name, rate1, 300, 32, clocksource_mmio_readl_up); /* C1 REVERTED v119: 450->300 (regressed boot; verify GPT2 counts first) */
+
+	/* TIMERFIX-C2: sched_clock() (scheduler runqueue time, local_clock(),
+	 * printk timestamps) is otherwise registered by arm_arch_timer on the FROZEN
+	 * CNTVCT and never advances.  Point it at the same real 13MHz GPT2 free-run
+	 * counter (0x10008028).  32-bit @ 13MHz wraps ~330s; the sched_clock core's
+	 * wrap-update hrtimer handles that, and that hrtimer works once TIMERFIX-C1
+	 * unfreezes ktime.  Paired with TIMERFIX-C2-ARCH in arm_arch_timer.c (which
+	 * drops arch's competing equal-rate sched_clock registration so this one is
+	 * not clobbered).  Revert: delete this call + mtk_gpt_sched_read(). */
+	sched_clock_register(mtk_gpt_sched_read, 32, rate1);
 
 	/* Configure clock event */
 	mtk_timer_setup(evt, GPT_CLK_EVT, TIMER_CTRL_OP_REPEAT, TIMER_CLK_SRC_RTC32K, false);

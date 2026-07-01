@@ -648,12 +648,15 @@ int msdc_get_ccf_clk_pointer(struct platform_device *pdev,
 		pr_err("can not get msdc%d clock control\n", pdev->id);
 		return 1;
 	}
-	/* m681 bring-up: skip clk_prepare — on MT6750→MT6755 graft,
-	 * clk_prepare for MSDC PLL tries to power up PLL via SPM/PMIC
-	 * coordination which deadlocks (l681 M16 fix a). eMMC boot clock
-	 * is already enabled by preloader/lk, so eMMC works without
-	 * clk_prepare. SD/SDIO not needed pre-adb. */
-#if 0
+	/* m681 v98: RESTORED clk_prepare.  It was #if0'd (the "deadlock via
+	 * SPM/PMIC" was almost certainly the frozen-CNTVCT udelay HANG, now fixed
+	 * by the __delay fallback).  Without prepare, prepare_count==0 so the real
+	 * clk_enable WARNs at clk.c:1147 and does NOT enable -> the controller's
+	 * source clock is never CCF-enabled -> MSDC_CFG_CKSTB never asserts -> SCLK
+	 * to the eMMC card never runs -> CMD0/CMD1 never complete (mmc_attach_mmc
+	 * unreachable, v97).  Prepare it so the real msdc_clk_enable (restored in
+	 * msdc_io.h) actually starts the clock. */
+#if 1
 	if (clk_prepare(host->clock_control)) {
 		pr_err("can not prepare msdc%d clock control\n", pdev->id);
 		return 1;

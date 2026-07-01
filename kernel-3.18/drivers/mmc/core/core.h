@@ -58,6 +58,9 @@ void mmc_set_initial_state(struct mmc_host *host);
 
 static inline void mmc_delay(unsigned int ms)
 {
+	/* m681 v122: REVERTED to stock msleep — the frozen-timer workaround (mdelay)
+	 * is no longer needed now that cpuxgpt is enabled via SMC (CNTVCT runs ->
+	 * msleep's timer-driven wakeup works). See m6graft_timer_FIXED. */
 	if (ms < 1000 / HZ) {
 		cond_resched();
 		mdelay(ms);

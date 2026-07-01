@@ -2136,11 +2136,20 @@ int mmc_attach_mmc(struct mmc_host *host)
 	BUG_ON(!host);
 	WARN_ON(!host->claimed);
 
+	/* m681 v112: CLEAN-offset attach_mmc localization (v97's 0xF4/0xF0 COLLIDED
+	 * with forge_m681_bump C3/CA). 0xA8 = attach_mmc stage, 0xAC = CMD1 result. */
+	{ extern void forge_m681_diag(unsigned int, u32); forge_m681_diag(0xA8u, 0xE0000000u); } /* entry */
+
 	/* Set correct bus mode for MMC before attempting attach */
 	if (!mmc_host_is_spi(host))
 		mmc_set_bus_mode(host, MMC_BUSMODE_OPENDRAIN);
 
 	err = mmc_send_op_cond(host, 0, &ocr);
+	/* CMD1 (SEND_OP_COND) probe result: tag 0xC1 | err(lo16). err 0 = card
+	 * answered; -110/0xFF92 = timeout = card silent. 0xAC hi=err, lo=ocr&0xFFFF. */
+	{ extern void forge_m681_diag(unsigned int, u32);
+	  forge_m681_diag(0xACu, ((u32)err << 16) | (ocr & 0xFFFFu));
+	  forge_m681_diag(0xA8u, 0xE1000000u | ((u32)err & 0xFFFFu)); } /* post CMD1-probe */
 	if (err)
 		return err;
 
@@ -2170,9 +2179,15 @@ int mmc_attach_mmc(struct mmc_host *host)
 	/*
 	 * Detect and init the card.
 	 */
+	{ extern void forge_m681_diag(unsigned int, u32); forge_m681_diag(0xA8u, 0xE2000000u); } /* pre mmc_init_card */
 	err = mmc_init_card(host, rocr, NULL);
+	{ extern void forge_m681_diag(unsigned int, u32); forge_m681_diag(0xA8u, 0xE3000000u | ((u32)err & 0xFFFFu)); } /* mmc_init_card returned */
 	if (err)
 		goto err;
+	/* m681 v113: rolling marker (OR-redundant, survives late-boot DRAM clobber
+	 * better than single-offset diag) — 0xD0 = eMMC card INITIALIZED (responded
+	 * to CMD1/CMD2/CMD3/CSD/etc). Proof the card is alive on the bus. */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xD5); }
 
 #ifdef MTK_BKOPS_IDLE_MAYA
 	if (host->card->ext_csd.bkops_en) {
@@ -2219,6 +2234,9 @@ int mmc_attach_mmc(struct mmc_host *host)
 	if (err)
 		goto remove_card;
 
+	/* m681 v113: 0xD1 = eMMC card REGISTERED (mmc_add_card OK -> mmcblk0 + its
+	 * partitions mmcblk0p1..p31 appear; /system=p29 can now be mounted). */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xD6); }
 	return 0;
 
 remove_card:

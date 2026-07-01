@@ -548,6 +548,43 @@ void msdc_clr_fifo(unsigned int id)
 	msdc_retry(MSDC_READ32(MSDC_FIFOCS) & MSDC_FIFOCS_CLR, retry, cnt, id);
 }
 
+/* m681 v103/v106: persistent ioremap of topckgen(msdc mux), apmixed(MSDCPLL)
+ * and infracfg(INFRA_MSDC0 gate), mapped ONCE at probe (msdc_add_host, sleepable
+ * context) so the clock-source re-force can run under spin_lock WITHOUT calling
+ * ioremap (which may sleep -> scheduling-while-atomic, the v102 wedge). NULL
+ * until probe maps them. Declared here (above msdc_clksrc_onoff) so the force
+ * can be applied right before msdc_clk_stable (the CKSTB poll). */
+static void __iomem *forge_msdc_tck;	/* topckgen 0x10000000 */
+static void __iomem *forge_msdc_apm;	/* apmixedsys 0x1000c000 */
+static void __iomem *forge_msdc_infra;	/* infracfg 0x10001000 (INFRA_MSDC0 gate) */
+
+/* m681 v106: force msdc50_0_sel mux -> msdcpll_ck + ENABLE MSDCPLL + ungate
+ * INFRA_MSDC0, applied as the LAST writer before a CKSTB poll. The CCF (clk-
+ * mt6755) reprograms the msdc50_0_sel mux to its own cached parent on every
+ * clk_enable(host->clock_control) inside msdc_clk_enable -> so a force done at
+ * the TOP of msdc_ops_set_ios (v102-v105) was UNDONE by msdc_ungate_clock's
+ * clk_enable before msdc_clk_stable ran. Re-forcing here, immediately before
+ * msdc_clk_stable, makes the raw register state win at the moment CKSTB is
+ * sampled. id 0 (eMMC) only; atomic-safe (no ioremap). */
+static inline void forge_msdc_force_clk(struct msdc_host *host)
+{
+	if (host->id != 0)
+		return;
+	if (forge_msdc_infra)
+		writel(0x1u << 2, forge_msdc_infra + 0x8c);	/* ungate INFRA_MSDC0 */
+	if (forge_msdc_tck) {
+		writel(0xFu << 16, forge_msdc_tck + 0x78);	/* CLR msdc50_0_sel */
+		writel(0x1u << 16, forge_msdc_tck + 0x74);	/* SET idx1 = msdcpll_ck */
+		writel(0x1u << 13, forge_msdc_tck + 0x04);	/* CLK_CFG_UPDATE latch */
+	}
+	if (forge_msdc_apm) {
+		writel(readl(forge_msdc_apm + 0x25C) | 0x1u, forge_msdc_apm + 0x25C); /* PWR_ON */
+		writel(readl(forge_msdc_apm + 0x25C) & ~0x2u, forge_msdc_apm + 0x25C);/* ISO=0 */
+		writel(readl(forge_msdc_apm + 0x250) | 0x1u, forge_msdc_apm + 0x250); /* RG_PLL_EN */
+		udelay(30);
+	}
+}
+
 int msdc_clk_stable(struct msdc_host *host, u32 mode, u32 div,
 	u32 hs400_div_dis)
 {
@@ -555,6 +592,10 @@ int msdc_clk_stable(struct msdc_host *host, u32 mode, u32 div,
 	int retry = 0;
 	int cnt = 1000;
 	int retry_cnt = 1;
+
+	/* m681 v106: make the raw msdcpll/mux/gate force the LAST writer before the
+	 * CKSTB poll below (CCF reprograms the mux on clk_enable; see helper note). */
+	forge_msdc_force_clk(host);
 
 #if defined(CFG_DEV_MSDC3)
 	/*FIXME: check function instead of host->id*/
@@ -598,6 +639,20 @@ int msdc_clk_stable(struct msdc_host *host, u32 mode, u32 div,
 			break;
 		retry_cnt++;
 	} while (!retry);
+
+	/* m681 v106: 0x80 = MSDC_CFG at clk_stable exit (bit7 CKSTB). 0x84 = sticky
+	 * counts: hi16 = total id0 clk_stable calls, lo16 = calls with CKSTB ASSERTED
+	 * at exit (proves the force took). */
+	if (host->id == 0) {
+		extern void forge_m681_diag(unsigned int, u32);
+		static u16 forge_cs_total, forge_cs_ok;
+		u32 cfg = MSDC_READ32(MSDC_CFG);
+		forge_cs_total++;
+		if (cfg & MSDC_CFG_CKSTB)
+			forge_cs_ok++;
+		forge_m681_diag(0x80u, cfg);
+		forge_m681_diag(0x84u, ((u32)forge_cs_total << 16) | forge_cs_ok);
+	}
 
 	return 0;
 }
@@ -751,17 +806,26 @@ static void msdc_clksrc_onoff(struct msdc_host *host, u32 on)
 		*/
 		#endif
 
+		/* m681 v88: bracket udelay(10) to test the frozen-arch-timer hypothesis
+		 * (v87: C7 ran once, C8 never -> wedge is between, only udelay can block).
+		 * slot0=entry slot1=pre-udelay slot2=post-udelay slot3=post-MSDC_CFG
+		 * slot4=post-clk_stable slot5=C3. */
+		if (host->id == 0) { extern void forge_m681_mark(unsigned char); extern void forge_m681_bump(unsigned int); forge_m681_mark(0xC7); forge_m681_bump(0); } /* clksrc_onoff on-branch entry */
 		(void)msdc_clk_enable(host);
 
 		host->core_clkon = 1;
+		if (host->id == 0) { extern void forge_m681_bump(unsigned int); forge_m681_bump(1); } /* pre udelay */
 		udelay(10);
+		if (host->id == 0) { extern void forge_m681_mark(unsigned char); extern void forge_m681_bump(unsigned int); forge_m681_mark(0xC8); forge_m681_bump(2); } /* post udelay, pre MSDC_CFG */
 
 		MSDC_SET_FIELD(MSDC_CFG, MSDC_CFG_MODE, MSDC_SDMMC);
 
 		MSDC_GET_FIELD(MSDC_CFG, MSDC_CFG_CKMOD, mode);
 		MSDC_GET_FIELD(MSDC_CFG, MSDC_CFG_CKDIV, div);
 		MSDC_GET_FIELD(MSDC_CFG, MSDC_CFG_CKMOD_HS400, hs400_div_dis);
+		if (host->id == 0) { extern void forge_m681_mark(unsigned char); extern void forge_m681_bump(unsigned int); forge_m681_mark(0xC9); forge_m681_bump(3); } /* MSDC_CFG rw ok, pre clk_stable */
 		msdc_clk_stable(host, mode, div, hs400_div_dis);
+		if (host->id == 0) { extern void forge_m681_mark(unsigned char); extern void forge_m681_bump(unsigned int); forge_m681_mark(0xCA); forge_m681_bump(4); } /* clk_stable returned */
 
 	} else if ((!on)
 		&& (!((host->hw->flags & MSDC_SDIO_IRQ) && src_clk_control))) {
@@ -5165,13 +5229,57 @@ static void msdc_ops_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	msdc_ungate_clock(host);
 
+	/* m681 v103: re-force msdc50_0_sel mux -> msdcpll_ck AND re-enable MSDCPLL
+	 * HERE (point of use). Rationale: msdc_add_host runs at device_initcall, but
+	 * clk_disable_unused() (late_initcall) later turns the "unused" MSDCPLL back
+	 * OFF before the delayed mmc_rescan -> mmc_power_up runs. So a probe-time
+	 * enable is undone before the controller needs the clock -> CKSTB never
+	 * asserts. Re-applying it here guarantees the PLL is live during mmc_power_up.
+	 * id 0 (eMMC) only. 0x70 = live MSDC_CFG (CKSTB visibility).
+	 * v103 FIX vs v102: use the PROBE-TIME ioremap'd bases (forge_msdc_tck/apm),
+	 * NOT a fresh ioremap() — we are under spin_lock(&host->lock) here and ioremap
+	 * may sleep (scheduling-while-atomic BUG -> v102 wedged p22 in a bootloop).
+	 * Only readl/writel (atomic-safe) on the pre-mapped pointers. */
+	if (host->id == 0) {
+		extern void forge_m681_diag(unsigned int, u32);
+		if (forge_msdc_tck) {
+			writel(0xFu << 16, forge_msdc_tck + 0x78);
+			writel(0x1u << 16, forge_msdc_tck + 0x74);
+			writel(0x1u << 13, forge_msdc_tck + 0x04);
+		}
+		if (forge_msdc_apm) {
+			writel(readl(forge_msdc_apm + 0x25C) | 0x1u, forge_msdc_apm + 0x25C);
+			writel(readl(forge_msdc_apm + 0x25C) & ~0x2u, forge_msdc_apm + 0x25C);
+			writel(readl(forge_msdc_apm + 0x250) | 0x1u, forge_msdc_apm + 0x250);
+			udelay(30);
+			forge_m681_diag(0x74u, readl(forge_msdc_apm + 0x250));	/* set_ios-time MSDCPLL_CON0 */
+		}
+		/* v105: FORCE the INFRA_MSDC0 module-clock gate OPEN. infracfg 0x10001000;
+		 * INFRA_PDN_CLR1=+0x8c (write 1 to ungate), STA1=+0x94 (bit=1 -> gated OFF).
+		 * INFRA_MSDC0 = bit2 (clk-mt6755.c:1307). clk_ignore_unused kept msdcpll+mux
+		 * alive but CKSTB still 0 at set_ios -> the missing link is the module gate
+		 * between msdc50_0_sel and the controller. 0x78 = STA1 before/after. */
+		if (forge_msdc_infra) {
+			u32 sta_b = readl(forge_msdc_infra + 0x94);
+			writel(0x1u << 2, forge_msdc_infra + 0x8c);	/* CLR1 bit2 = ungate MSDC0 */
+			udelay(5);
+			forge_m681_diag(0x78u, (sta_b << 16) |
+				(readl(forge_msdc_infra + 0x94) & 0xFFFFu));	/* hi=before lo=after STA1 */
+		}
+		forge_m681_diag(0x70u, readl(host->base + 0x0));	/* set_ios-time MSDC_CFG */
+	}
+
 	if (host->power_mode != ios->power_mode) {
 		switch (ios->power_mode) {
 		case MMC_POWER_OFF:
 		case MMC_POWER_UP:
 			spin_unlock(&host->lock);
+			/* m681 v82: eMMC power-up localization ladder (id 0 only). */
+			if (host->id == 0) { extern void forge_m681_mark(unsigned char); extern void forge_m681_bump(unsigned int); forge_m681_mark(0xC3); forge_m681_bump(5); } /* set_ios pre msdc_init_hw */
 			msdc_init_hw(host);
+			if (host->id == 0) { extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC4); } /* pre msdc_set_power_mode */
 			msdc_set_power_mode(host, ios->power_mode);
+			if (host->id == 0) { extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC5); } /* power path survived */
 			spin_lock(&host->lock);
 			break;
 		case MMC_POWER_ON:
@@ -5949,7 +6057,117 @@ static void msdc_add_host(struct work_struct *work)
 	mmc = host->mmc;
 	BUG_ON(!mmc);
 
+	/* m681 v68: THE boot-final async wall.  msdc_add_host is an INIT_DELAYED_WORK
+	 * (sd.c:6191) -> mmc_add_host -> mmc_rescan powers up & scans the card,
+	 * touching the ungated msdc1(SD)/msdc2(SDIO-WiFi) register blocks -> silent
+	 * AXI freeze on the kworker (deferred_probe window, IRQ=0).  eMMC (id 0)
+	 * works (TWRP uses it) so keep it; the kernel boots from initramfs so SD/
+	 * SDIO/etc are non-essential for userspace+adb.  Skip non-eMMC instances.
+	 * 0xAB aux = host->id.  Rollback: remove this guard. */
+	{ extern void forge_m681_mark_aux(unsigned char, unsigned int);
+	  forge_m681_mark_aux(0xAB, (unsigned int)host->id); }
+	/* m681 v82 (Option A): un-skip eMMC (id 0) ONLY.  Keep skipping SD(1)/
+	 * SDIO-WiFi(2,3): those rails/register blocks are genuinely ungated and
+	 * wedge.  For eMMC, the MSDC0 module clock is left ON (INFRA1_CG bit2=0,
+	 * clk-mt6755.c:492 / GATE INFRA_MSDC0 :1307) AND the VMCH/VMC rails are
+	 * already powered (preloader/LK/TWRP all read eMMC).  So (a) NULL out
+	 * power_control to avoid poking the neutralized PMIC, and (b) drop forge
+	 * marks at each sub-step so the survivable console/markers localize any
+	 * remaining wedge.  The v81 WDT-kicker kthread makes this safe: a genuine
+	 * bus wedge warm-resets to TWRP instead of hard-freezing.
+	 * Rollback: restore `return;` here. */
+	if (host->id != 0)
+		return;
+	/* m681 v100: FORCE the msdc50_0_sel clock-source mux to msdcpll_ck.
+	 * msdc_clk_stable / msdc_select_clksrc are IDENTICAL graft-vs-stock, so the
+	 * reason MSDC_CFG_CKSTB asserts on the stock 3.10 (clkmgr) but never on the
+	 * graft 3.18 (CCF clk-mt6755) is the CCF left the msdc50_0_sel mux on a
+	 * DEAD parent -> no source clock into the divider -> CKSTB never settles ->
+	 * mmc_power_up's reset/clock polls retry-exhaust and never finish in time.
+	 * clk-mt6755.c:941: TOP_MUX_MSDC50_0 = CLK_CFG_3(topckgen 0x10000000+0x70)
+	 * bits[19:16]; parent index 1 = msdcpll_ck (msdc50_0_parents[1]).  MTK
+	 * clr/set/update protocol: CLR 0x78, SET 0x74, UPDATE 0x04 bit13. */
+	/* m681 v102: CLEAN-OFFSET diagnostic (0x50-0x6C; free zone, NO bump()
+	 * collision unlike v100/v101's 0xE8/0xF0 which aliased EMMC_CTR_BASE).
+	 * Capture FIRMWARE-left ORACLE values FIRST (what preloader/LK programmed,
+	 * before any kernel poke), then force, then clean read-back. This answers:
+	 * (a) 0x50 firmware MSDCPLL_CON0 bit0 -> did firmware have the PLL on?
+	 * (b) 0x60 post-enable MSDCPLL_CON0 bit0 -> does my apmixed write STICK?
+	 * (c) 0x68 host->clock_control validity+rate -> is the CCF src clk real? */
+	{ extern void forge_m681_diag(unsigned int, u32);
+	  /* v103: persist these maps in file-statics so set_ios can reuse them under
+	   * spin_lock without calling the (sleepable) ioremap. */
+	  forge_msdc_tck = ioremap(0x10000000UL, 0x100);
+	  forge_msdc_apm = ioremap(0x1000C000UL, 0x400);
+	  forge_msdc_infra = ioremap(0x10001000UL, 0x200);
+	  /* ---- firmware ORACLE (before any poke) ---- */
+	  if (forge_msdc_apm) forge_m681_diag(0x50u, readl(forge_msdc_apm + 0x250));	/* fw MSDCPLL_CON0 */
+	  if (forge_msdc_tck) forge_m681_diag(0x54u, readl(forge_msdc_tck + 0x70));	/* fw CLK_CFG_3 */
+	  forge_m681_diag(0x58u, readl(host->base + 0x0));	/* fw MSDC_CFG */
+	  if (forge_msdc_infra) forge_m681_diag(0x7Cu, readl(forge_msdc_infra + 0x94));	/* fw INFRA_PDN_STA1 (bit2=MSDC0 gated) */
+	  /* ---- force msdc50_0_sel mux -> msdcpll_ck (idx1) ---- */
+	  if (forge_msdc_tck) {
+		writel(0xFu << 16, forge_msdc_tck + 0x78);	/* CLR msdc50_0_sel field */
+		writel(0x1u << 16, forge_msdc_tck + 0x74);	/* SET = index 1 (msdcpll_ck) */
+		writel(0x1u << 13, forge_msdc_tck + 0x04);	/* CLK_CFG_UPDATE latch */
+		forge_m681_diag(0x5Cu, readl(forge_msdc_tck + 0x70));	/* post-force CLK_CFG_3 */
+	  }
+	  /* ---- ENABLE MSDCPLL: PWR_ON, ISO=0, EN, lock (clk_pll_enable seq) ---- */
+	  if (forge_msdc_apm) {
+		writel(readl(forge_msdc_apm + 0x25C) | 0x1u, forge_msdc_apm + 0x25C);	/* PWR_ON */
+		udelay(5);
+		writel(readl(forge_msdc_apm + 0x25C) & ~0x2u, forge_msdc_apm + 0x25C);	/* ISO_EN=0 */
+		udelay(5);
+		writel(readl(forge_msdc_apm + 0x250) | 0x1u, forge_msdc_apm + 0x250);	/* RG_PLL_EN */
+		udelay(30);						/* PLL lock */
+		forge_m681_diag(0x60u, readl(forge_msdc_apm + 0x250));	/* post-enable MSDCPLL_CON0 (CLEAN) */
+	  }
+	  forge_m681_diag(0x64u, readl(host->base + 0x0));	/* post MSDC_CFG (bit CKSTB?) */
+	  /* ---- is host->clock_control a real CCF clk? ---- */
+	  { struct clk *cc = host->clock_control; u32 enc;
+	    if (!cc) enc = 0xC10C0000u;				/* NULL */
+	    else if (IS_ERR(cc)) enc = 0xC10CE000u | ((u32)(-PTR_ERR(cc)) & 0xFFFu);
+	    else enc = (u32)clk_get_rate(cc);			/* real source Hz */
+	    forge_m681_diag(0x68u, enc); }
+	  forge_m681_diag(0x6Cu, host->hclk); }
+	/* m681 v94: enable the MT6351 VEMC LDO (eMMC ~3.0V) DIRECTLY via pwrap,
+	 * using the register/bit from the WORKING stock m681 3.10 source
+	 * (meizuosc-...: MT6351_LDO_VEMC_CON0 = REG_BASE(0x0000)+0x0A28,
+	 * RG_VEMC_EN mask 0x1 shift 1 -> bit1).  The graft's regulator framework is
+	 * dead (MT6353 driver #if0'd in pmic/mt6353/pmic.c:1162 — wrong chip on
+	 * MT6351 silicon), so regulator_get("vmmc") is unbacked and the real
+	 * msdc_emmc_power PANICS (v92, forge 0xF1) in msdc_regulator_set_and_enable.
+	 * Bypass that: pwrap is alive (MT6351 read-test passes), so RMW ONLY the EN
+	 * bit (enabling a rail can't power the device off) and leave VOSEL alone
+	 * (bootloader left VEMC at 3.0V).  power_control stays NULL so set_ios does
+	 * NOT re-enter the panicking regulator path.  Proof: pr_emerg logs CON0
+	 * before/after.  Rollback: delete this block. */
+	{ extern s32 pwrap_read(u32 adr, u32 *rdata);
+	  extern s32 pwrap_write(u32 adr, u32 wdata);
+	  extern void forge_m681_diag(unsigned int off, u32 val);
+	  u32 vemc_b = 0, vemc_a = 0; s32 rc1, rc2, rc3;
+	  rc1 = pwrap_read(0x0A28u, &vemc_b);
+	  rc2 = pwrap_write(0x0A28u, vemc_b | (0x1u << 1));	/* MT6351 RG_VEMC_EN */
+	  rc3 = pwrap_read(0x0A28u, &vemc_a);
+	  /* v95: store result to clean diag 0xFC (console wraps).  hi16 = VEMC_CON0
+	   * after (bit1 = EN), lo bits = pwrap rc flags (any !=0 => pwrap fail). */
+	  forge_m681_diag(0xFCu, ((vemc_a & 0xFFFFu) << 16) |
+		   (((rc1 ? 1u : 0u) << 2) | ((rc2 ? 1u : 0u) << 1) | (rc3 ? 1u : 0u)));
+	  pr_emerg("[FORGE_M681] v95 MT6351 VEMC_CON0(0x0A28) 0x%x -> 0x%x rc=%d/%d/%d\n",
+		   vemc_b, vemc_a, rc1, rc2, rc3); }
+	{ extern void forge_m681_mark(unsigned char);
+	  extern void forge_m681_diag(unsigned int, u32);
+	  host->power_control = NULL;	/* eMMC: regulator path unbacked -> would panic; VEMC enabled above via pwrap */
+	  /* v109: capture the eMMC mmc_host identity so core.c FORGE_RS gating can be
+	   * validated. 0x94 = mmc->index (the ida-assigned mmcN), 0x98 = mmc->caps
+	   * (bit8=MMC_CAP_NONREMOVABLE -> is the eMMC even marked non-removable?). */
+	  forge_m681_diag(0x94u, (u32)mmc->index);
+	  forge_m681_diag(0x98u, (u32)mmc->caps);
+	  forge_m681_mark(0xC1); }	/* eMMC: pre mmc_add_host */
+
 	ret = mmc_add_host(mmc);
+	{ extern void forge_m681_mark(unsigned char);
+	  forge_m681_mark(0xC2); }	/* eMMC: mmc_add_host returned (rescan scheduled) */
 	if (host->id == 2)
 		pr_warn("M6 MSDC2 mmc_add_host ret=%d caps=0x%x caps2=0x%x pm_caps=0x%x card=%p bus_ops=%p rescan=%d ocr=0x%x f_min=%u f_max=%u power=%u\n",
 			ret, mmc->caps, mmc->caps2, mmc->pm_caps, mmc->card,
