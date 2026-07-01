@@ -997,11 +997,30 @@ void pwrkey_sw_workaround_init(void)
 /*****************************************************************************
  * system function
  ******************************************************************************/
+/* m681 v244: PMIC probe bisection gates. v243 (full probe) caused a TRUE HW
+ * power-off almost immediately (DRAM wiped -> no survivor markers), so we can't
+ * read WHERE it dies; we bisect by building variants and watching boot vs
+ * power-off. The STRUP power-off writes in PMIC_INIT_SETTING_V1 are already
+ * #if0'd, so the killer is elsewhere: the rest of PMIC_INIT_SETTING_V1's ~30
+ * register writes, or mtk_regulator_init (registering the mt6353 LDOs can set a
+ * default voltage/disable on a live rail -> instant power-off). v244 defaults:
+ * skip INIT + regulator, KEEP EINT -> best case boots AND power-key works;
+ * power-off => the killer is EINT/bind, not INIT/regulator. Overridable via
+ * cmdline pmic_mt.forge_pmic_skip_*=N. */
+static int forge_pmic_skip_init = 1;
+static int forge_pmic_skip_regulator = 1;
+static int forge_pmic_skip_eint = 0;
+module_param(forge_pmic_skip_init, int, 0644);
+module_param(forge_pmic_skip_regulator, int, 0644);
+module_param(forge_pmic_skip_eint, int, 0644);
+
 static int pmic_mt_probe(struct platform_device *dev)
 {
 	int ret_device_file = 0;
 
 	PMICLOG("******** MT pmic driver probe!! ********\n");
+	pr_err("[FORGE_PMIC] v244 probe ENTER skip_init=%d skip_reg=%d skip_eint=%d\n",
+	       forge_pmic_skip_init, forge_pmic_skip_regulator, forge_pmic_skip_eint);
 	/*get PMIC CID */
 	pr_debug
 	    ("PMIC CID=0x%x PowerGoodStatus = 0x%x OCStatus = 0x%x ThermalStatus = 0x%x rsvStatus = 0x%x\n",
@@ -1012,8 +1031,13 @@ static int pmic_mt_probe(struct platform_device *dev)
 
 	/*pmic initial setting */
 #if defined(CONFIG_MTK_PMIC_CHIP_MT6353)
-	PMIC_INIT_SETTING_V1();
-	PMICLOG("[PMIC_INIT_SETTING_V1] Done\n");
+	if (!forge_pmic_skip_init) {
+		pr_err("[FORGE_PMIC] v244 PMIC_INIT_SETTING_V1 BEGIN\n");
+		PMIC_INIT_SETTING_V1();
+		PMICLOG("[PMIC_INIT_SETTING_V1] Done\n");
+		pr_err("[FORGE_PMIC] v244 PMIC_INIT_SETTING_V1 DONE — survived rail init\n");
+	} else
+		pr_err("[FORGE_PMIC] v244 PMIC_INIT_SETTING_V1 SKIPPED\n");
 #else
 	PMICLOG("[PMIC_INIT_SETTING_V1] delay to MT6311 init\n");
 #endif
@@ -1041,13 +1065,23 @@ static int pmic_mt_probe(struct platform_device *dev)
 	}*/
 
 	/*--0311--*/
-	PMIC_EINT_SETTING();
-	PMICLOG("[PMIC_EINT_SETTING] Done\n");
+	if (!forge_pmic_skip_eint) {
+		pr_err("[FORGE_PMIC] v244 PMIC_EINT_SETTING BEGIN\n");
+		PMIC_EINT_SETTING();
+		PMICLOG("[PMIC_EINT_SETTING] Done\n");
+		pr_err("[FORGE_PMIC] v244 PMIC_EINT_SETTING DONE — pwrkey PMIC IRQ armed\n");
+	} else
+		pr_err("[FORGE_PMIC] v244 PMIC_EINT_SETTING SKIPPED\n");
 
 #endif
 
 
-	mtk_regulator_init(dev);
+	if (!forge_pmic_skip_regulator) {
+		pr_err("[FORGE_PMIC] v244 mtk_regulator_init BEGIN\n");
+		mtk_regulator_init(dev);
+		pr_err("[FORGE_PMIC] v244 mtk_regulator_init DONE\n");
+	} else
+		pr_err("[FORGE_PMIC] v244 mtk_regulator_init SKIPPED\n");
 
 	pmic_throttling_dlpt_init();
 
@@ -1159,13 +1193,21 @@ static int __init pmic_mt_init(void)
 	 * power-off. SKIP registering this driver so its probe (PMIC_INIT_SETTING_V1
 	 * etc.) never writes the MT6351 chip; boot proceeds on LK-configured rails.
 	 * PROPER FIX (post-boot, needed for camera): port the MT6351 PMIC driver. */
-#if 0
+	/* m681 v243: RE-ENABLED (the "port"). The MT6353-vs-MT6351 fear is stale —
+	 * upmu_hw.h is 100% MT6351 defines (0 MT6353), so the driver already speaks
+	 * MT6351. The actual clean-power-off cause was the STRUP_CON7 PWROFF_SEQ_EN +
+	 * STRUP_CON14 PG_H2L_EN writes in PMIC_INIT_SETTING_V1, and those are ALREADY
+	 * #if 0'd (v39). Registering the driver runs pmic_mt_probe -> the STRUP-safe
+	 * PMIC_INIT_SETTING_V1 + PMIC_EINT_SETTING (pwrkey IRQ), unblocking power key +
+	 * charger-detect + PMIC-thermal + regulators at once. WATCHED FLASH: a HW
+	 * power-off (device fully off, not bootloop) => a non-STRUP write still trips
+	 * it; roll back to v241 and bisect PMIC_INIT_SETTING_V1. */
+	pr_err("[FORGE_PMIC] v243 registering pmic_mt_driver (probe runs PMIC init + EINT)\n");
 	ret = platform_driver_register(&pmic_mt_driver);
 	if (ret) {
 		PMICLOG("****[pmic_mt_init] Unable to register driver (%d)\n", ret);
 		return ret;
 	}
-#endif
 #endif				/* End of #ifdef CONFIG_OF */
 #else
 	PMICLOG("pmic_regulator_init\n");
