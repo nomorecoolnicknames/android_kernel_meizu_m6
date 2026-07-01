@@ -842,8 +842,15 @@ void kpd_get_dts_info(struct device_node *node)
  *   eint      : mt_eint_register (mrdump-only) EINT controller access.
  *   longpress : long_press_reboot_function_setting PMIC pwrap write (MT6351 vs
  *               MT6353 mismatch — the likeliest wedge). */
-static int forge_skip_kpd_clk = 1;
-static int forge_skip_kpd_irq = 1;
+/* m681 v241: v240 proved on device that kpd binds with all steps skipped (probe
+ * START..DONE, mtk-kpd input dev, no hang) and that the DT keypad node has NO
+ * clocks property -> devm_clk_get(kpd-clk) fails gracefully -> the clk step is a
+ * no-op. So enable clk (safe no-op) + request_irq (the matrix-key IRQ, GIC SPI
+ * 196 — the ONLY step needed for VOL keys). Keep eint (mrdump) + longpress (PMIC
+ * pwrap MT6351, the likeliest v188/v189 wedge) SKIPPED. This isolates buttons to
+ * the one safe step. Still overridable via cmdline kpd.forge_skip_kpd_<x>=N. */
+static int forge_skip_kpd_clk = 0;
+static int forge_skip_kpd_irq = 0;
 static int forge_skip_kpd_eint = 1;
 static int forge_skip_kpd_longpress = 1;
 module_param(forge_skip_kpd_clk, int, 0644);
