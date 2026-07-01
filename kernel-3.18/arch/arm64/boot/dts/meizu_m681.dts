@@ -1,4 +1,13 @@
 
+/*
+ * !!! DEAD FILE — DO NOT EDIT FOR DEVICE CHANGES !!!  (m681 v240)
+ * The boot.img packs ONLY wt6755_66_sz_l.dtb:
+ *   m681_defconfig: CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="wt6755_66_sz_l"
+ * Nothing in this file reaches the flashed kernel. All v239h11/h12 overrides
+ * that were written here (keypad, led_mode, gpio92/93) were silently discarded
+ * and had to be re-applied in wt6755_66_sz_l.dts. Put ALL board/DTS changes in
+ * arch/arm64/boot/dts/wt6755_66_sz_l.dts instead. Kept only for git history.
+ */
 /dts-v1/;
 
 #include "mt6755.dtsi"
@@ -79,7 +88,13 @@
 	};
 	led@6 {
 		compatible = "mediatek,lcd-backlight";
-		led_mode = <7>;
+		/* m681 v239h12: was <7> (out of range — enum only 0..5). Stock m6
+		 * uses <5> = MT65XX_LED_MODE_CUST_BLS_PWM, the only mode that
+		 * hooks the backlight into the display blank/unblank path via the
+		 * BLS/DISP_PWM block. led_mode=7 fell through to MODE_NONE, so the
+		 * LED subsystem never controlled the BL and it stayed on at the
+		 * LCM-init level forever (incl. when screen locked). */
+		led_mode = <5>;
 		data = <1>;
 		pwm_config = <0 0 0 0 0>;
 	};
@@ -254,6 +269,61 @@
 			output-high;
 		};
 	};
+	/* m681 v239h12: i2c0 SCL/SDA pinmux. Stock cust_gpio.dtsi (wt6755_66_sz_l
+	 * DCT) configures GPIO92=SDA0, GPIO93=SCL0. The graft DTS never included
+	 * cust_gpio.dtsi, so the i2c0 controller ran (ACKERR) but the SCL/SDA
+	 * pads stayed in GPIO mode -> full 7-bit scan found 0 ACKs and the touch
+	 * chip never answered. These two nodes match the stock DCT pin config
+	 * verbatim (slew/bias/schmitt are harmless in SDA0/SCL0 altfn — the i2c
+	 * controller overrides the pad driver once mode=1). The touch driver also
+	 * sets these via direct mt_set_gpio_mode() as a guaranteed fallback in
+	 * case the graft pinctrl driver does not apply &pio sub-nodes (it did not
+	 * for GPIO10 — see v239h10 handoff). */
+	gpio92: gpio@92 {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO92__FUNC_SDA0>;
+			slew-rate = <0>;
+			bias-pull-down = <00>;
+			output-low;
+			input-schmitt-enable = <0>;
+		};
+	};
+	gpio93: gpio@93 {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO93__FUNC_SCL0>;
+			slew-rate = <0>;
+			bias-pull-down = <00>;
+			output-low;
+			input-schmitt-enable = <0>;
+		};
+	};
+};
+
+/* m681 v239h12: keypad override — align with stock wt6755_66_sz_l DCT
+ * (cust_kpd.dtsi). The graft cust.dtsi had kpd-hw-init-map=<114 0 ...>
+ * (VOLDOWN only, VOLUP via rstkey) which deviates from stock. Stock DCT
+ * maps VOLDOWN=114 at matrix pos0, VOLUMEUP=115 at matrix pos1, and the
+ * rstkey (hw keycode 17) = KEY_HOME (102). Power key via PMIC (sw-pwrkey=116).
+ * User reports VOL+/- and power all non-functional; this override restores
+ * the stock matrix wiring. A [FORGE_KPD] probe marker in kpd.c confirms
+ * whether the driver actually bound + loaded these values. */
+&keypad {
+	mediatek,kpd-key-debounce = <1024>;
+	mediatek,kpd-sw-pwrkey = <116>;
+	mediatek,kpd-hw-pwrkey = <8>;
+	mediatek,kpd-sw-rstkey = <102>;
+	mediatek,kpd-hw-rstkey = <17>;
+	mediatek,kpd-use-extend-type = <0>;
+	mediatek,kpd-hw-map-num = <72>;
+	mediatek,kpd-hw-init-map = <114 115 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+				0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+				0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 >;
+	mediatek,kpd-pwrkey-eint-gpio = <0>;
+	mediatek,kpd-pwrkey-gpio-din = <0>;
+	mediatek,kpd-hw-dl-key1 = <0>;
+	mediatek,kpd-hw-dl-key2 = <8>;
+	mediatek,kpd-hw-recovery-key = <1>;
+	mediatek,kpd-hw-factory-key = <0>;
 };
 
 &i2c0 {

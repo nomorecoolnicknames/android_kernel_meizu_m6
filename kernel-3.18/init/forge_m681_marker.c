@@ -53,6 +53,7 @@
 #include <linux/string.h>
 #include <linux/hrtimer.h>	/* m681 v86: irq-context WDT kicker (kthread never scheduled) */
 #include <linux/ktime.h>	/* m681 v86: ns_to_ktime / NSEC_PER_SEC */
+#include <linux/moduleparam.h>	/* m681 v240: core_param for HB period/stop tuning */
 
 #include "forge_m681_marker.h"
 
@@ -1396,21 +1397,39 @@ EXPORT_SYMBOL(forge_m681_emmc_mark);
  * BOOTPROF ms (same ktime scale). Remove for shipping.
  */
 static struct timer_list forge_hb_timer;
+/* m681 v240 (C0): the 500ms cadence flooded the dmesg ring buffer and
+ * overwrote early-boot probe evidence within minutes (the reason the v239h11
+ * capture lost the kpd/i2c probe lines). Slow to 5s AND stop re-arming after
+ * ~180s uptime: the heartbeat only needs to prove the box is alive through the
+ * boot window; once userspace/adb is up, live capture replaces it. Overridable
+ * via cmdline forge_hb_period_ms= / forge_hb_stop_ms=. */
+#define FORGE_HB_PERIOD_MS_DEFAULT 5000
+#define FORGE_HB_STOP_MS_DEFAULT   180000
+static int forge_hb_period_ms = FORGE_HB_PERIOD_MS_DEFAULT;
+static int forge_hb_stop_ms   = FORGE_HB_STOP_MS_DEFAULT;
+core_param(forge_hb_period_ms, forge_hb_period_ms, int, 0644);
+core_param(forge_hb_stop_ms, forge_hb_stop_ms, int, 0644);
 static void forge_hb_fn(unsigned long data)
 {
 	u32 ms = (u32)(ktime_to_ns(ktime_get()) / 1000000);
 
 	pr_emerg("[FORGE_M681] HB ms=%u cpu=%d\n", ms, raw_smp_processor_id());
-	mod_timer(&forge_hb_timer, jiffies + msecs_to_jiffies(500));
+	if (forge_hb_stop_ms > 0 && ms >= (u32)forge_hb_stop_ms) {
+		pr_emerg("[FORGE_M681] HB auto-stop at ms=%u (boot window elapsed)\n", ms);
+		return;
+	}
+	mod_timer(&forge_hb_timer,
+		  jiffies + msecs_to_jiffies(forge_hb_period_ms > 0 ? forge_hb_period_ms : FORGE_HB_PERIOD_MS_DEFAULT));
 }
 static int __init forge_hb_init(void)
 {
 	init_timer(&forge_hb_timer);
 	forge_hb_timer.function = forge_hb_fn;
 	forge_hb_timer.data = 0;
-	forge_hb_timer.expires = jiffies + msecs_to_jiffies(500);
+	forge_hb_timer.expires = jiffies + msecs_to_jiffies(forge_hb_period_ms > 0 ? forge_hb_period_ms : FORGE_HB_PERIOD_MS_DEFAULT);
 	add_timer(&forge_hb_timer);
-	pr_emerg("[FORGE_M681] v152 heartbeat timer armed\n");
+	pr_emerg("[FORGE_M681] v240 heartbeat armed period=%dms stop=%dms\n",
+		 forge_hb_period_ms, forge_hb_stop_ms);
 	return 0;
 }
 late_initcall(forge_hb_init);

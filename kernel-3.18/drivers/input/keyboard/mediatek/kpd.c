@@ -826,6 +826,31 @@ void kpd_get_dts_info(struct device_node *node)
 		  kpd_dts_data.kpd_key_debounce, kpd_dts_data.kpd_sw_pwrkey, kpd_dts_data.kpd_hw_pwrkey,
 		  kpd_dts_data.kpd_hw_rstkey, kpd_dts_data.kpd_sw_rstkey);
 }
+/* m681 v240 (C2): kpd_pdrv_probe bring-up bisection gates. v188/v189 proved a
+ * blind un-stub wedges the boot somewhere inside this probe (soft-hang, backlight
+ * on, no adb). Because the wedge is on a device_initcall BEFORE userspace, a hang
+ * here means NO adb -> we could not verify the other v240 fixes (leds/touch)
+ * either. So for this FIRST v240 boot ALL FOUR hardware-touching steps DEFAULT TO
+ * SKIP: the driver still binds and registers the input device (pure software), the
+ * device is GUARANTEED to boot, and we confirm kpd binds + /proc/bus/input/devices
+ * shows mtk-kpd. Buttons themselves need clk+irq; enable those in v241 once v240
+ * proves the base is stable, one step at a time, watching which [FORGE_KPD] STEPn
+ * is the last printed before a hang. Each gate is a module_param, overridable at
+ * boot via cmdline kpd.forge_skip_kpd_<x>=0 (lighter than a rebuild).
+ *   clk       : devm_clk_get(kpd-clk)+clk_enable (no-op if DT has no clocks prop).
+ *   irq       : request_irq(kp_irqnr) GIC SPI wiring.
+ *   eint      : mt_eint_register (mrdump-only) EINT controller access.
+ *   longpress : long_press_reboot_function_setting PMIC pwrap write (MT6351 vs
+ *               MT6353 mismatch — the likeliest wedge). */
+static int forge_skip_kpd_clk = 1;
+static int forge_skip_kpd_irq = 1;
+static int forge_skip_kpd_eint = 1;
+static int forge_skip_kpd_longpress = 1;
+module_param(forge_skip_kpd_clk, int, 0644);
+module_param(forge_skip_kpd_irq, int, 0644);
+module_param(forge_skip_kpd_eint, int, 0644);
+module_param(forge_skip_kpd_longpress, int, 0644);
+
 static int kpd_pdrv_probe(struct platform_device *pdev)
 {
 
@@ -834,21 +859,32 @@ static int kpd_pdrv_probe(struct platform_device *pdev)
 	struct clk *kpd_clk = NULL;
 
 	kpd_info("Keypad probe start!!!\n");
+	/* m681 v239h12: DIAGNOSTIC — user reports VOL+/- and power all dead.
+	 * This marker survives the dmesg ring-buffer churn (pr_err, grep-able)
+	 * and prints the DTS-loaded values so the next capture proves whether
+	 * the driver bound, whether the PMIC pwrkey keycode loaded (116=KEY_POWER),
+	 * and whether the matrix keymap loaded (pos0=114=VOLDOWN, pos1=115=VOLUP).
+	 * No behavior change — only visibility. */
+	pr_err("[FORGE_KPD] probe START pdev=%s\n", dev_name(&pdev->dev));
 
 	/*kpd-clk should be control by kpd driver, not depend on default clock state*/
-	kpd_clk = devm_clk_get(&pdev->dev, "kpd-clk");
-	if (!IS_ERR(kpd_clk)) {
-		int ret_prepare, ret_enable;
+	pr_emerg("[FORGE_KPD] STEP1 clk begin (skip=%d)\n", forge_skip_kpd_clk);
+	if (!forge_skip_kpd_clk) {
+		kpd_clk = devm_clk_get(&pdev->dev, "kpd-clk");
+		if (!IS_ERR(kpd_clk)) {
+			int ret_prepare, ret_enable;
 
-		ret_prepare = clk_prepare(kpd_clk);
-		if (ret_prepare)
-			kpd_print("clk_prepare returned %d\n", ret_prepare);
-		ret_enable = clk_enable(kpd_clk);
-		if (ret_enable)
-			kpd_print("clk_enable returned %d\n", ret_prepare);
-	} else {
-		kpd_print("get kpd-clk fail, but not return, maybe kpd-clk is set by ccf.\n");
+			ret_prepare = clk_prepare(kpd_clk);
+			if (ret_prepare)
+				kpd_print("clk_prepare returned %d\n", ret_prepare);
+			ret_enable = clk_enable(kpd_clk);
+			if (ret_enable)
+				kpd_print("clk_enable returned %d\n", ret_prepare);
+		} else {
+			kpd_print("get kpd-clk fail, but not return, maybe kpd-clk is set by ccf.\n");
+		}
 	}
+	pr_emerg("[FORGE_KPD] STEP2 clk done\n");
 
 	kp_base = of_iomap(pdev->dev.of_node, 0);
 	if (!kp_base) {
@@ -877,6 +913,13 @@ static int kpd_pdrv_probe(struct platform_device *pdev)
 	kpd_input_dev->open = kpd_open;
 
 	kpd_get_dts_info(pdev->dev.of_node);
+
+	/* m681 v239h12: DIAGNOSTIC — prove the DTS keypad block loaded. */
+	pr_err("[FORGE_KPD] dts loaded: sw_pwrkey=%d hw_pwrkey=%d sw_rstkey=%d hw_rstkey=%d map_num=%d init_map[0..1]=%d %d\n",
+	       kpd_dts_data.kpd_sw_pwrkey, kpd_dts_data.kpd_hw_pwrkey,
+	       kpd_dts_data.kpd_sw_rstkey, kpd_dts_data.kpd_hw_rstkey,
+	       kpd_dts_data.kpd_hw_map_num,
+	       kpd_dts_data.kpd_hw_init_map[0], kpd_dts_data.kpd_hw_init_map[1]);
 
 #if (defined(CONFIG_ARCH_MT8173) || defined(CONFIG_ARCH_MT8163) || defined(CONFIG_ARCH_MT8167))
 	wake_lock_init(&pwrkey_lock, WAKE_LOCK_SUSPEND, "PWRKEY");
@@ -941,18 +984,30 @@ static int kpd_pdrv_probe(struct platform_device *pdev)
 
 	wake_lock_init(&kpd_suspend_lock, WAKE_LOCK_SUSPEND, "kpd wakelock");
 
+	/* m681 v240: STEP3 proves input_register_device + misc_register completed —
+	 * i.e. /dev/input/eventX + mtk-kpd exist even if the IRQ steps are gated off. */
+	pr_emerg("[FORGE_KPD] STEP3 input+misc registered (input_dev=%s)\n",
+		 kpd_input_dev ? kpd_input_dev->name : "(null)");
+
 	/* register IRQ and EINT */
 	kpd_set_debounce(kpd_dts_data.kpd_key_debounce);
-	r = request_irq(kp_irqnr, kpd_irq_handler, IRQF_TRIGGER_NONE, KPD_NAME, NULL);
-	if (r) {
-		kpd_info("register IRQ failed (%d)\n", r);
-		misc_deregister(&kpd_dev);
-		input_unregister_device(kpd_input_dev);
-		return r;
+	pr_emerg("[FORGE_KPD] STEP4 request_irq begin irqnr=%d (skip=%d)\n", kp_irqnr, forge_skip_kpd_irq);
+	if (!forge_skip_kpd_irq) {
+		r = request_irq(kp_irqnr, kpd_irq_handler, IRQF_TRIGGER_NONE, KPD_NAME, NULL);
+		if (r) {
+			kpd_info("register IRQ failed (%d)\n", r);
+			misc_deregister(&kpd_dev);
+			input_unregister_device(kpd_input_dev);
+			return r;
+		}
 	}
+	pr_emerg("[FORGE_KPD] STEP4 request_irq done\n");
 #ifdef CONFIG_MTK_MRDUMP_KEY
 /* This func use as mrdump now, if powerky use kpd eint it need to open another API */
-	mt_eint_register();
+	pr_emerg("[FORGE_KPD] STEP5 mt_eint_register begin (skip=%d)\n", forge_skip_kpd_eint);
+	if (!forge_skip_kpd_eint)
+		mt_eint_register();
+	pr_emerg("[FORGE_KPD] STEP5 mt_eint_register done\n");
 #endif
 
 #ifdef CONIFG_KPD_ACCESS_PMIC_REGMAP
@@ -963,7 +1018,10 @@ static int kpd_pdrv_probe(struct platform_device *pdev)
 #endif
 
 #ifndef KPD_EARLY_PORTING	/*add for avoid early porting build err the macro is defined in custom file */
-	long_press_reboot_function_setting();	/* /API 4 for kpd long press reboot function setting */
+	pr_emerg("[FORGE_KPD] STEP6 long_press_reboot_setting begin (skip=%d)\n", forge_skip_kpd_longpress);
+	if (!forge_skip_kpd_longpress)
+		long_press_reboot_function_setting();	/* /API 4 for kpd long press reboot function setting */
+	pr_emerg("[FORGE_KPD] STEP6 long_press_reboot_setting done\n");
 #endif
 	hrtimer_init(&aee_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	aee_timer.function = aee_timer_func;
@@ -985,6 +1043,18 @@ static int kpd_pdrv_probe(struct platform_device *pdev)
 		return err;
 	}
 	kpd_info("%s Done\n", __func__);
+	/* m681 v239h12: DIAGNOSTIC — prove probe completed + IRQ registered +
+	 * PMIC pwrkey path active (CONFIG_KPD_PWRKEY_USE_PMIC). If this marker
+	 * is absent from the next capture, the kpd driver never bound -> that is
+	 * the button blocker, not the keymap. */
+	pr_err("[FORGE_KPD] probe DONE irq=%d sw_pwrkey=%d PWRKEY_USE_PMIC=%d input_dev=%s\n",
+	       kp_irqnr, kpd_dts_data.kpd_sw_pwrkey,
+#ifdef CONFIG_KPD_PWRKEY_USE_PMIC
+	       1,
+#else
+	       0,
+#endif
+	       kpd_input_dev ? kpd_input_dev->name : "(null)");
 	return 0;
 }
 
@@ -1079,10 +1149,15 @@ static int __init kpd_mod_init(void)
 {
 	int r;
 
-	/* m681 v45: l681-map preemptive skip — keypad. TODO post-boot: re-enable. */
-	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
-	return 0;
-
+	/* m681 v240 (C2): RE-ENABLED. The v45 stub returned before
+	 * platform_driver_register, so kpd never bound -> no input device for
+	 * VOL+/-/power (user: "buttons dead"). A blind un-stub in v188/v189 HUNG the
+	 * boot inside kpd_pdrv_probe. v240 keeps the un-stub but brackets every
+	 * hardware-touching probe step with [FORGE_KPD] STEP markers + skip gates
+	 * (see kpd_pdrv_probe); the two most-likely-to-wedge and least-necessary
+	 * steps (mt_eint_register mrdump, long_press PMIC-pwrap) DEFAULT TO SKIP so
+	 * this first boot survives and proves the driver binds. */
+	pr_err("[FORGE_KPD] v240 kpd_mod_init RE-ENABLED -> platform_driver_register\n");
 	r = platform_driver_register(&kpd_pdrv);
 	if (r) {
 		kpd_info("register driver failed (%d)\n", r);

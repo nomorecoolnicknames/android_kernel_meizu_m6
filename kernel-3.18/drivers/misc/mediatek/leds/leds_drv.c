@@ -935,10 +935,16 @@ static int __init mt65xx_leds_init(void)
 {
 	int ret;
 
-	/* m681 v45: l681-map preemptive skip — LEDs PMIC pwrap. TODO post-boot: re-enable. */
-		/* m681 v139: re-skip (rollback to v128 base, peripherals off) */
-	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
-	return 0;
+	/* m681 v240 (C1): RE-ENABLED. The v45/v139 stub killed the WHOLE LED class,
+	 * so /sys/class/leds/lcd-backlight never existed -> the framework could not
+	 * blank the panel on screen-off (user: "screen never turns off"). The v45
+	 * "PMIC pwrap" worry does NOT apply on this board: leds.c get_cust_led_dtsi
+	 * reads led_mode from DT, and mt65xx_leds_probe SKIPS every MT65XX_LED_MODE_NONE
+	 * entry (leds_drv.c:742). In wt6755_66_sz_l.dts every led@ node is led_mode=0
+	 * (NONE) EXCEPT led@6 lcd-backlight = led_mode=5 (CUST_BLS_PWM). So only
+	 * lcd-backlight registers, and its set path is disp_bls_set_backlight (BLS /
+	 * DISP_PWM), NOT a PMIC-pwrap ISINK write. No unpowered-pwrap access. */
+	pr_err("[FORGE_LEDS] v240 mt65xx_leds_init RE-ENABLED (lcd-backlight only; other led@ are MODE_NONE)\n");
 
 	LEDS_DRV_DEBUG("%s\n", __func__);
 

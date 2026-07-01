@@ -79,7 +79,8 @@
 	};
 	led@6 {
 		compatible = "mediatek,lcd-backlight";
-		led_mode = <7>;
+		/* v239h12-stock: CUST_BLS_PWM (was <7> = out-of-range -> MODE_NONE -> BL never blanked) */
+		led_mode = <5>;
 		data = <1>;
 		pwm_config = <0 0 0 0 0>;
 	};
@@ -239,6 +240,27 @@
 			output-high;
 		};
 	};
+	/* v239h12-stock: i2c0 SDA0/SCL0 pinmux — stock wt6755_66_sz_l cust_gpio.dtsi
+	 * configures GPIO92=SDA0, GPIO93=SCL0 (mode 1). The graft DTS left these
+	 * in GPIO mode (0) so the i2c0 controller clocked into a void (0 ACKs).
+	 * Add explicit sub nodes here so the DTC pinctrl layer records the pad
+	 * function; the focaltech driver ALSO calls mt_set_gpio_mode(92/93,1)
+	 * directly as a belt+suspenders (the graft pinctrl layer was proven to
+	 * drop &pio sub-nodes in prior sessions). */
+	gpio@92 {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO92__FUNC_SDA0>;
+			slew-rate = <1>;
+			bias-pull-up;
+		};
+	};
+	gpio@93 {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO93__FUNC_SCL0>;
+			slew-rate = <1>;
+			bias-pull-up;
+		};
+	};
 };
 
 &i2c0 {
@@ -268,4 +290,29 @@
 	alsps@49 { status = "disabled"; };
 	nfc@28 { status = "disabled"; };
 	strobe_main@63 { status = "disabled"; };
+};
+
+/* v239h12-stock: keypad override — align with stock wt6755_66_sz_l DCT
+ * (cust_kpd.dtsi). The graft cust.dtsi (lines 223-241) had
+ * kpd-hw-init-map = <114 0 ...> (only VOLDOWN at matrix pos0; VOLUP via
+ * rstkey=115) AND kpd-sw-rstkey=115 (=VOLUP). Stock uses matrix pos0=VOLDOWN,
+ * pos1=VOLUP and rstkey=HOME(102), so both VOLUP and HOME map correctly.
+ * kpd driver reads mediatek,kpd-* from this node directly. The [FORGE_KPD]
+ * probe markers in kpd.c (DIAGNOSTIC) confirm this reaches the driver. */
+&keypad {
+	mediatek,kpd-key-debounce = <1024>;
+	mediatek,kpd-sw-pwrkey = <116>;
+	mediatek,kpd-hw-pwrkey = <8>;
+	mediatek,kpd-sw-rstkey = <102>;
+	mediatek,kpd-hw-rstkey = <17>;
+	mediatek,kpd-use-extend-type = <0>;
+	mediatek,kpd-hw-map-num = <72>;
+	mediatek,kpd-hw-init-map = <114 115 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0>;
+	mediatek,kpd-pwrkey-eint-gpio = <0>;
+	mediatek,kpd-pwrkey-gpio-din = <0>;
+	mediatek,kpd-hw-dl-key0 = <1>;
+	mediatek,kpd-hw-dl-key1 = <0>;
+	mediatek,kpd-hw-dl-key2 = <8>;
+	mediatek,kpd-hw-recovery-key = <1>;
+	mediatek,kpd-hw-factory-key = <0>;
 };

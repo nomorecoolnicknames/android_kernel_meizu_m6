@@ -35,6 +35,30 @@
 #include <linux/dma-mapping.h>
 #include "mt_boot_common.h"
 
+/* m681 v239h11: direct MTK GPIO API + pwrap readback — replace pinctrl-based
+ * tpd_gpio_output for RST (pinmux-pins shows GPIO10 UNCLAIMED after probe,
+ * so the RST line may never actually be driven), and verify the MT6351
+ * VLDO28 enable write via pwrap readback. Stock truth (upmu_hw.h):
+ * GPIO10 = GPIO_CTP_RST_PIN; MT6351_LDO_VLDO28_CON3 = 0x0AA2 (EN_0 bit1);
+ * MT6351_LDO_VLDO28_CON4 = 0x0AA4 (EN_1 bit1, same MASK/SHIFT as EN_0);
+ * MT6351_EN_STATUS1 = 0x020E (EN_STATUS_VLDO28 bit0 — hardware power state).
+ *
+ * v239h11 adds over v239h10: (a) write+read CON4 EN_1 in addition to EN_0
+ * (some MT6351 batches wire VLDO28 to EN_1; setting both is low-risk and
+ * lets one capture distinguish EN_0-only vs EN_1-only wiring); (b) GPIO
+ * mux/dir readback at every phase (mode(GPIO10), dir(GPIO10), out(GPIO10),
+ * mode(GPIO1=INT)) so a bootloader/pinctrl leftover altfn is visible;
+ * (c) stock FT5x46 reset pulse high->low(10ms)->high(200ms) after power-on
+ * instead of a single 0->1 transition; (d) full 7-bit i2c0 scan 0x08..0x77
+ * with no skip filters; (e) adapter identity dump (name/dev_name/id +
+ * DTS clock-frequency) to prove the graft kernel is on the right bus.
+ */
+#include <mt_gpio.h>
+#include <mt_pmic_wrap.h>
+/* gpio_const.h provides the GPIOx enum (GPIO0..GPIO127) so we can name
+ * GPIO10 = GPIO_CTP_RST_PIN. mt-plat/mt6755/include/mach/ is on ccflags -I. */
+#include <mach/gpio_const.h>
+
 #ifndef TRUE
 #define TRUE 1
 #endif
@@ -44,18 +68,136 @@
 
 /* m681 ft5436 port: PMIC direct vldo28 enable — bypass regulator framework.
  * Stock m681 has MT6351 PMIC, graft kernel uses MT6353 driver.
- * MT6351 VLDO28 CON3 = 0x0AA2, EN_0 bit = bit1 (SHIFT=1, MASK=0x1).
- * Write directly via pwrap to the MT6351 register address. */
+ * Stock (upmu_hw.h): MT6351_LDO_VLDO28_CON3 = 0x0AA2, EN_0 bit = bit1
+ * (MASK=0x1 SHIFT=1); MT6351_LDO_VLDO28_CON4 = 0x0AA4, EN_1 bit = bit1
+ * (same MASK/SHIFT). v239h11 writes BOTH EN_0 and EN_1 because some MT6351
+ * batches wire the VLDO28 rail to EN_1; setting both is electrically safe
+ * (the rails share EN_STATUS1 bit0) and lets the next capture prove which
+ * enable path actually drove the rail. */
 extern unsigned int pmic_config_interface(unsigned int RegNum, unsigned int val, unsigned int MASK, unsigned int SHIFT);
 void m681_touch_power_on(void)
 {
 	pmic_config_interface(0x0AA2, 1, 0x1, 1);
-	pr_err("[FORGE_TPD] MT6351 VLDO28_EN_0 written (reg=0x0AA2 bit1=1)\n");
+	pmic_config_interface(0x0AA4, 1, 0x1, 1);
+	pr_err("[FORGE_TPD] MT6351 VLDO28_EN_0+EN_1 written (CON3=0x0AA2 bit1=1, CON4=0x0AA4 bit1=1)\n");
 }
 void __maybe_unused m681_touch_power_off(void)
 {
 	pmic_config_interface(0x0AA2, 0, 0x1, 1);
-	pr_err("[FORGE_TPD] MT6351 VLDO28_EN_0 cleared (reg=0x0AA2 bit1=0)\n");
+	pmic_config_interface(0x0AA4, 0, 0x1, 1);
+	pr_err("[FORGE_TPD] MT6351 VLDO28_EN_0+EN_1 cleared (CON3=0x0AA2 bit1=0, CON4=0x0AA4 bit1=0)\n");
+}
+
+/* m681 v239h11: MT6351 register addresses used for readback proof.
+ * Stock truth (upmu_hw.h):
+ *   MT6351_LDO_VLDO28_CON3 = 0x0AA2, EN_0 bit1 (MASK=0x1 SHIFT=1)
+ *   MT6351_LDO_VLDO28_CON4 = 0x0AA4, EN_1 bit1 (MASK=0x1 SHIFT=1)
+ *   MT6351_EN_STATUS1      = 0x020E, EN_STATUS_VLDO28 bit0 (hardware on). */
+#define M681_MT6351_VLDO28_CON3    0x0AA2U
+#define M681_MT6351_VLDO28_CON4    0x0AA4U
+#define M681_MT6351_EN_STATUS1     0x020EU
+#define M681_CTP_RST_PIN           GPIO10  /* stock: GPIO_CTP_RST_PIN = GPIO10 */
+#define M681_CTP_INT_PIN           GPIO1   /* stock: GPIO_CTP_EINT_PIN = GPIO1 */
+/* m681 v239h12: i2c0 SCL/SDA pads. Stock cust_gpio.dtsi (wt6755_66_sz_l DCT)
+ * maps i2c0 SDA -> GPIO92 (mode 1 = SDA0), SCL -> GPIO93 (mode 1 = SCL0).
+ * The graft DTS never included cust_gpio.dtsi, so these pads were left in
+ * GPIO mode and the i2c0 controller clocked into a void (ACKERR, 0 ACKs on
+ * full 7-bit scan). We set them via the same direct mt_set_gpio_mode() API
+ * that v239h10 proved works for GPIO10 RST. GPIO_MODE_01 = altfn 1 =
+ * SDA0/SCL0 (per mt6755-pinfunc.h: PINMUX_GPIO92__FUNC_SDA0 = NO(92)|1). */
+#define M681_I2C0_SDA_PIN          GPIO92
+#define M681_I2C0_SCL_PIN          GPIO93
+#define M681_I2C0_ALT_MODE         GPIO_MODE_01  /* SDA0 / SCL0 function */
+
+/* Read back MT6351 VLDO28 control (EN_0 + EN_1) + enable-status registers via
+ * pwrap. CON3/CON4 readback confirms the pwrap write landed; EN_STATUS1 bit0
+ * confirms the LDO actually drove the rail on (hardware truth, not just the
+ * register mirror). */
+void m681_touch_pmic_readback(const char *phase)
+{
+	u32 con3 = 0, con4 = 0, en1 = 0;
+	pwrap_read(M681_MT6351_VLDO28_CON3, &con3);
+	pwrap_read(M681_MT6351_VLDO28_CON4, &con4);
+	pwrap_read(M681_MT6351_EN_STATUS1,  &en1);
+	pr_err("[FORGE_TPD] %s: VLDO28_CON3=0x%04x (EN_0 bit1=%d) CON4=0x%04x (EN_1 bit1=%d) EN_STATUS1=0x%04x (VLDO28 bit0=%d)\n",
+	       phase, con3, (con3 >> 1) & 0x1, con4, (con4 >> 1) & 0x1, en1, en1 & 0x1);
+}
+
+/* m681 v239h11: GPIO mux/dir/out readback for RST (GPIO10) and INT (GPIO1).
+ * v239h10 only printed OUT readback, which left an undetected failure mode:
+ * bootloader or another pinctrl consumer can leave GPIO10 in an altfn MODE,
+ * and mt_set_gpio_out() would return 0 without actually driving the pad.
+ * Printing MODE+DIR+OUT on RST and MODE on INT at every phase makes that
+ * failure mode visible in the same capture. */
+void m681_touch_gpio_readback(const char *phase)
+{
+	int r_mode = mt_get_gpio_mode(M681_CTP_RST_PIN);
+	int r_dir  = mt_get_gpio_dir(M681_CTP_RST_PIN);
+	int r_out  = mt_get_gpio_out(M681_CTP_RST_PIN);
+	int i_mode = mt_get_gpio_mode(M681_CTP_INT_PIN);
+	int sda_mode = mt_get_gpio_mode(M681_I2C0_SDA_PIN);
+	int scl_mode = mt_get_gpio_mode(M681_I2C0_SCL_PIN);
+	pr_err("[FORGE_TPD] %s: GPIO10 RST mode=%d dir=%d out=%d | GPIO1 INT mode=%d | GPIO92 SDA mode=%d (want 1=SDA0) GPIO93 SCL mode=%d (want 1=SCL0)\n",
+	       phase, r_mode, r_dir, r_out, i_mode, sda_mode, scl_mode);
+}
+
+/* m681 v239h12: force the i2c0 SCL/SDA pads into SDA0/SCL0 altfn. The graft
+ * DTS omits cust_gpio.dtsi so these pads are never muxed to i2c function by
+ * the pinctrl layer. This is the SAME root cause as the v239h11 "0 ACKs on
+ * full 7-bit scan" — the controller ran (ACKERR) but the pads were in GPIO
+ * mode, so no device on bus0 ever saw a clock edge. Called once at probe
+ * start, before the pre-scan, so the very first i2c0 transfer reaches real
+ * silicon. The m681_touch_gpio_readback() above confirms the mode landed. */
+void m681_touch_i2c0_pinmux_init(void)
+{
+	int sda_rv = mt_set_gpio_mode(M681_I2C0_SDA_PIN, M681_I2C0_ALT_MODE);
+	int scl_rv = mt_set_gpio_mode(M681_I2C0_SCL_PIN, M681_I2C0_ALT_MODE);
+	int sda_m = mt_get_gpio_mode(M681_I2C0_SDA_PIN);
+	int scl_m = mt_get_gpio_mode(M681_I2C0_SCL_PIN);
+	/* m681 v240 (C3-H4): the v239h12 verdict was pinmux-landed-but-0-ACK. One
+	 * un-tested hypothesis was the pad internal pull-config: the graft &pio
+	 * sub-node was dropped by the pinctrl layer (same as the mode), so the SoC
+	 * internal pull-up on SDA0/SCL0 was never enabled. i2c wants the lines
+	 * pulled high at idle; if the board relies on the SoC internal pull (no
+	 * strong external rail) an un-pulled line reads low -> the master clocks
+	 * into a line stuck low -> ACKERR. Belt+suspenders direct-API enable of the
+	 * internal pull-up on GPIO92/93, with readback so the next capture proves
+	 * the pull landed. If ACKs still 0 after this, the pull hypothesis (H4) is
+	 * disproven and the remaining causes are H1 (external pull rail unpowered)
+	 * or H2/H3 (wrong pads / dead chip). */
+	mt_set_gpio_pull_enable(M681_I2C0_SDA_PIN, GPIO_PULL_ENABLE);
+	mt_set_gpio_pull_select(M681_I2C0_SDA_PIN, GPIO_PULL_UP);
+	mt_set_gpio_pull_enable(M681_I2C0_SCL_PIN, GPIO_PULL_ENABLE);
+	mt_set_gpio_pull_select(M681_I2C0_SCL_PIN, GPIO_PULL_UP);
+	pr_err("[FORGE_TPD] i2c0 pinmux: SDA(GPIO92)->mode%d rv=%d readback=%d | SCL(GPIO93)->mode%d rv=%d readback=%d\n",
+	       M681_I2C0_ALT_MODE, sda_rv, sda_m, M681_I2C0_ALT_MODE, scl_rv, scl_m);
+	pr_err("[FORGE_TPD] i2c0 pull: SDA(GPIO92) pull_en=%d pull_sel=%d | SCL(GPIO93) pull_en=%d pull_sel=%d (want en=1 sel=1=UP)\n",
+	       mt_get_gpio_pull_enable(M681_I2C0_SDA_PIN), mt_get_gpio_pull_select(M681_I2C0_SDA_PIN),
+	       mt_get_gpio_pull_enable(M681_I2C0_SCL_PIN), mt_get_gpio_pull_select(M681_I2C0_SCL_PIN));
+}
+
+/* Configure the CTP RST pin (GPIO10) as a direct GPIO output, bypassing the
+ * pinctrl tpd_gpio_output() path which leaves the pin UNCLAIMED. Stock
+ * focaltech uses the same direct API sequence: mode(GPIO) -> dir(OUT). */
+void m681_touch_rst_init(void)
+{
+	mt_set_gpio_mode(M681_CTP_RST_PIN, GPIO_MODE_GPIO);
+	mt_set_gpio_dir(M681_CTP_RST_PIN, GPIO_DIR_OUT);
+	pr_err("[FORGE_TPD] RST pin GPIO10 init done (mode=%d dir=%d)\n",
+	       mt_get_gpio_mode(M681_CTP_RST_PIN), mt_get_gpio_dir(M681_CTP_RST_PIN));
+}
+
+/* Drive the CTP RST pin level via the direct GPIO API and read back the
+ * actual pin state via mt_get_gpio_out, plus MODE+DIR so a stray altfn
+ * left by bootloader/pinctrl is visible on every RST transition. */
+void m681_touch_rst_set(int high)
+{
+	int rv = mt_set_gpio_out(M681_CTP_RST_PIN, high ? GPIO_OUT_ONE : GPIO_OUT_ZERO);
+	int mode = mt_get_gpio_mode(M681_CTP_RST_PIN);
+	int dir  = mt_get_gpio_dir(M681_CTP_RST_PIN);
+	int rb   = mt_get_gpio_out(M681_CTP_RST_PIN);
+	pr_err("[FORGE_TPD] RST=%d (GPIO10 %s) set_rv=%d mode=%d dir=%d readback=%d\n",
+	       high, high ? "high" : "low", rv, mode, dir, rb);
 }
 
 /*result*/
@@ -1605,53 +1747,137 @@ reset_proc:
     FTS_DBG("[FTS] enter tpd_probe...\r\n ");
     pr_err("[FORGE_TPD] ft5436 probe START\n");
 
-    /* m681 v239h9: i2c scan before anything else — find if chip is alive */
+    /* m681 v239h11 phase markers: classify the FT5436 no-ACK in ONE capture.
+     * v239h10 already disproved: pwrap-broken (no — CON3/EN_STATUS1 light up),
+     * RST-not-driven (no — mt_get_gpio_out mirrors the write). What v239h11
+     * adds to find the remaining cause:
+     *   (a) adapter identity dump — prove the graft kernel actually wired
+     *       client->adapter to the i2c0 controller that reaches the touch
+     *       chip (name, dev_name, id, DTS clock-frequency).
+     *   (b) full 7-bit i2c0 scan 0x08..0x77 — find ANY device on bus0 to
+     *       prove the master is electrically alive (LCD_bias@0x3e is
+     *       status="disabled" in DTS, so the bus has no other known ACK).
+     *   (c) GPIO mux/dir readback at every phase — catch a bootloader/pinctrl
+     *       leftover altfn on GPIO10 (RST) or GPIO1 (INT).
+     *   (d) stock FT5x46 reset pulse high->low(10ms)->high(200ms) after
+     *       power-on instead of a single 0->1 edge.
+     *   (e) CON4 EN_1 also written in m681_touch_power_on() — covers the
+     *       "VLDO28 wired to EN_1" batch hypothesis; CON4 readback at every
+     *       phase shows which enable path lit EN_STATUS1 bit0. */
+
+    /* (a) adapter identity — prove we are on the right i2c bus */
+    {
+        struct device_node *an = client->adapter->dev.of_node;
+        pr_err("[FORGE_TPD] adapter: name=%s dev=%s id=%d nr=%d\n",
+               client->adapter->name ? client->adapter->name : "(null)",
+               dev_name(&client->adapter->dev),
+               i2c_adapter_id(client->adapter),
+               client->adapter->nr);
+        if (an) {
+            const __be32 *cf;
+            int len = 0;
+            cf = of_get_property(an, "clock-frequency", &len);
+            pr_err("[FORGE_TPD] i2c0 adapter of_node=%s clock-frequency-prop=%p len=%d val=%u\n",
+                   an->full_name ? an->full_name : "(null)", cf, len,
+                   (cf && len >= (int)sizeof(__be32)) ? be32_to_cpup(cf) : 0U);
+        } else {
+            pr_err("[FORGE_TPD] i2c0 adapter has NO of_node (clock-freq unknown)\n");
+        }
+    }
+
+    /* m681 v239h12: CRITICAL — mux the i2c0 SCL/SDA pads into SDA0/SCL0
+     * altfn BEFORE any transfer. The graft DTS omits cust_gpio.dtsi so these
+     * pads were in GPIO mode on v239h11 -> controller clocked into a void
+     * (ACKERR, 0 ACKs full 7-bit scan). This is the direct-API equivalent of
+     * the stock cust_gpio.dtsi gpio92/gpio93 pin config. */
+    m681_touch_i2c0_pinmux_init();
+
+    m681_touch_pmic_readback("pre-power");
+    m681_touch_gpio_readback("pre-power");
+
+    /* (b) i2c0 scan BEFORE power — full 7-bit range, no skip filters.
+     * Chip should be silent (no rail yet); any ACK here is a different
+     * device on bus0 and proves the master is electrically alive. */
     client->adapter->timeout = HZ / 10;
     {
         unsigned char scan_addr;
         int scan_ret;
+        int scan_ack = 0;
         struct i2c_msg scan_msg;
-        for (scan_addr = 0x38; scan_addr <= 0x5d; scan_addr++) {
-            if (scan_addr == 0x39 || scan_addr == 0x3e ||
-                (scan_addr > 0x39 && scan_addr < 0x48) ||
-                (scan_addr > 0x48 && scan_addr < 0x5d))
-                continue;
+        unsigned char scan_buf = 0;
+        pr_err("[FORGE_TPD] i2c0 pre-scan begin (0x08..0x77)\n");
+        for (scan_addr = 0x08; scan_addr <= 0x77; scan_addr++) {
+            /* m681 v240 (C0): 1-byte READ probe instead of len=0/NULL. The
+             * zero-length write probe made the MTK controller emit I2CERR
+             * "data buffer is NULL" for every address (~672 lines/boot),
+             * flooding the ring buffer. A 1-byte read is a valid presence
+             * probe (address-phase ACK/NAK) and produces no NULL-buf error. */
             scan_msg.addr = scan_addr;
-            scan_msg.flags = 0;
-            scan_msg.len = 0;
-            scan_msg.buf = NULL;
+            scan_msg.flags = I2C_M_RD;
+            scan_msg.len = 1;
+            scan_msg.buf = &scan_buf;
             scan_ret = i2c_transfer(client->adapter, &scan_msg, 1);
-            if (scan_ret == 1)
-                pr_err("[FORGE_TPD] i2c0 SCAN: addr=0x%02x ACK!\n", scan_addr);
+            if (scan_ret == 1) {
+                pr_err("[FORGE_TPD] i2c0 pre-scan: addr=0x%02x ACK!\n", scan_addr);
+                scan_ack++;
+            }
         }
-    }
-    pr_err("[FORGE_TPD] i2c0 scan done\n");
-
-    /* m681 v239h9: pwrap readback — verify MT6351 VLDO28 EN bit */
-    {
-        unsigned int reg_val = 0;
-        extern unsigned int pmic_config_interface(unsigned int, unsigned int, unsigned int, unsigned int);
-        /* read: write 0 mask to reg, then read back via pwrap_read */
-        extern unsigned int pwrap_read(unsigned int, unsigned int *);
-        pwrap_read(0x0AA2, &reg_val);
-        pr_err("[FORGE_TPD] MT6351 VLDO28_CON3 readback=0x%04x (EN_0 bit1=%d)\n",
-               reg_val, (reg_val >> 1) & 0x1);
+        pr_err("[FORGE_TPD] i2c0 pre-scan done ack_count=%d\n", scan_ack);
     }
 
-    /* enable gpio — graft uses tpd_gpio_output (pinctrl-based) */
-    pr_err("[FORGE_TPD] RST=0 (GPIO low)\n");
-    tpd_gpio_output(GTP_RST_PORT, 0);
-
+    /* (c) drive RST=0 via DIRECT mt_set_gpio_* API (source truth = stock) */
+    m681_touch_rst_init();
+    m681_touch_rst_set(0);
     msleep(50);
-    pr_err("[FORGE_TPD] power on begin\n");
 
-    /* m681 ft5436 port: PMIC direct — MT6351 VLDO28 enable via pwrap */
+    /* (d) power on: pwrap write to MT6351 VLDO28_CON3 bit1 (EN_0) AND
+     *     VLDO28_CON4 bit1 (EN_1) */
+    pr_err("[FORGE_TPD] power on begin\n");
     m681_touch_power_on();
 
+    /* (e) post-write pwrap + GPIO readback — confirms write landed, rail
+     *     drove, and RST/INT mux is still in GPIO function. */
+    m681_touch_pmic_readback("post-power");
+    m681_touch_gpio_readback("post-power");
     msleep(100);
-    pr_err("[FORGE_TPD] RST=1 (GPIO high)\n");
-    tpd_gpio_output(GTP_RST_PORT, 1);
+
+    /* (f) stock FT5x46 reset pulse: high -> mdelay(10) -> low -> mdelay(10)
+     *     -> high -> mdelay(200). v239h10 only did a single 0->1 edge; the
+     *     Focaltech datasheet and stock focaltech_driver.c (lines 1621-1668
+     *     of the m681 stock tree) use this pulse to force a clean reset. */
+    m681_touch_rst_set(1);
+    mdelay(10);
+    m681_touch_rst_set(0);
+    mdelay(10);
+    m681_touch_rst_set(1);
     mdelay(200);
+
+    /* (g) i2c0 scan AFTER power+reset — full 7-bit; FT5436 should ACK at 0x38.
+     * If pre-scan was empty AND post-scan is empty, the master is not
+     * electrically reaching any device (wrong bus / no pull-ups / dead
+     * bus). If pre-scan was empty but post-scan shows 0x38, the chip is
+     * alive and the prior no-ACK was a power or reset sequencing issue. */
+    {
+        unsigned char scan_addr;
+        int scan_ret;
+        int scan_ack = 0;
+        struct i2c_msg scan_msg;
+        unsigned char scan_buf = 0;
+        pr_err("[FORGE_TPD] post-power+reset i2c0 scan begin (0x08..0x77)\n");
+        for (scan_addr = 0x08; scan_addr <= 0x77; scan_addr++) {
+            /* m681 v240 (C0): 1-byte READ probe (see pre-scan comment). */
+            scan_msg.addr = scan_addr;
+            scan_msg.flags = I2C_M_RD;
+            scan_msg.len = 1;
+            scan_msg.buf = &scan_buf;
+            scan_ret = i2c_transfer(client->adapter, &scan_msg, 1);
+            if (scan_ret == 1) {
+                pr_err("[FORGE_TPD] i2c0 post-scan: addr=0x%02x ACK!\n", scan_addr);
+                scan_ack++;
+            }
+        }
+        pr_err("[FORGE_TPD] i2c0 post-scan done ack_count=%d\n", scan_ack);
+    }
 
     pr_err("[FORGE_TPD] power on end\n");
 
@@ -1667,17 +1893,29 @@ reset_proc:
     if ((fts_read_reg(i2c_client, 0x00, &data)) < 0)
     {
         TPD_DMESG("I2C transfer error, line: %d\n", __LINE__);
+        pr_err("[FORGE_TPD] ft5436 read_reg(0x00) FAIL reset_count=%d\n",
+               reset_count);
+        /* classify the no-ACK in this same capture: power? RST level? mux? */
+        m681_touch_pmic_readback("probe-fail");
+        m681_touch_gpio_readback("probe-fail");
 
         fts_dma_buffer_deinit();
         #ifdef TPD_RESET_ISSUE_WORKAROUND
         if ( reset_count < TPD_MAX_RESET_COUNT )
         {
             reset_count++;
+            /* PROPER-FIX retry: re-power the rail (CON3+CON4) and re-reset
+             * the chip via the stock pulse so the retry does real state
+             * recovery, not a meaningless re-read. */
+            m681_touch_power_off();
+            m681_touch_rst_set(0);
+            msleep(20);
             goto reset_proc;
         }
         #endif
         return -1;
     }
+    pr_err("[FORGE_TPD] ft5436 read_reg(0x00) OK data=0x%02x\n", (u8)data);
 
     /* graft: tpd_gpio_as_int configures INT pin as EINT via pinctrl */
     tpd_gpio_as_int(GTP_INT_PORT);

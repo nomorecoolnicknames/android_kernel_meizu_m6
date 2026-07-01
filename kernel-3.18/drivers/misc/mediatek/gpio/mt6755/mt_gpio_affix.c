@@ -26,7 +26,11 @@ void mt_gpio_pin_decrypt(unsigned long *cipher)
 	/* just for debug, find out who used pin number directly */
 	if ((*cipher & (0x80000000)) == 0) {
 		GPIOERR("GPIO%u HARDCODE warning!!!\n", (unsigned int)(*cipher));
-		dump_stack();
+		/* m681 v240 (C0): drop the per-call dump_stack — the forge touch/i2c0
+		 * bring-up uses raw GPIO numbers (GPIO92/93 etc) on purpose, which fired
+		 * a full backtrace ~143x/boot and flooded the ring buffer. The one-line
+		 * warning above is enough; the stack dump was debug-only. */
+		/* dump_stack(); */
 		/* return; */
 	}
 
