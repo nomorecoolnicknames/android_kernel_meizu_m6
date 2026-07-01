@@ -120,6 +120,12 @@ void tpd_gpio_as_int(int pin)
 {
 	mutex_lock(&tpd_set_gpio_mutex);
 	TPD_DEBUG("[tpd]tpd_gpio_as_int\n");
+	/* m681 v239h: guard against pinctrl not initialized (probe order) */
+	if (IS_ERR_OR_NULL(pinctrl1) || !eint_as_int) {
+		pr_err("[FORGE_TPD] tpd_gpio_as_int: pinctrl not ready, skip\n");
+		mutex_unlock(&tpd_set_gpio_mutex);
+		return;
+	}
 	if (pin == 1)
 		pinctrl_select_state(pinctrl1, eint_as_int);
 	mutex_unlock(&tpd_set_gpio_mutex);
@@ -130,6 +136,12 @@ void tpd_gpio_output(int pin, int level)
 {
 	mutex_lock(&tpd_set_gpio_mutex);
 	TPD_DEBUG("[tpd]tpd_gpio_output pin = %d, level = %d\n", pin, level);
+	/* m681 v239h: guard against pinctrl not initialized */
+	if (IS_ERR_OR_NULL(pinctrl1)) {
+		pr_err("[FORGE_TPD] tpd_gpio_output: pinctrl not ready, skip\n");
+		mutex_unlock(&tpd_set_gpio_mutex);
+		return;
+	}
 	if (pin == 1) {
 		if (level)
 			pinctrl_select_state(pinctrl1, eint_output1);
@@ -440,6 +452,7 @@ static int tpd_probe(struct platform_device *pdev)
 	int touch_type = 1;	/* 0:R-touch, 1: Cap-touch */
 	int i = 0;
 	int init_ret = 0;
+	int ret = 0;
 #ifndef CONFIG_CUSTOM_LCM_X
 #ifdef CONFIG_LCM_WIDTH
 	unsigned long tpd_res_x = 0, tpd_res_y = 0;
@@ -451,7 +464,11 @@ static int tpd_probe(struct platform_device *pdev)
 
 	if (misc_register(&tpd_misc_device))
 		pr_err("mtk_tpd: tpd_misc_device register failed\n");
-	tpd_get_gpio_info(pdev);
+	ret = tpd_get_gpio_info(pdev);
+	if (ret) {
+		pr_err("[FORGE_TPD] tpd_get_gpio_info FAILED ret=%d — touch pinctrl not ready, aborting probe\n", ret);
+		return -EPROBE_DEFER;
+	}
 	tpd = kmalloc(sizeof(struct tpd_device), GFP_KERNEL);
 	if (tpd == NULL)
 		return -ENOMEM;

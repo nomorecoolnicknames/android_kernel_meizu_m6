@@ -200,6 +200,15 @@ config TOUCHSCREEN_MTK_FT5X26
 	  If unsure, say N.
 
 source "drivers/input/touchscreen/mediatek/ft5x26/Kconfig"
+
+config MTK_FT5436
+	bool "FT5436 for Mediatek package"
+	help
+	  Touch driver for FocalTech FT5436.
+	  Say Y here if you use FT5436 touch panel.
+
+	  If unsure, say N.
+
 config TOUCHSCREEN_UNIFIED_DRIVER_4
 	bool "LGE Unified driver Ver4.0"
 	depends on I2C

@@ -50,6 +50,19 @@
 #include <linux/of_irq.h>
 #include <linux/interrupt.h>
 #include "mt_boot_common.h"
+
+/* m681 v239h5: PMIC direct vldo28 enable — bypass regulator framework.
+ * Stock m681 has MT6351 PMIC, but graft kernel uses MT6353 driver.
+ * MT6351 VLDO28 CON3 = 0x0AA2, EN_0 bit = bit1 (SHIFT=1, MASK=0x1).
+ * MT6353 VLDO28 CON0 = 0x0A16 (wrong register for MT6351 hardware).
+ * Write directly via pwrap to the MT6351 register address. */
+extern unsigned int pmic_config_interface(unsigned int RegNum, unsigned int val, unsigned int MASK, unsigned int SHIFT);
+static void m681_touch_power_on(void)
+{
+	/* MT6351_PMIC_RG_VLDO28_EN_0_ADDR = 0x0AA2, SHIFT=1, MASK=0x1 */
+	pmic_config_interface(0x0AA2, 1, 0x1, 1);
+	pr_err("[FORGE_TPD] MT6351 VLDO28_EN_0 written (reg=0x0AA2 bit1=1)\n");
+}
 /* PROXIMITY */
 #ifdef CONFIG_TPD_PROXIMITY
 #include <linux/hwmsensor.h>
@@ -78,7 +91,7 @@
 #define TOUCH3_XL											0x10
 #define TOUCH3_YH											0x11
 #define TOUCH3_YL											0x12
-#define TPD_MAX_RESET_COUNT								3
+#define TPD_MAX_RESET_COUNT								1
 
 unsigned int fts_tp_irq = 0;
 /*for tp esd check*/
@@ -1481,38 +1494,76 @@ reset_proc:
 
 #else
 	tpd_gpio_output(GTP_RST_PORT, 0);
-	mdelay(10);
+	pr_err("[FORGE_TPD] RST=0 (GPIO10 low)\n");
+	mdelay(50);
 #endif
 
 /* power on, need confirm with SA */
-	err = regulator_enable(tpd->reg);
-	if (err) {
-		FTS_ERROR("regulator_enable() failed!\n");
-		return -1;
+	if (tpd->reg) {
+		err = regulator_enable(tpd->reg);
+		if (err) {
+			FTS_ERROR("regulator_enable() failed!\n");
+			return -1;
+		}
+	} else {
+		/* m681 v239h8: PMIC direct — MT6351 VLDO28 enable via pwrap */
+		m681_touch_power_on();
+		pr_err("[FORGE_TPD] PMIC direct: MT6351 vldo28 enabled\n");
+		err = 0;
 	}
 
 #ifdef CONFIG_TPD_CLOSE_POWER_IN_SLEEP
 #else
-	mdelay(10);
+	mdelay(50);
 	FTS_DBG(" fts reset\n");
 	tpd_gpio_output(GTP_RST_PORT, 1);
+	pr_err("[FORGE_TPD] RST=1 (GPIO10 high)\n");
 #endif
 	tpd_gpio_as_int(GTP_INT_PORT);
-	msleep(200);
+	msleep(300);
 
+	/* m681 v239h6: i2c scan — try 0x38 (ft5x26) and 0x5d (GT9xx) to find
+	 * the real touch chip. Also set adapter timeout. */
+	client->adapter->timeout = HZ / 10;
+	{
+		unsigned char scan_addr;
+		int scan_ret;
+		struct i2c_msg scan_msg;
+		for (scan_addr = 0x38; scan_addr <= 0x5d; scan_addr++) {
+			if (scan_addr == 0x39 || scan_addr == 0x3e ||
+			    (scan_addr > 0x39 && scan_addr < 0x48) ||
+			    (scan_addr > 0x48 && scan_addr < 0x5d))
+				continue;
+			scan_msg.addr = scan_addr;
+			scan_msg.flags = 0;
+			scan_msg.len = 0;
+			scan_msg.buf = NULL;
+			scan_ret = i2c_transfer(client->adapter, &scan_msg, 1);
+			if (scan_ret == 1)
+				pr_err("[FORGE_TPD] i2c0 SCAN: addr=0x%02x ACK!\n", scan_addr);
+		}
+	}
+
+	/* m681 v239d: set i2c client timeout to 100ms so a non-responding chip
+	 * returns -EREMOTEIO instead of hanging the boot forever. */
+	client->adapter->timeout = HZ / 10;
 	err = i2c_smbus_read_i2c_block_data(fts_i2c_client, 0x00, 1, &data);
 	/* if auto upgrade fail, it will not read right value next upgrade. */
 	/* reg0 data running state is 0; other state is not 0 */
 	if (err < 0 || data != 0) {
 		FTS_ERROR("I2C transfer error, err: %d, data: %d\n", err, data);
+		pr_err("[FORGE_TPD] ft5x26 probe FAIL err=%d data=%d reset_count=%d\n", err, data, reset_count);
 
 		if (++reset_count < TPD_MAX_RESET_COUNT)
 			goto reset_proc;
-		err = regulator_disable(tpd->reg);
-		if (err)
-			FTS_ERROR("regulator_disable() failed!\n");
+		if (tpd->reg) {
+			err = regulator_disable(tpd->reg);
+			if (err)
+				FTS_ERROR("regulator_disable() failed!\n");
+		}
 		return -1;
 	}
+	pr_err("[FORGE_TPD] ft5x26 probe OK data=%d\n", data);
 	/*msg_dma_alloct(); */
 #ifdef __MSG_DMA_MODE__
 #ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
@@ -1673,11 +1724,22 @@ static int tpd_local_init(void)
 	int retval = TPD_OK;
 
 	FTS_DBG("Focaltech fts I2C Touchscreen Driver\n");
+	/* m681 v239h5: regulator_get(vtouch) returns -EPROBE_DEFER because the vldo28
+	 * regulator isn't registered (of_regulator_match may not fire for this PMIC).
+	 * Bypass the regulator framework entirely — call the PMIC API directly to
+	 * enable VLDO28_0 (2.8V touch power rail). This is a BOOT-UNBLOCK. */
 	tpd->reg = regulator_get(tpd->tpd_dev, "vtouch");
-	retval = regulator_set_voltage(tpd->reg, 2800000, 2800000);
-	if (retval != 0) {
-		FTS_ERROR("Failed to set reg-vgp6 voltage: %d\n", retval);
-		return -1;
+	if (IS_ERR(tpd->reg)) {
+		pr_err("[FORGE_TPD] regulator_get(vtouch) FAILED=%ld — using PMIC direct API\n", PTR_ERR(tpd->reg));
+		tpd->reg = NULL;
+	}
+	retval = 0;
+	if (tpd->reg) {
+		retval = regulator_set_voltage(tpd->reg, 2800000, 2800000);
+		if (retval != 0) {
+			FTS_ERROR("Failed to set reg-vgp6 voltage: %d\n", retval);
+			return -1;
+		}
 	}
 	if (i2c_add_driver(&tpd_i2c_driver) != 0) {
 		FTS_ERROR("fts unable to add i2c driver.\n");
