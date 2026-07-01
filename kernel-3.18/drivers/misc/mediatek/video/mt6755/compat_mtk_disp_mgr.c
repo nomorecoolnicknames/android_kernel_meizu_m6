@@ -255,10 +255,18 @@ static int compat_get_disp_input_config(struct compat_disp_input_config __user *
 {
 	compat_uint_t u;
 	compat_uptr_t p;
-	compat_ushort_t s;
-	uint8_t c;
 	unsigned long ptr;
 	int err = 0;
+
+	/* m681 v238: field order matches stock MTK disp_input_config */
+	err |= get_user(u, &(data32->layer_id));
+	err |= put_user(u, &(data->layer_id));
+
+	err |= get_user(u, &(data32->layer_enable));
+	err |= put_user(u, &(data->layer_enable));
+
+	err |= get_user(u, &(data32->buffer_source));
+	err |= put_user(u, &(data->buffer_source));
 
 	err |= get_user(p, &(data32->src_base_addr));
 	ptr = p;
@@ -268,23 +276,44 @@ static int compat_get_disp_input_config(struct compat_disp_input_config __user *
 	ptr = p;
 	err |= put_user((void *)ptr, &(data->src_phy_addr));
 
-	err |= get_user(u, &(data32->buffer_source));
-	err |= put_user(u, &(data->buffer_source));
-
-	err |= get_user(u, &(data32->security));
-	err |= put_user(u, &(data->security));
+	err |= get_user(u, &(data32->src_direct_link));
+	err |= put_user(u, &(data->src_direct_link));
 
 	err |= get_user(u, &(data32->src_fmt));
 	err |= put_user(u, &(data->src_fmt));
 
-	err |= get_user(u, &(data32->src_alpha));
-	err |= put_user(u, &(data->src_alpha));
+	err |= get_user(u, &(data32->src_use_color_key));
+	err |= put_user(u, &(data->src_use_color_key));
 
-	err |= get_user(u, &(data32->dst_alpha));
-	err |= put_user(u, &(data->dst_alpha));
+	err |= get_user(u, &(data32->src_color_key));
+	err |= put_user(u, &(data->src_color_key));
 
-	err |= get_user(u, &(data32->yuv_range));
-	err |= put_user(u, &(data->yuv_range));
+	err |= get_user(u, &(data32->src_pitch));
+	err |= put_user(u, &(data->src_pitch));
+
+	err |= get_user(u, &(data32->src_offset_x));
+	err |= put_user(u, &(data->src_offset_x));
+
+	err |= get_user(u, &(data32->src_offset_y));
+	err |= put_user(u, &(data->src_offset_y));
+
+	err |= get_user(u, &(data32->src_width));
+	err |= put_user(u, &(data->src_width));
+
+	err |= get_user(u, &(data32->src_height));
+	err |= put_user(u, &(data->src_height));
+
+	err |= get_user(u, &(data32->tgt_offset_x));
+	err |= put_user(u, &(data->tgt_offset_x));
+
+	err |= get_user(u, &(data32->tgt_offset_y));
+	err |= put_user(u, &(data->tgt_offset_y));
+
+	err |= get_user(u, &(data32->tgt_width));
+	err |= put_user(u, &(data->tgt_width));
+
+	err |= get_user(u, &(data32->tgt_height));
+	err |= put_user(u, &(data->tgt_height));
 
 	err |= get_user(u, &(data32->layer_rotation));
 	err |= put_user(u, &(data->layer_rotation));
@@ -295,78 +324,41 @@ static int compat_get_disp_input_config(struct compat_disp_input_config __user *
 	err |= get_user(u, &(data32->video_rotation));
 	err |= put_user(u, &(data->video_rotation));
 
+	err |= get_user(u, &(data32->isTdshp));
+	err |= put_user(u, &(data->isTdshp));
+
 	err |= get_user(u, &(data32->next_buff_idx));
 	err |= put_user(u, &(data->next_buff_idx));
 
-	err |= get_user(u, &(data32->src_color_key));
-	err |= put_user(u, &(data->src_color_key));
+	err |= get_user(u, &(data32->identity));
+	err |= put_user(u, &(data->identity));
+
+	err |= get_user(u, &(data32->connected_type));
+	err |= put_user(u, &(data->connected_type));
+
+	err |= get_user(u, &(data32->security));
+	err |= put_user(u, &(data->security));
+
+	err |= get_user(u, &(data32->alpha_enable));
+	err |= put_user(u, &(data->alpha_enable));
+
+	err |= get_user(u, &(data32->alpha));
+	err |= put_user(u, &(data->alpha));
+
+	err |= get_user(u, &(data32->sur_aen));
+	err |= put_user(u, &(data->sur_aen));
+
+	err |= get_user(u, &(data32->src_alpha));
+	err |= put_user(u, &(data->src_alpha));
+
+	err |= get_user(u, &(data32->dst_alpha));
+	err |= put_user(u, &(data->dst_alpha));
 
 	err |= get_user(u, &(data32->frm_sequence));
 	err |= put_user(u, &(data->frm_sequence));
 
-	err |= get_user(p, &(data32->dirty_roi_addr));
-	ptr = p;
-	err |= put_user((void *)ptr, &(data->dirty_roi_addr));
-
-	err |= get_user(s, &(data32->dirty_roi_num));
-	err |= put_user(s, &(data->dirty_roi_num));
-
-	err |= get_user(s, &(data32->src_pitch));
-	err |= put_user(s, &(data->src_pitch));
-
-	err |= get_user(s, &(data32->src_offset_x));
-	err |= put_user(s, &(data->src_offset_x));
-
-	err |= get_user(s, &(data32->src_offset_y));
-	err |= put_user(s, &(data->src_offset_y));
-
-	err |= get_user(s, &(data32->src_width));
-	err |= put_user(s, &(data->src_width));
-
-	err |= get_user(s, &(data32->src_height));
-	err |= put_user(s, &(data->src_height));
-
-	err |= get_user(s, &(data32->tgt_offset_x));
-	err |= put_user(s, &(data->tgt_offset_x));
-
-	err |= get_user(s, &(data32->tgt_offset_y));
-	err |= put_user(s, &(data->tgt_offset_y));
-
-	err |= get_user(s, &(data32->tgt_width));
-	err |= put_user(s, &(data->tgt_width));
-
-	err |= get_user(s, &(data32->tgt_height));
-	err |= put_user(s, &(data->tgt_height));
-
-	err |= get_user(c, &(data32->alpha_enable));
-	err |= put_user(c, &(data->alpha_enable));
-
-	err |= get_user(c, &(data32->alpha));
-	err |= put_user(c, &(data->alpha));
-
-	err |= get_user(c, &(data32->sur_aen));
-	err |= put_user(c, &(data->sur_aen));
-
-	err |= get_user(c, &(data32->src_use_color_key));
-	err |= put_user(c, &(data->src_use_color_key));
-
-	err |= get_user(c, &(data32->layer_id));
-	err |= put_user(c, &(data->layer_id));
-
-	err |= get_user(c, &(data32->layer_enable));
-	err |= put_user(c, &(data->layer_enable));
-
-	err |= get_user(c, &(data32->src_direct_link));
-	err |= put_user(c, &(data->src_direct_link));
-
-	err |= get_user(c, &(data32->identity));
-	err |= put_user(c, &(data->identity));
-
-	err |= get_user(c, &(data32->connected_type));
-	err |= put_user(c, &(data->connected_type));
-
-	err |= get_user(c, &(data32->isTdshp));
-	err |= put_user(c, &(data->isTdshp));
+	err |= get_user(u, &(data32->yuv_range));
+	err |= put_user(u, &(data->yuv_range));
 
 	return err;
 }
@@ -922,9 +914,6 @@ static int compat_get_disp_frame_cfg(struct compat_disp_frame_cfg_t __user *data
 
 	err |= get_user(u, &(data32->tigger_mode));
 	err |= put_user(u, &(data->tigger_mode));
-
-	err |= get_user(u, &(data32->user));
-	err |= put_user(u, &(data->user));
 
 	return err;
 }

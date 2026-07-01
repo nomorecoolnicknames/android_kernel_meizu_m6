@@ -49,6 +49,7 @@
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
+#include <linux/of_platform.h>	/* m681 v183: of_find_device_by_node, of_platform_device_create */
 #include <linux/io.h>
 #ifdef CONFIG_MTK_CLKMGR
 #include <mach/mt_clkmgr.h>
@@ -375,7 +376,7 @@ static int disp_probe(struct platform_device *pdev)
 					 * polls SCPSYS/SPM for the domain to power up; on m681 it never
 					 * does -> silent spin. Defer display to reach userspace+adb;
 					 * clk handles are still registered via ddp_set_clk_handle. */
-					static volatile int forge_skip_disp_clk_en = 1;	/* m681 v30: re-DEFER display clk. v29 PROVED clk_prepare_enable(DISP0_SMI_COMMON, id=0) hard-hangs (stage 0xc2, kick frozen 145) -> SMI common clk/bus wedge on m681. Reaching userspace first; display brought up live from adb. */
+					static volatile int forge_skip_disp_clk_en = 0;	/* m681 v204: RE-ENABLED real clk path. v30 set =1 because clk_prepare_enable(DISP0_SMI_COMMON) hung (stage 0xc2) — but that was BEFORE M4U(v176)/SMI bus_optimization/DIS-power fixes. v203 expdb PROVES SYS_DIS is truly powered (PWR_STATUS bit3=1, spins=0), and the display dies only because the DSI mm1 CG (CON1 bit0/1) is GATED (CON1=0xffffffff) at engine time -> no DSI frame -> CMDQ MUTEX0_STREAM_EOF timeout -> AEE reset. Let the CCF enable DISP_MTCMOS/SMI_COMMON/DSI for real now. If it hard-hangs -> revert to 1 (TWRP fallback). */
 					if (!forge_skip_disp_clk_en) {
 					/* m681 v29: pinpoint which disp clk spins; last 0xC2 aux = clk index i */
 					{ extern void forge_m681_mark_aux(unsigned char, unsigned int); forge_m681_mark_aux(0xC2, (unsigned int)i); }
@@ -415,7 +416,7 @@ static int __init disp_probe_1(void)
 	struct platform_device *pdev = &mydev;
 
 	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC5); }	/* m681 v30: disp_probe_1 ENTRY */
-	{ static volatile int forge_disp_disable = 1; if (forge_disp_disable) return 0; }	/* v30: display disabled — skip ioremap/request_irq/m4u (dispsys_dev may be NULL since disp_init skipped) */
+	{ static volatile int forge_disp_disable = 0; if (forge_disp_disable) return 0; }	/* m681 v181: ENABLE disp_probe_1 -> of_iomap the DISPSYS/MMSYS register bases + MMSYS power-on. Was disabled (v30 headless); v180 pstore showed mtkfb crashing in ddp_path_top_clock_on (DISPSYS CLK all NULL + NULL DISP base) precisely because this setup was skipped. */
 
 	disp_helper_option_init();
 
@@ -457,13 +458,25 @@ static int __init disp_probe_1(void)
 	DPI_REG = (struct DPI_REGS *)dispsys_reg[DISP_REG_DPI0];
 
 	/* //// power on MMSYS for early porting */
-#ifdef CONFIG_MTK_FPGA
-	pr_debug("[DISP Probe] power MMSYS:0x%lx,0x%lx\n", DISP_REG_CONFIG_MMSYS_CG_CLR0,
-	       DISP_REG_CONFIG_MMSYS_CG_CLR1);
-	DISP_REG_SET(NULL, DISP_REG_CONFIG_MMSYS_CG_CLR0, 0xFFFFFFFF);
-	DISP_REG_SET(NULL, DISP_REG_CONFIG_MMSYS_CG_CLR1, 0xFFFFFFFF);
-	/* DISP_REG_SET(NULL,DISPSYS_CONFIG_BASE + 0xC04,0x1C000);//fpga should set this register */
-#endif
+	/* m681 display fix: the stock wholesale MMSYS CG ungate is #ifdef CONFIG_MTK_FPGA
+	 * = DEAD on real HW, and forge_skip_disp_clk_en=1 (disp_probe) skips the clk-
+	 * framework enable (it hard-hangs on SCPSYS). So on real m681 NOTHING ungates the
+	 * MM clocks -> DSI digital block unclocked -> its regs read/write 0x0. v201 ungated
+	 * only the DSI leaf bits (CG_CLR1=0x3) and stayed dark; here ungate the FULL banks
+	 * CG_CLR0+CLR1 (incl the SMI_COMMON/larb/OVL/RDMA fabric in CON0), bypassing the
+	 * hanging CCF. CG register access is proven safe (v201 read/wrote it at runtime, no
+	 * stall). Log CON0/CON1 before/after to confirm the writes latch (if 'after' still
+	 * shows bits set, the MMSYS island is not truly powered -> see [FORGE_DISP] SYS_DIS
+	 * pwron line from clk-mt6755-pg.c). */
+	{
+		unsigned int _c0 = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0);
+		unsigned int _c1 = DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1);
+		DISP_REG_SET(NULL, DISP_REG_CONFIG_MMSYS_CG_CLR0, 0xFFFFFFFF);
+		DISP_REG_SET(NULL, DISP_REG_CONFIG_MMSYS_CG_CLR1, 0xFFFFFFFF);
+		pr_emerg("[FORGE_DISP] MMSYS CG ungate: CON0 0x%x->0x%x CON1 0x%x->0x%x\n",
+			_c0, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0),
+			_c1, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1));
+	}
 	/* init arrays */
 	ddp_path_init();
 
@@ -525,6 +538,11 @@ static int disp_resume(struct platform_device *pdev)
 
 static const struct of_device_id dispsys_of_ids[] = {
 	{.compatible = "mediatek,DISPSYS",},
+	/* m681 v182: the m6-graft mt6755.dtsi node is lowercase "mediatek,dispsys"
+	 * (dispsys@14008000); OF compatible matching is case-sensitive, so the
+	 * uppercase-only table never matched -> disp_probe never ran -> dispsys_dev
+	 * NULL -> BUG at ddp_drv.c:424 (v181 pstore). Add the lowercase form. */
+	{.compatible = "mediatek,dispsys",},
 	{}
 };
 
@@ -548,7 +566,7 @@ static int __init disp_init(void)
 	DISPMSG("Register the disp driver\n");
 	init_log_buffer();
 	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC3); }	/* m681 v30: display DISABLED */
-	{ static volatile int forge_disp_disable = 1; if (forge_disp_disable) return 0; }	/* v30: skip dispsys driver registration -> no disp_probe, no display HW; reach userspace headless */
+	{ static volatile int forge_disp_disable = 0; if (forge_disp_disable) return 0; }	/* m681 v181: ENABLE dispsys driver registration (mediatek,DISPSYS) -> disp_probe -> disp_clk handles + DISP register bases set up before mtkfb/primary_display uses them. */
 	if (platform_driver_register(&dispsys_of_driver)) {
 		DISPERR("failed to register disp driver\n");
 		/* platform_device_unregister(&disp_device); */
@@ -556,6 +574,30 @@ static int __init disp_init(void)
 		return ret;
 	}
 	DISPMSG("disp driver init done\n");
+
+	/* m681 v183: the async OF-match for "mediatek,dispsys" does NOT trigger
+	 * disp_probe on this graft (v181/v182 pstore: dispsys_dev stays NULL ->
+	 * disp_probe_1 BUGs). Force it: find the dispsys node, find-or-create its
+	 * platform_device, and call disp_probe directly so dispsys_dev + disp_clk[]
+	 * + the saved mydev are set up before disp_probe_1/mtkfb run. pr_emerg ->
+	 * pstore for diagnosis. */
+	if (!dispsys_dev) {
+		struct device_node *np =
+			of_find_compatible_node(NULL, NULL, "mediatek,dispsys");
+		struct platform_device *pd = NULL;
+
+		if (np) {
+			pd = of_find_device_by_node(np);
+			if (!pd)
+				pd = of_platform_device_create(np, NULL, NULL);
+		}
+		pr_emerg("[FORGE_DISP] v183 dispsys np=%p pd=%p dev_of=%p\n",
+			 np, pd, pd ? pd->dev.of_node : NULL);
+		if (pd)
+			disp_probe(pd);
+		pr_emerg("[FORGE_DISP] v183 after force-probe dispsys_dev=%p\n",
+			 dispsys_dev);
+	}
 	return 0;
 }
 

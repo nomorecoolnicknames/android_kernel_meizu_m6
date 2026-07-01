@@ -2650,6 +2650,14 @@ static int _convert_disp_input_to_ovl(OVL_CONFIG_STRUCT *dst, disp_input_config 
 	dst->buff_idx = src->next_buff_idx;
 	dst->layer_en = src->layer_enable;
 
+	/* m681 v233: dump the input layers the framework/mtkfb hands the OVL, to see why
+	 * OVL0_SRC goes to 0x0 (no enabled layer) at the kernel-fb takeover -> RDMA0 gets no
+	 * frame -> dark. en=0 => framework gives no layer; addr=0/bad => buffer/M4U issue. */
+	{ static int _flc; if (_flc < 40) { _flc++;
+	  pr_emerg("[FORGE_DISP] ovl_in#%d: layer=%d en=%d addr=0x%lx %ux%u fmt=0x%x\n",
+		 _flc, src->layer_id, src->layer_enable, (unsigned long)src->src_phy_addr,
+		 src->src_width, src->src_height, src->src_fmt); } }
+
 	/* if layer is disable, we just needs config above params. */
 	if (!src->layer_enable)
 		return 0;
@@ -2722,13 +2730,13 @@ static void m6_dump_primary_ovl_handoff(const char *stage,
 		return;
 
 	idx = m6_handoff_diag_count++;
-	DISPERR("M6 OVL handoff[%u:%s]: comm=%s decouple=%d mode=%u bypass_pq=%d cfg=%d L%u input_en=%u ovl_en=%u source=%u input_fmt=0x%x ovl_fmt=%s/0x%x idx=%u fence_fd=%d frm=%u sec=%u\n",
+	DISPERR("M6 OVL handoff[%u:%s]: comm=%s decouple=%d mode=%u bypass_pq=%d cfg=%d L%u input_en=%u ovl_en=%u source=%u input_fmt=0x%x ovl_fmt=%s/0x%x idx=%u frm=%u sec=%u\n",
 		idx, stage ? stage : "null", current->comm,
 		primary_display_is_decouple_mode(), pgc ? pgc->session_mode : 0,
 		disp_helper_get_option(DISP_OPT_BYPASS_PQ), cfg_idx,
 		input->layer_id, input->layer_enable, ovl->layer_en,
 		ovl->source, input->src_fmt, unified_color_fmt_name(ovl->fmt),
-		ovl->fmt, input->next_buff_idx, (int)input->src_fence_fd,
+		ovl->fmt, input->next_buff_idx,
 		input->frm_sequence, ovl->security);
 	DISPERR("M6 OVL handoff[%u:%s]: input phy=%p base=%p pitch_px=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u ovl addr=0x%lx vaddr=0x%lx pitch_bytes=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u alpha=%u/%u sur=%u const=%d key=%u/0x%x\n",
 		idx, stage ? stage : "null", input->src_phy_addr,
@@ -3767,10 +3775,14 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 
 	if (pgc->plcm == NULL) {
 		DISPDBG("disp_lcm_probe returns null\n");
+		pr_emerg("[FORGE_DISP] v195 primary_display_init: disp_lcm_probe returned NULL for lcm='%s' -> ABORT init (black screen)\n",
+			 lcm_name ? lcm_name : "(null)");
 		ret = DISP_STATUS_ERROR;
 		goto done;
 	} else {
 		DISPMSG("disp_lcm_probe SUCCESS\n");
+		pr_emerg("[FORGE_DISP] v195 primary_display_init: disp_lcm_probe SUCCESS lcm='%s' inited=%d -> continuing\n",
+			 lcm_name ? lcm_name : "(null)", is_lcm_inited);
 	}
 
 	lcm_param = disp_lcm_get_params(pgc->plcm);

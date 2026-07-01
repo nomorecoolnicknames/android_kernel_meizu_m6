@@ -978,7 +978,6 @@ static void __maybe_unused m6_mtkfb_config_const_white_marker(struct fb_info *fb
 	input->layer_type = DISP_LAYER_2D;
 	input->video_rotation = DISP_ORIENTATION_0;
 	input->next_buff_idx = -1;
-	input->src_fence_fd = -1;
 	input->src_color_key = M6_OVL_CONST_WHITE_MAGIC_KEY;
 	input->src_pitch = var->xres;
 	input->src_width = var->xres;
@@ -2707,6 +2706,11 @@ char *mtkfb_find_lcm_driver(void)
 {
 	_parse_tag_videolfb();
 	DISPMSG("%s, %s\n", __func__, mtkfb_lcm_name);
+	/* m681 v195: pr_emerg so the LK-handoff lcm name lands in the kernel ring
+	 * (DISPMSG only goes to the dprec display log buffer). Diagnosing the
+	 * 'lcm handle is null' / black-screen blocker. */
+	pr_emerg("[FORGE_DISP] v195 mtkfb_find_lcm_driver: name='%s' len=%zu\n",
+		 mtkfb_lcm_name, strlen(mtkfb_lcm_name));
 	return mtkfb_lcm_name;
 }
 
@@ -3052,6 +3056,15 @@ static int mtkfb_probe(struct device *dev)
 	fbdev->fb_pa_base = fb_base;
 
 	primary_display_set_frame_buffer_address((unsigned long)fbdev->fb_va_base, fb_pa);
+	/* m681 v196 REVERTED: forcing is_lcm_inited=0 here (a) HANGS boot in early
+	 * mtkfb_probe (disp_lcm_init force=1 -> panel/DSI init before path ready),
+	 * and (b) does NOT even help -- runtime m6_lcm_reinit:1 (full panel+DSI
+	 * init+path start+video trigger) leaves the DSI DIGITAL controller regs
+	 * (START/MODE/PSCTRL/VM) all 0x0. Root cause is deeper: the DSI digital
+	 * block is not clocked/powered for register access (MIPITX PHY reads fine,
+	 * reg bases MATCH the working stocktruth oracle). See BRINGUP_STATE_3.18.md
+	 * 2026-06-28. Keep stock takeover handoff until the DSI digital clock/power
+	 * sequence is fixed. */
 	primary_display_init(mtkfb_find_lcm_driver(), lcd_fps, is_lcm_inited);
 
 	init_state++;		/* 1 */
@@ -3343,6 +3356,9 @@ int mtkfb_pm_restore_noirq(struct device *device)
 /*---------------------------------------------------------------------------*/
 static const struct of_device_id mtkfb_of_ids[] = {
 	{.compatible = "mediatek,MTKFB",},
+	/* m681 v182: DTS node is lowercase "mediatek,mtkfb" (mt6755.dtsi:3061);
+	 * OF match is case-sensitive. Add lowercase to be safe. */
+	{.compatible = "mediatek,mtkfb",},
 	{}
 };
 
@@ -3563,8 +3579,8 @@ int __init mtkfb_init(void)
 
 	MSG_FUNC_ENTER();
 	DISPMSG("mtkfb_init Enter\n");
-	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC7); }	/* m681 v30: mtkfb/display DISABLED */
-	{ static volatile int forge_disp_disable = 1; if (forge_disp_disable) return 0; }	/* v30: skip mtkfb+lcm_pinctl registration -> no mtkfb_probe, no primary_display_init (panel/DSI); reach userspace headless */
+	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xC7); }	/* m681 v179: mtkfb/display ENABLED (was DISABLED v30) */
+	{ static volatile int forge_disp_disable = 0; if (forge_disp_disable) return 0; }	/* m681 v179: ENABLE mtkfb -> mtkfb_probe -> primary_display_init (panel/DSI/DDP) -> register_framebuffer -> /dev/graphics/fb0. SMI+M4U larb0 fixed (v175/v178), DIS powered, so the panel path can run. Set back to 1 for headless. */
 	if (platform_driver_register(&lcm_pinctl_gpio_driver) != 0) {
 		printk("unable to register lcm_pinctl gpio driver.\n");
 		r = -ENODEV;

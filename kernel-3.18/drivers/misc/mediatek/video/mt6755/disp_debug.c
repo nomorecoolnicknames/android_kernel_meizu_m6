@@ -66,6 +66,7 @@
 #include "mtkfb_fence.h"
 #include "mtkfb_debug.h"
 #include "primary_display.h"
+#include "ddp_clkmgr.h"	/* m681 v200: dsi_clk_on debug cmd (ddp_clk_prepare_enable) */
 
 #pragma GCC optimize("O0")
 
@@ -1108,6 +1109,22 @@ void mtkfb_process_dbg_opt(const char *opt)
 		return;
 	} else if (0 == strncmp(opt, "resume", 6)) {
 		primary_display_resume();
+	} else if (0 == strncmp(opt, "dsi_clk_on", 10)) {
+		/* m681 v201: DIRECT MMSYS CG ungate of the DSI engine+digital clocks,
+		 * bypassing ddp_clk_prepare_enable (which HANGS forever on the SCPSYS
+		 * power-domain ack poll, boot AND runtime). MMSYS CG_CON1 bit0 =
+		 * DSI_ENGINE, bit1 = DSI_DIGITAL; writing CG_CLR1=0x3 clears those gate
+		 * bits directly (mm_sel parent already on, DISP domain already powered).
+		 * If CON1 bits0,1 go 1->0 and the DSI regs come alive -> the dark-panel
+		 * root is cracked without the hanging clk framework. */
+		pr_emerg("[FORGE_DISP] v201 dsi_clk_on: CG_CON1 before=0x%x (bit0/1 set=gated)\n",
+			 DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1));
+		DISP_REG_SET(NULL, DISP_REG_CONFIG_MMSYS_CG_CLR1, 0x3);
+		pr_emerg("[FORGE_DISP] v201 dsi_clk_on: CG_CON1 after=0x%x (bit0/1 clear=ungated)\n",
+			 DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1));
+		primary_display_m6_lcm_reinit(1);
+		pr_emerg("[FORGE_DISP] v201 dsi_clk_on: reinit done\n");
+		return;
 	} else if (0 == strncmp(opt, "m6_lcm_reinit", 13)) {
 		char *p = (char *)opt + 13;
 		unsigned int force_power = 1;

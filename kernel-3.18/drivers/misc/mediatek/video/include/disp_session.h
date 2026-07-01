@@ -202,50 +202,46 @@ struct layer_dirty_roi {
 	uint16_t dirty_h;
 };
 
+/* m681 v238 PROPER-FIX: match the stock MTK disp_input_config layout that the
+ * Flyme hwcomposer.mt6755.so blob expects (layer_id/layer_enable first, uint32_t
+ * for pitch/offset/width/height, no kernel-only fence/dirty_roi/ext_sel_layer).
+ * The M6-graft kernel had a different field order causing the ioctl to read
+ * layer_enable from the wrong offset (=0) and src_phy_addr from buffer_source
+ * (=0x1 = ION) -> all layers en=0 -> dark panel. */
 typedef struct disp_input_config_t {
+	unsigned int layer_id;
+	unsigned int layer_enable;
+	DISP_BUFFER_SOURCE buffer_source;
 	void *src_base_addr;
 	void *src_phy_addr;
-	DISP_BUFFER_SOURCE buffer_source;
-	DISP_BUFFER_TYPE security;
+	unsigned int src_direct_link;
 	DISP_FORMAT src_fmt;
-	DISP_ALPHA_TYPE src_alpha;
-	DISP_ALPHA_TYPE dst_alpha;
-	DISP_YUV_RANGE_ENUM yuv_range;
-
+	unsigned int src_use_color_key;
+	unsigned int src_color_key;
+	unsigned int src_pitch;
+	unsigned int src_offset_x, src_offset_y;
+	unsigned int src_width, src_height;
+	unsigned int tgt_offset_x, tgt_offset_y;
+	unsigned int tgt_width, tgt_height;
 	DISP_ORIENTATION layer_rotation;
 	DISP_LAYER_TYPE layer_type;
 	DISP_ORIENTATION video_rotation;
-
-	uint32_t next_buff_idx;
-	uint32_t src_fence_fd;	/* fence to be waited before using this buffer. -1 if invalid */
-	void *src_fence_struct;	/* fence struct of src_fence_fd, used in kernel */
-
-	uint32_t src_color_key;
-	uint32_t frm_sequence;
-
-	void *dirty_roi_addr;
-	uint16_t dirty_roi_num;
-
-	uint16_t src_pitch;
-	uint16_t src_offset_x, src_offset_y;
-	uint16_t src_width, src_height;
-	uint16_t tgt_offset_x, tgt_offset_y;
-	uint16_t tgt_width, tgt_height;
-
-	uint8_t alpha_enable;
-	uint8_t alpha;
-	uint8_t sur_aen;
-	uint8_t src_use_color_key;
-	uint8_t layer_id;
-	uint8_t layer_enable;
-	uint8_t src_direct_link;
-
-	uint8_t isTdshp;
-	uint8_t identity;
-	uint8_t connected_type;
-	int8_t ext_sel_layer;
+	unsigned int isTdshp;
+	unsigned int next_buff_idx;
+	int identity;
+	int connected_type;
+	DISP_BUFFER_TYPE security;
+	unsigned int alpha_enable;
+	unsigned int alpha;
+	unsigned int sur_aen;
+	DISP_ALPHA_TYPE src_alpha;
+	DISP_ALPHA_TYPE dst_alpha;
+	unsigned int frm_sequence;
+	DISP_YUV_RANGE_ENUM yuv_range;
 } disp_input_config;
 
+/* m681 v238 PROPER-FIX: match stock MTK disp_output_config (no kernel-only
+ * src_fence_fd/src_fence_struct — the M6 layout had them, the blob does not). */
 typedef struct disp_output_config_t {
 	void *va;
 	void *pa;
@@ -259,16 +255,15 @@ typedef struct disp_output_config_t {
 	DISP_BUFFER_TYPE security;
 	unsigned int buff_idx;
 	unsigned int interface_idx;
-	unsigned int src_fence_fd;	/* fence to be waited before using this buffer. -1 if invalid */
-	void *src_fence_struct;		/* fence struct of src_fence_fd, used in kernel */
 	unsigned int frm_sequence;
 } disp_output_config;
 
+/* m681 v238: match stock MTK — config[8] not [12] */
 typedef struct disp_session_input_config_t {
 	DISP_SESSION_USER setter;
 	unsigned int session_id;
 	unsigned int config_layer_num;
-	disp_input_config config[12];
+	disp_input_config config[8];
 } disp_session_input_config;
 
 typedef struct disp_session_output_config_t {
@@ -281,13 +276,15 @@ typedef struct disp_session_layer_num_config_t {
 	unsigned int max_layer_num;
 } disp_session_layer_num_config;
 
+/* m681 v238 PROPER-FIX: match stock MTK disp_frame_cfg_t — input_cfg[8] (not 12),
+ * no kernel-only prev_present_fence_fd/struct/user fields. */
 struct disp_frame_cfg_t {
 	DISP_SESSION_USER setter;
 	unsigned int session_id;
 
 	/* input config */
 	unsigned int input_layer_num;
-	disp_input_config input_cfg[12];
+	disp_input_config input_cfg[8];
 	unsigned int overlap_layer_num;
 
 	/* constant layer */
@@ -301,10 +298,7 @@ struct disp_frame_cfg_t {
 	/* trigger config */
 	DISP_MODE mode;
 	unsigned int present_fence_idx;
-	unsigned int prev_present_fence_fd;
-	void *prev_present_fence_struct;
 	EXTD_TRIGGER_MODE tigger_mode;
-	DISP_SESSION_USER user;
 };
 
 typedef struct disp_session_info_t {

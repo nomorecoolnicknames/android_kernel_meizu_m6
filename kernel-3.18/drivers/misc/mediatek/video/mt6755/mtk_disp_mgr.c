@@ -268,6 +268,13 @@ int _ioctl_create_session(unsigned long arg)
 		return -EFAULT;
 	}
 
+	/* m681 v236: does HWC create the PRIMARY session (0x10001)? If HWC never creates
+	 * DISP_SESSION_PRIMARY, it composes into nothing -> en=0 layers -> dark panel. */
+	{ static int _csc; if (_csc < 20) { _csc++;
+	  pr_emerg("[FORGE_DISP] create_session#%d: type=%u dev=%u -> session_id=0x%x\n",
+		   _csc, config.type, config.device_id,
+		   MAKE_DISP_SESSION(config.type, config.device_id)); } }
+
 	if (disp_create_session(&config) != 0)
 		ret = -EFAULT;
 
@@ -588,13 +595,13 @@ static void m6_dump_primary_input_cfg(const char *stage,
 		return;
 
 	idx = m6_input_diag_count++;
-	DISPERR("M6 OVL input[%u:%s]: comm=%s sid=0x%x setter=%u user=%u layers=%u overlap=%u present=%u trigger=%u cfg=%d L%u en=%u src=%u fmt=%s/0x%x sec=%u fence_fd=%d idx=%u frm=%u\n",
+	DISPERR("M6 OVL input[%u:%s]: comm=%s sid=0x%x setter=%u layers=%u overlap=%u present=%u trigger=%u cfg=%d L%u en=%u src=%u fmt=%s/0x%x sec=%u idx=%u frm=%u\n",
 		idx, stage ? stage : "null", current->comm, cfg->session_id,
-		cfg->setter, cfg->user, cfg->input_layer_num, cfg->overlap_layer_num,
+		cfg->setter, cfg->input_layer_num, cfg->overlap_layer_num,
 		cfg->present_fence_idx, cfg->tigger_mode, cfg_idx, input->layer_id,
 		input->layer_enable, input->buffer_source,
 		_disp_format_spy(input->src_fmt), input->src_fmt, input->security,
-		(int)input->src_fence_fd, input->next_buff_idx, input->frm_sequence);
+		input->next_buff_idx, input->frm_sequence);
 	DISPERR("M6 OVL input[%u:%s]: base=%p phy=%p mva=0x%lx size=0x%x off=0x%x final=0x%lx pitch_px=%u bpp=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u alpha=%u/%u sur=%u key=%u/0x%x type=%u rot=%u direct=%u\n",
 		idx, stage ? stage : "null", input->src_base_addr,
 		input->src_phy_addr, dst_mva, dst_size, mva_offset,
@@ -919,21 +926,28 @@ static int input_config_preprocess(struct disp_frame_cfg_t *cfg)
 
 			cfg->input_cfg[i].src_phy_addr = (void *)dst_mva;
 
-			if (dst_mva == 0) {
-				DISPPR_ERROR("disable layer %d because of no valid mva\n",
-					     cfg->input_cfg[i].layer_id);
-				DISPERR("S+/PL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08lx/sec%d/s%d\n",
-				     cfg->input_cfg[i].layer_id, cfg->input_cfg[i].layer_enable,
-				     cfg->input_cfg[i].next_buff_idx, cfg->input_cfg[i].src_width,
-				     cfg->input_cfg[i].src_height, cfg->input_cfg[i].src_offset_x,
-				     cfg->input_cfg[i].src_offset_y, cfg->input_cfg[i].tgt_offset_x,
-				     cfg->input_cfg[i].tgt_offset_y,
-				     _disp_format_spy(cfg->input_cfg[i].src_fmt), cfg->input_cfg[i].src_pitch,
-				     cfg->input_cfg[i].src_phy_addr, dst_mva, cfg->input_cfg[i].security,
-				     cfg->input_cfg[i].buffer_source);
-				/*disp_aee_print("no valid mva\n");*/
-				cfg->input_cfg[i].layer_enable = 0;
-			}
+		if (dst_mva == 0) {
+			DISPPR_ERROR("disable layer %d because of no valid mva\n",
+				     cfg->input_cfg[i].layer_id);
+			DISPERR("S+/PL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08lx/sec%d/s%d\n",
+			     cfg->input_cfg[i].layer_id, cfg->input_cfg[i].layer_enable,
+			     cfg->input_cfg[i].next_buff_idx, cfg->input_cfg[i].src_width,
+			     cfg->input_cfg[i].src_height, cfg->input_cfg[i].src_offset_x,
+			     cfg->input_cfg[i].src_offset_y, cfg->input_cfg[i].tgt_offset_x,
+			     cfg->input_cfg[i].tgt_offset_y,
+			     _disp_format_spy(cfg->input_cfg[i].src_fmt), cfg->input_cfg[i].src_pitch,
+			     cfg->input_cfg[i].src_phy_addr, dst_mva, cfg->input_cfg[i].security,
+			     cfg->input_cfg[i].buffer_source);
+			/*disp_aee_print("no valid mva\n");*/
+			cfg->input_cfg[i].layer_enable = 0;
+			/* m681 v236: KERNEL forced en=0 because dst_mva==0 — the gralloc/ION
+			 * buffer was not resolved to a physical MVA. This is the gralloc/M4U
+			 * path failing, NOT HWC deciding to disable the layer. */
+			{ static int _mkf; if (_mkf < 20) { _mkf++;
+			  pr_emerg("[FORGE_DISP] KERNEL_FORCED_en0#%d: layer=%d idx=%d mva=0 NO_VALID_MVA\n",
+				   _mkf, cfg->input_cfg[i].layer_id,
+				   cfg->input_cfg[i].next_buff_idx); } }
+		}
 			/* OVL addr is not the start address of buffer, which is calculated by pitch and ROI. */
 			x = cfg->input_cfg[i].src_offset_x;
 			y = cfg->input_cfg[i].src_offset_y;
@@ -945,15 +959,21 @@ static int input_config_preprocess(struct disp_frame_cfg_t *cfg)
 					      cfg->input_cfg[i].next_buff_idx, mva_offset,
 					      cfg->input_cfg[i].frm_sequence);
 
-			DISPPR_FENCE("S+/PL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08lx/sec%d\n",
-			     cfg->input_cfg[i].layer_id, cfg->input_cfg[i].layer_enable,
-			     cfg->input_cfg[i].next_buff_idx, cfg->input_cfg[i].src_width,
-			     cfg->input_cfg[i].src_height, cfg->input_cfg[i].src_offset_x,
-			     cfg->input_cfg[i].src_offset_y, cfg->input_cfg[i].tgt_offset_x,
-			     cfg->input_cfg[i].tgt_offset_y,
-			     _disp_format_spy(cfg->input_cfg[i].src_fmt), cfg->input_cfg[i].src_pitch,
-			     cfg->input_cfg[i].src_phy_addr, dst_mva, cfg->input_cfg[i].security);
-			m6_dump_primary_input_cfg("preprocess", cfg, i, dst_mva,
+		DISPPR_FENCE("S+/PL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08lx/sec%d\n",
+		     cfg->input_cfg[i].layer_id, cfg->input_cfg[i].layer_enable,
+		     cfg->input_cfg[i].next_buff_idx, cfg->input_cfg[i].src_width,
+		     cfg->input_cfg[i].src_height, cfg->input_cfg[i].src_offset_x,
+		     cfg->input_cfg[i].src_offset_y, cfg->input_cfg[i].tgt_offset_x,
+		     cfg->input_cfg[i].tgt_offset_y,
+		     _disp_format_spy(cfg->input_cfg[i].src_fmt), cfg->input_cfg[i].src_pitch,
+		     cfg->input_cfg[i].src_phy_addr, dst_mva, cfg->input_cfg[i].security);
+		/* m681 v236: layer with en=1 AND valid mva - this is a REAL composed layer. */
+		{ static int _mkok; if (_mkok < 20) { _mkok++;
+		  pr_emerg("[FORGE_DISP] layer_ok#%d: layer=%d en=1 mva=0x%08lx %ux%u fmt=0x%x idx=%d\n",
+			   _mkok, cfg->input_cfg[i].layer_id, dst_mva,
+			   cfg->input_cfg[i].src_width, cfg->input_cfg[i].src_height,
+			   cfg->input_cfg[i].src_fmt, cfg->input_cfg[i].next_buff_idx); } }
+		m6_dump_primary_input_cfg("preprocess", cfg, i, dst_mva,
 						  dst_size, mva_offset, Bpp);
 		} else {
 			DISPPR_FENCE("S+/PL%d/e%d/id%d\n", cfg->input_cfg[i].layer_id,
@@ -1289,6 +1309,23 @@ int _ioctl_frame_config(unsigned long arg)
 		return -EINVAL;
 	}
 	frame_cfg->setter = SESSION_USER_HWC;
+
+	/* m681 v236: dump the RAW frame_config HWC sends, BEFORE input_config_preprocess
+	 * can force layer_enable=0 (when dst_mva==0). If HWC itself sends en=0 here, the
+	 * problem is userspace (HWC/SF/BufferQueue). If HWC sends en=1 here but preprocess
+	 * forces en=0 (mva=0), the problem is gralloc/ION/M4U buffer mapping. */
+	{ static int _ffc; if (_ffc < 30) { int _li; _ffc++;
+	  pr_emerg("[FORGE_DISP] frame_cfg#%d: session=0x%x layer_num=%u output_en=%u",
+		   _ffc, frame_cfg->session_id, frame_cfg->input_layer_num, frame_cfg->output_en);
+	  for (_li = 0; _li < frame_cfg->input_layer_num && _li < 6; _li++)
+		  pr_emerg("[FORGE_DISP]  raw_layer#%d: id=%d en=%u addr=0x%p %ux%u fmt=0x%x idx=%d\n",
+			   _li, frame_cfg->input_cfg[_li].layer_id,
+			   frame_cfg->input_cfg[_li].layer_enable,
+			   frame_cfg->input_cfg[_li].src_phy_addr,
+			   frame_cfg->input_cfg[_li].src_width,
+			   frame_cfg->input_cfg[_li].src_height,
+			   frame_cfg->input_cfg[_li].src_fmt,
+			   frame_cfg->input_cfg[_li].next_buff_idx); } }
 
 	if (DISP_SESSION_TYPE(frame_cfg->session_id) == DISP_SESSION_PRIMARY) {
 		input_config_preprocess(frame_cfg);
@@ -1943,7 +1980,12 @@ static int __init mtk_disp_mgr_init(void)
 
 	/* m681 v45: l681-map preemptive skip — display manager probe. TODO post-boot: re-enable. */
 	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
-	return 0;
+	/* m681 v190: RE-ENABLED disp_mgr — drop the v45 early `return 0` so the
+	 * mtk_disp_mgr platform device+driver register and the probe creates the
+	 * char node /dev/mtk_disp_mgr. hwcomposer.mt6755.so opens /dev/mtk_disp_mgr
+	 * (FACT: blob strings "mtk_disp_mgr" + "/dev/%s"); without it SF's HWC fails
+	 * "[DEV] Failed to open display device: No such file or directory". The display
+	 * controller is already up (fb0, pg_dis ON) so the probe should bind. */
 	pr_debug("mtk_disp_mgr_init\n");
 	if (platform_device_register(&mtk_disp_mgr_device))
 		return -ENODEV;

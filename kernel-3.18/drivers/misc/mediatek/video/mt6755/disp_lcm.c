@@ -258,6 +258,14 @@ disp_lcm_handle *disp_lcm_probe(char *plcm_name, LCM_INTERFACE_ID lcm_id, int is
 	static const char *info_node = "lcd_type";
 
 	DISPMSG("plcm_name=%s is_lcm_inited %d\n", plcm_name, is_lcm_inited);
+	/* m681 v195: dump the runtime LCM-match state into the kernel ring (DISPERR
+	 * FATAL strings only reach the dprec buffer). This pins which branch makes
+	 * pgc->plcm NULL: count==0, name mismatch, or none-found. */
+	pr_emerg("[FORGE_DISP] v195 disp_lcm_probe: count=%d name='%s' drv0='%s' inited=%d\n",
+		 _lcm_count(), plcm_name ? plcm_name : "(null)",
+		 (_lcm_count() > 0 && lcm_driver_list[0] && lcm_driver_list[0]->name)
+			 ? lcm_driver_list[0]->name : "(none)",
+		 is_lcm_inited);
 
 	lcd_name_for_als = plcm_name;
 	#ifdef CONFIG_HUAWEI_LCD_DSM//lcd
@@ -285,6 +293,8 @@ disp_lcm_handle *disp_lcm_probe(char *plcm_name, LCM_INTERFACE_ID lcm_id, int is
 			if (strcmp(lcm_drv->name, plcm_name)) {
 				DISPERR
 					("FATAL ERROR!!!LCM Driver defined in kernel(%s) is different with LK(%s)\n",
+					 lcm_drv->name, plcm_name);
+				pr_emerg("[FORGE_DISP] v195 NAME MISMATCH kernel='%s' LK='%s' -> plcm NULL (black screen)\n",
 					 lcm_drv->name, plcm_name);
 				return NULL;
 			}
