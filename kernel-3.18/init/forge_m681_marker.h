@@ -119,9 +119,11 @@ extern void __iomem *forge_spm_base2;	/* TWRP-readable mirror @0x44410000 */
 
 void forge_m681_mark(u8 stage);
 void forge_m681_mark_aux(u8 stage, u32 aux);
+void forge_m681_bump(unsigned int slot);	/* m681 v87: eMMC checkpoint counters 0xE4.. */
 void forge_m681_marker_early_init(void);
 void forge_m681_marker_late_init(void);
 void forge_m681_wdt_kick(void);	/* m681 v56: pet MTK WDT per-initcall */
+void forge_m681_wdt_disarm(void); /* m681 v59: disable HW WDT before userspace */
 /* m681 v34: non-overwritable "current initcall fn" tracker (diag 0x64..0x78).
  * Survives inner platform-probe marks (0xC0/0xCD) so the wedged initcall is
  * named even when it does platform probing. */

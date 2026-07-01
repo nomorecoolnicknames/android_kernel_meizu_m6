@@ -836,7 +836,15 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	 * are still caught by the HW WDT (bootloop) until we fix LK to boot
 	 * recovery on WDT boot reason.
 	 * Rollback: set FORGE_V52_TRIPWIRE_SEQ to 0 (disabled). */
-#define FORGE_V54_TRIPWIRE_SEQ 100
+/* m681 v55 PROGRESS build: tripwire DISABLED (0) so the kernel runs to its
+ * NATURAL wall instead of self-destructing at seq 100.  Rationale: boot
+ * partition now holds TWRP (safe harbor), so a HW-WDT reset (which goes to
+ * NORMAL boot per v51, bootreason=wdt_by_pass_pkw) auto-returns to TWRP — no
+ * recovery routing needed.  The natural wall is past seq 100, so WDT->normal
+ * boot->TWRP (no recovery loop).  The slow-initcall SWRST watchdog below stays
+ * (also resets to normal boot=TWRP).  Goal: ground-truth furthest natural wall.
+ * Rollback: set FORGE_V54_TRIPWIRE_SEQ back to a seq number. */
+#define FORGE_V54_TRIPWIRE_SEQ 0
 #define FORGE_V54_SLOW_INITCALL_THRESH_CYC 100000000ULL
 	if (FORGE_V54_TRIPWIRE_SEQ &&
 	    forge_m681_get_initcall_seq() == FORGE_V54_TRIPWIRE_SEQ) {
@@ -1031,6 +1039,27 @@ static int __ref kernel_init(void *unused)
 	log_boot("Kernel_init_done");
 #endif
 
+	/* m681 v114-REVERTED: do NOT disarm the WDT here. The forge WDT does a
+	 * marker-PRESERVING warm reset (SWRST) on a hang, which is the debugging
+	 * lifeline (read DRAM markers WITHOUT a battery pull). Disarming removed that
+	 * safety net. The 30s-reset bootloop is the EXPECTED symptom of the frozen
+	 * arch timer (nothing kicks the dog past initcalls); the correct fix is to
+	 * unfreeze/replace the timer (then the WDT becomes kickable like stock), NOT
+	 * to kill the dog. See M681_TIMER_FIX_ANALYSIS.md. */
+
+	/* m681 v116: TIMER-FIX verification probe at the userspace handoff. Reads the
+	 * raw GPT2 free-run counter (phys 0x10008028) twice and ktime_get() twice
+	 * across a bounded busy-wait. Decisive: 0x54-0x50 > 0 => the GPT2 counter
+	 * actually counts; 0x5C-0x58 > 0 => ktime now ADVANCES (TIMERFIX-C1 engaged,
+	 * apxgpt clocksource won over the frozen arch_sys_counter). Both zero => fix
+	 * inert. Clean diag offsets 0x50-0x5C (stale eMMC-oracle slots, reused). */
+	/* m681 v118: timer-fix verification moved to a late_initcall in
+	 * forge_m681_marker.c (forge_timer_verify) — guaranteed-reached, runs before
+	 * any userspace clobber, writes a sentinel-tagged result to diag 0xDC. */
+
+	/* m681 v72: USERSPACE reached -- about to exec /init from the ramdisk. */
+	forge_m681_mark(FORGE_STAGE_PRE_INIT_EXEC);	/* 0xD0 */
+
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);
 		if (!ret)
@@ -1098,6 +1127,13 @@ static noinline void __init kernel_init_freeable(void)
 
 	do_basic_setup();
 	forge_m681_mark(FORGE_STAGE_POST_BASIC_SETUP);		/* 0xCF */
+	/* m681 v78: KEEP THE WDT ARMED (user directive: "не убирай вдт").  v77
+	 * disarmed it and userspace hung -> hard freeze, dead buttons, battery
+	 * pull.  Armed WDT warm-resets ~30s into a userspace hang (buttons work,
+	 * marker + the new forge-console DRAM log survive to TWRP).  The forge
+	 * console captures how far init got; once init is seen progressing we
+	 * extend the window (periodic kick) rather than disarm. */
+	forge_m681_wdt_kick();
 
 	/* Open the /dev/console on the rootfs, this should never fail */
 	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)

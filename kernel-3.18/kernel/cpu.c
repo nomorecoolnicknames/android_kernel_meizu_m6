@@ -607,6 +607,28 @@ static int _cpu_up(unsigned int cpu, int tasks_frozen)
 	{ extern void forge_m681_mark_aux(unsigned char stage, unsigned int aux);
 	  forge_m681_mark_aux(0xB8, cpu); }
 
+	/* m681 v154: RE-ENABLE secondary-CPU online.  The v75 block existed because,
+	 * in the frozen-arch-timer era, bringing up CPU1+ via "mt-boot" wedged the AXI
+	 * bus (marker 0xD7) -- the secondary spun on a dead CNTVCT / the power-on
+	 * delays (udelay) never elapsed.  The timer is now FIXED: forge_enable_cpuxgpt()
+	 * runs in forge_m681_marker_late_init() (start_kernel, after mm_init, BEFORE
+	 * time_init AND smp_init), and EN_CPUXGPT is a GLOBAL MCUSYS bit -> every
+	 * core's CNTVCT free-runs before any secondary is released.  Root cause of the
+	 * ~11s reset: single-core, zygote pegs CPU0 -> wdk kicker starves -> HW-WDT.
+	 * Bringing up a second core lets the kicker run off the pegged core.
+	 * STEP 1 (de-risk the mt-boot/spm_mtcmos power path): allow ONLY CPU1 -- same
+	 * little cluster as CPU0 (reg 0x001), within-cluster MTCMOS, no 2nd-cluster
+	 * power-on.  Heartbeat cpu= field proves CPU1 online + survival past 11s.
+	 * Once proven, raise the cap to all 8.  Rollback: restore `if (cpu != 0)`. */
+	/* m681 v159: cap fully lifted -- allow cpu_up for ALL cores incl. cluster1
+	 * big cores (CPU4-7). dbgregs CoreSight panic is fixed (mt_dbg.c NULL-guard)
+	 * and cluster0 (CPU1-3) proven in v157/v158. Mark every secondary attempt so
+	 * a cluster1 power wedge is pinpointed. */
+	if (cpu != 0) {
+		extern void forge_m681_mark_aux(unsigned char stage, unsigned int aux);
+		forge_m681_mark_aux(0xB9, cpu);
+	}
+
 	cpu_hotplug_begin();
 
 	if (cpu_online(cpu) || !cpu_present(cpu)) {
