@@ -641,10 +641,9 @@ static int __init mtk_btcvsd_rx_soc_platform_init(void)
 {
 	int ret;
 
-	/* m681 v65: skip btcvsd RX (see btcvsd_tx note) — BT-SCO audio probe
-	 * wedges the ungated BTCVSD block.  Non-essential.  Rollback: remove. */
-	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xAE); }
-	return 0;
+	/* m681 v246 (C6): RE-ENABLED (see btcvsd_tx note) — AUD island now powered
+	 * (v245); required component of mt-snd-card (card deferred without it). */
+	pr_err("[FORGE_AUD] v246 btcvsd_rx init RE-ENABLED\n");
 
 	pr_warn("+%s\n", __func__);
 #ifndef CONFIG_OF
