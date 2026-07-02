@@ -2607,6 +2607,7 @@ static int __init tscpu_init(void)
 	 * "mtk-thermal" and -ENODEV'd the probe). Un-stubbing arms the HW over-temp
 	 * reset (TEMPPROTTC @ thermal_base+0xCC) immediately. */
 	pr_err("[FORGE_TS] v245 tscpu_init RE-ENABLED (auxadc clock must be up first)\n");
+	/* v250: bisect revert — thermal re-enabled (not the display disturber). */
 
 	tscpu_printk("tscpu_init\n");
 

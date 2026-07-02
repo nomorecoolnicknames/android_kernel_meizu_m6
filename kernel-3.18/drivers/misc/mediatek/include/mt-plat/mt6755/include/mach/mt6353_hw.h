@@ -166,9 +166,13 @@
 #define MT6353_TOP_RST_STATUS_CLR              ((unsigned int)(MT6353_PMIC_REG_BASE+0x02B2))
 #define MT6353_TOP_RST_RSV_CON0                ((unsigned int)(MT6353_PMIC_REG_BASE+0x02B4))
 #define MT6353_TOP_RST_RSV_CON1                ((unsigned int)(MT6353_PMIC_REG_BASE+0x02B6))
-#define MT6353_INT_CON0                        ((unsigned int)(MT6353_PMIC_REG_BASE+0x02B8))
-#define MT6353_INT_CON0_SET                    ((unsigned int)(MT6353_PMIC_REG_BASE+0x02BA))
-#define MT6353_INT_CON0_CLR                    ((unsigned int)(MT6353_PMIC_REG_BASE+0x02BC))
+/* m681 v250: CORRECTED to the MT6351 interrupt-block offsets (upmu_hw.h). The real
+ * chip is MT6351; the MT6353 map put this block at 0x02B8 (=-0x0A), so PMIC_EINT_
+ * SETTING enabled/read the WRONG registers and the pwrkey PMIC interrupt (int0/2)
+ * never fired in Android -> power key dead. MT6351: INT_CON0 0x2C2/SET 0x2C4/CLR 0x2C6. */
+#define MT6353_INT_CON0                        ((unsigned int)(MT6353_PMIC_REG_BASE+0x02C2))
+#define MT6353_INT_CON0_SET                    ((unsigned int)(MT6353_PMIC_REG_BASE+0x02C4))
+#define MT6353_INT_CON0_CLR                    ((unsigned int)(MT6353_PMIC_REG_BASE+0x02C6))
 #define MT6353_INT_CON1                        ((unsigned int)(MT6353_PMIC_REG_BASE+0x02BE))
 #define MT6353_INT_CON1_SET                    ((unsigned int)(MT6353_PMIC_REG_BASE+0x02C0))
 #define MT6353_INT_CON1_CLR                    ((unsigned int)(MT6353_PMIC_REG_BASE+0x02C2))
@@ -181,7 +185,9 @@
 #define MT6353_INT_MISC_CON                    ((unsigned int)(MT6353_PMIC_REG_BASE+0x02D0))
 #define MT6353_INT_MISC_CON_SET                ((unsigned int)(MT6353_PMIC_REG_BASE+0x02D2))
 #define MT6353_INT_MISC_CON_CLR                ((unsigned int)(MT6353_PMIC_REG_BASE+0x02D4))
-#define MT6353_INT_STATUS0                     ((unsigned int)(MT6353_PMIC_REG_BASE+0x02D6))
+/* m681 v250: CORRECTED to MT6351 offset (was 0x02D6 = -0x0A). pwrkey demux reads
+ * INT_STATUS0 bit0(press)/bit2(release); MT6351 = 0x2E0. */
+#define MT6353_INT_STATUS0                     ((unsigned int)(MT6353_PMIC_REG_BASE+0x02E0))
 #define MT6353_INT_STATUS1                     ((unsigned int)(MT6353_PMIC_REG_BASE+0x02D8))
 #define MT6353_INT_STATUS2                     ((unsigned int)(MT6353_PMIC_REG_BASE+0x02DA))
 #define MT6353_INT_STATUS3                     ((unsigned int)(MT6353_PMIC_REG_BASE+0x02DC))

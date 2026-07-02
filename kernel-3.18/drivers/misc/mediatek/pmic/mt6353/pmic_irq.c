@@ -201,6 +201,11 @@ int interrupts_size = ARRAY_SIZE(interrupts);
 void pwrkey_int_handler(void)
 {
 
+	/* m681 v247: press-test marker — proves the PMIC pwrkey interrupt reached
+	 * the callback (chain: EINT150 -> mt_pmic_eint_irq -> pmic_thread ->
+	 * INT_STATUS0 bit0 -> here -> kpd input KEY_POWER). */
+	pr_err("[FORGE_PMIC] v247 PWRKEY PRESS int (deb=%d)\n",
+	       pmic_get_register_value(PMIC_PWRKEY_DEB));
 	PMICLOG("[pwrkey_int_handler] Press pwrkey %d\n",
 		pmic_get_register_value(PMIC_PWRKEY_DEB));
 
@@ -216,6 +221,8 @@ void pwrkey_int_handler(void)
 
 void pwrkey_int_handler_r(void)
 {
+	pr_err("[FORGE_PMIC] v247 PWRKEY RELEASE int (deb=%d)\n",
+	       pmic_get_register_value(PMIC_PWRKEY_DEB));
 	PMICLOG("[pwrkey_int_handler_r] Release pwrkey %d\n",
 		pmic_get_register_value(PMIC_PWRKEY_DEB));
 #if defined(CONFIG_MTK_KERNEL_POWER_OFF_CHARGING)
@@ -413,7 +420,8 @@ void mt_pmic_eint_irq(void)
 */
 irqreturn_t mt_pmic_eint_irq(int irq, void *desc)
 {
-	/*PMICLOG("[mt_pmic_eint_irq] receive interrupt\n");*/
+	/* m681 v247: press-test marker — top-level PMIC EINT150 fired at all. */
+	pr_err("[FORGE_PMIC] v247 mt_pmic_eint_irq fired (irq=%d)\n", irq);
 	disable_irq_nosync(irq);
 	wake_up_pmic();
 	return IRQ_HANDLED;

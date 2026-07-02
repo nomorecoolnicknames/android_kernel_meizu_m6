@@ -2750,6 +2750,13 @@ static void m6_dump_primary_ovl_handoff(const char *stage,
 		ovl->keyEn, ovl->key);
 }
 
+/* m681 v247: gate for the OVL m4u sampler below. Default OFF — it vmap'd ~8MB up
+ * to 96x in the OVL config hot path (underrun/jank + "vmap fail" spam). Toggle at
+ * runtime via /sys/module/mtk_disp/parameters/forge_ovl_sample (or the built-in
+ * module name) for a one-off diagnostic. */
+static int forge_ovl_sample;
+module_param(forge_ovl_sample, int, 0644);
+
 static void m6_sample_primary_ovl_m4u_buffer(const char *stage,
 					     const disp_input_config *input,
 					     const OVL_CONFIG_STRUCT *ovl)
@@ -2775,6 +2782,15 @@ static void m6_sample_primary_ovl_m4u_buffer(const char *stage,
 	unsigned long long sum = 0;
 	int ret;
 	unsigned int i;
+
+	/* m681 v247: DISABLED by default. This diagnostic vmap's ~8MB and scans+prints
+	 * inside the OVL config hot path up to 96x — a plausible contributor to the
+	 * RDMA underrun (stripes on full UI) and the source of the "m4u vmap fail"
+	 * spam. The real display wound is DSI-timing/underrun, not this sampler (recon
+	 * report_display.md). Re-enable via /sys/module/.../forge_ovl_sample=1 only for
+	 * a targeted diagnostic pass. */
+	if (!forge_ovl_sample)
+		return;
 
 	if (!input || !ovl)
 		return;

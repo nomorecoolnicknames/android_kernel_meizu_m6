@@ -1009,6 +1009,8 @@ void pwrkey_sw_workaround_init(void)
  * cmdline pmic_mt.forge_pmic_skip_*=N. */
 static int forge_pmic_skip_init = 1;
 static int forge_pmic_skip_regulator = 1;
+/* v250: bisect revert — PMIC EINT re-enabled (0), needed for the pwrkey IRQ path
+ * (with the mt6353_hw.h INT-offset fix, pwrkey should now reach Android). */
 static int forge_pmic_skip_eint = 0;
 module_param(forge_pmic_skip_init, int, 0644);
 module_param(forge_pmic_skip_regulator, int, 0644);
@@ -1202,7 +1204,10 @@ static int __init pmic_mt_init(void)
 	 * charger-detect + PMIC-thermal + regulators at once. WATCHED FLASH: a HW
 	 * power-off (device fully off, not bootloop) => a non-STRUP write still trips
 	 * it; roll back to v241 and bisect PMIC_INIT_SETTING_V1. */
-	pr_err("[FORGE_PMIC] v243 registering pmic_mt_driver (probe runs PMIC init + EINT)\n");
+	/* v250: bisect revert — PMIC probe RE-ENABLED (ruled out as the display
+	 * disturber, report_disp_collision.md §2/§4). Needed so PMIC_EINT_SETTING runs
+	 * and the pwrkey IRQ (fixed offsets) is armed. */
+	pr_err("[FORGE_PMIC] v250 registering pmic_mt_driver\n");
 	ret = platform_driver_register(&pmic_mt_driver);
 	if (ret) {
 		PMICLOG("****[pmic_mt_init] Unable to register driver (%d)\n", ret);

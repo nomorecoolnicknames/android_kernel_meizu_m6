@@ -852,6 +852,13 @@ void kpd_get_dts_info(struct device_node *node)
 static int forge_skip_kpd_clk = 0;
 static int forge_skip_kpd_irq = 0;
 static int forge_skip_kpd_eint = 1;
+/* m681 v248: longpress RE-SKIPPED. v247 enabled it (skip=0) and the boot WEDGED
+ * (landed in recovery at 210s, never reached userspace) — long_press_reboot_
+ * function_setting() IS the documented v188/v189 wedge after all (a PMIC pwrap
+ * config write that hangs on this MT6351-on-mt6353-driver graft). Confirmed by
+ * construction: it was the only boot-affecting delta v246->v247. Keep skipped;
+ * the power-key fix must come from the PMIC pwrkey-IRQ path (v247 markers), not
+ * from this long-press config call. */
 static int forge_skip_kpd_longpress = 1;
 module_param(forge_skip_kpd_clk, int, 0644);
 module_param(forge_skip_kpd_irq, int, 0644);

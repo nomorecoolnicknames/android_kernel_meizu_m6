@@ -1934,6 +1934,8 @@ static int __init mt_auxadc_init(void)
 	 * auxadc links before thermal (mediatek/Makefile:36 vs :185), so the clock is
 	 * up before tscpu_init runs. */
 	pr_err("[FORGE_ADC] v245 mt_auxadc_init RE-ENABLED -> platform_driver_register\n");
+	/* v250: bisect revert — AUXADC re-enabled (display garbage root was RDMA
+	 * underrun from no-Vcore-defense, NOT auxadc; see report_disp_collision.md). */
 
 #if !defined(CONFIG_MTK_CLKMGR)
 #else
