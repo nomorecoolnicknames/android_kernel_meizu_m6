@@ -335,11 +335,17 @@ static int really_probe(struct device *dev, struct device_driver *drv)
 	  /* m681 v171: synchronous eMMC marker (survives a display bus-hang wedge;
 	   * DRAM/SPM post-mortem channels are dead). No-op for non-display names. */
 	  forge_m681_emmc_mark(dn);
+	  /* m681 v245 (C6, Edit3): the v63 blanket mt-soc/mt_soc probe reject (0xB4)
+	   * is LIFTED — it was the 4th audio kill layer, -ENODEV'ing every ASoC
+	   * component (dl1/dai/codec/routing). Safe now because InitAfeControl powers
+	   * the SCP_SYS_AUD island (AudDrv_Clk_On) BEFORE the first AFE MMIO (v245
+	   * Edit1). Rollback: restore the 4-line reject below.
 	  if (dn && (strstr(dn, "mt-soc") || strstr(dn, "mt_soc"))) {
 		forge_m681_mark_aux(0xB4, 0);
 		ret = -ENODEV;
 		goto probe_failed;
 	  }
+	  */
 	}
 
 	if (dev->bus->probe) {

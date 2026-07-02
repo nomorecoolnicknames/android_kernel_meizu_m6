@@ -471,8 +471,20 @@ bool InitAfeControl(void)
 	/* first time to init , reg init. */
 	AfeGlobalVarInit();
 	Auddrv_Reg_map();
-	AudDrv_Clk_Power_On();
+	/* m681 v245 (C6, Edit1): AudDrv_Clk_Power_On() is a NO-OP (its MMIO write is
+	 * commented out) — the AUD MTCMOS island stayed OFF and the very next call,
+	 * Auddrv_Bus_Init(), does the first AFE MMIO (AUDIO_TOP @0x11220000) -> the
+	 * v56/v58 "AFE MMIO with SCP_SYS_AUD off" silent AXI wedge. Power the domain
+	 * for real: AudDrv_Clk_On() enables aud_peri_26m -> aud_infra -> aud_afe ->
+	 * dac/predis, then clk_prepare_enable(scp_sys_aud) (MTCMOS via CCF pg driver;
+	 * ack-spins neutered by IGNORE_PWR_ACK, bus_prot_mask=0, SRAM_PDN ack needs
+	 * f26M_aud which is already on). Idempotent + refcounted. Caller dl1-probe ran
+	 * AudDrv_Clk_probe first, so all clks are prepared. */
+	pr_err("[FORGE_AUD] v245 InitAfeControl: powering AUD domain (AudDrv_Clk_On)\n");
+	AudDrv_Clk_On();
+	pr_err("[FORGE_AUD] v245 AUD domain ON — entering Auddrv_Bus_Init (first AFE MMIO)\n");
 	Auddrv_Bus_Init();
+	pr_err("[FORGE_AUD] v245 Auddrv_Bus_Init survived (no AXI wedge)\n");
 	Auddrv_Read_Efuse_HPOffset();
 	AfeControlMutexLock();
 

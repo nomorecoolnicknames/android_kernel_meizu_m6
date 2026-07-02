@@ -2597,15 +2597,16 @@ static int __init tscpu_init(void)
 {
 	int err = 0;
 
-	/* m681 v45: l681-map preemptive skip — thermal BUG_ON softening. TODO post-boot: re-enable. */
-	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
-
-	/* m681 v56: CONFIRMED NATURAL WALL (v55, seq 456): tscpu_init wedges the
-	 * AXI bus inside CPU thermal-zone setup (thermal controller / AUXADC block
-	 * ungated in m6-graft).  Skip the whole init — CPU thermal is non-essential
-	 * for userspace+adb.  Rollback: remove this return. */
-	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xBD); }
-	return 0;
+	/* m681 v245 (C4): RE-ENABLED. The v56 "natural wall" root is now known: the
+	 * probe's init_thermal reads AUXADC_CON0_V through auxadc_ts_base (0x11001000)
+	 * while INFRA_AUXADC (infra1 bit10) was gated -> silent AXI wedge. v245
+	 * un-stubs mt_auxadc_init, whose probe clk_prepare_enable("auxadc-main")s that
+	 * exact gate and leaves it on, and auxadc initcalls before thermal. therm-main
+	 * (INFRA_THERM) is enabled by tscpu_thermal_clock_on itself. Also removed
+	 * "thermal" from the platform forge_deny[] (it matched driver name
+	 * "mtk-thermal" and -ENODEV'd the probe). Un-stubbing arms the HW over-temp
+	 * reset (TEMPPROTTC @ thermal_base+0xCC) immediately. */
+	pr_err("[FORGE_TS] v245 tscpu_init RE-ENABLED (auxadc clock must be up first)\n");
 
 	tscpu_printk("tscpu_init\n");
 

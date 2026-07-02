@@ -547,10 +547,14 @@ static int platform_drv_probe(struct device *_dev)
 			 * /dev/mali, EGL_NOT_INITIALIZED). MFG MTCMOS poll is BOUNDED in stock
 			 * (spm_mtcmos_ctrl_mfg, #ifndef IGNORE_PWR_ACK) so power-on should not
 			 * wedge like the unbounded SMI/M4U larbs did. */
+			/* m681 v245 (C4): "thermal" REMOVED — it matched driver name
+			 * "mtk-thermal" and -ENODEV'd tscpu_thermal_probe. The real v56
+			 * AXI wall was the gated INFRA_AUXADC clock, fixed by re-enabling
+			 * mt_auxadc (its probe enables auxadc-main and leaves it on). */
 			"mt-eem", "ptp_fsm",
 			"ispsys", "fdvt", "seninf", "camera", "venc", "vdec", "vcodec",
 			"mdp", "jpeg", "jpg", "consys", "wmt", "connectivity", "wifi",
-			"wlan", "mediatek,gps", "devapc", "thermal", "systracker",
+			"wlan", "mediatek,gps", "devapc", "systracker",
 			"watchpoint", "freqhop", "wdt", NULL };
 			/* v47: "wdt" RETURNED to denylist. v44+ lost warm-reboot because
 			 * the v43 panic path (mtu3d BUG_ON -> direct SWRST) died with the

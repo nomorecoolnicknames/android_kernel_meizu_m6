@@ -1593,13 +1593,14 @@ static int __init mt_soc_snd_init(void)
 #endif
 	pr_debug("mt_soc_snd_init card addr = %p\n", card);
 
-	/* m681 v58: CONFIRMED NATURAL WALL (v56/v57, seq 630): mt_soc_snd_init
-	 * wedges the AXI bus inside snd_soc_register_card (AFE / audio front-end
-	 * block ungated in m6-graft).  m681 builds the mt_soc_audio_6750 variant
-	 * (NOT 6755).  Audio non-essential for userspace+adb.  Skip the whole
-	 * card registration.  Rollback: remove this return. */
-	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xBF); }
-	return 0;
+	/* m681 v245 (C6, Edit2): RE-ENABLED. The v58 wall was NOT snd_soc_register_card
+	 * itself — it was the component chain reaching AFE MMIO with the SCP_SYS_AUD
+	 * island off (dl1 InitAfeControl path; AudDrv_Clk_Power_On was a NO-OP). v245
+	 * Edit1 powers the island for real (AudDrv_Clk_On in InitAfeControl) and Edit3
+	 * lifts the dd.c mt-soc probe gate. Card = "mt-snd-card" (device "soc-audio")
+	 * — its appearance as ALSA card 0 is what unblocks the userspace
+	 * AudioALSADeviceParser ASSERT loop that stalls boot. */
+	pr_err("[FORGE_AUD] v245 mt_soc_snd_init RE-ENABLED -> registering mt-snd-card\n");
 
 	mt_snd_device = platform_device_alloc("soc-audio", -1);
 	if (!mt_snd_device) {

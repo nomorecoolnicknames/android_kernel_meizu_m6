@@ -1926,10 +1926,14 @@ static int __init mt_auxadc_init(void)
 {
 	int ret;
 
-	/* m681 v45: l681-map preemptive skip — auxadc PMIC read, -ETIMEDOUT. TODO post-boot: re-enable. */
-		/* m681 v139: re-skip (rollback to v128 base, peripherals off) */
-	{ extern void forge_m681_mark(unsigned char); forge_m681_mark(0xE8); }
-	return 0;
+	/* m681 v245 (C4): RE-ENABLED. The v45 comment "PMIC read" was wrong — this is
+	 * the SoC AUXADC (APB @0x11001000, gated by INFRA_AUXADC infra1 bit10). The
+	 * probe does devm_clk_get("auxadc-main") + clk_prepare_enable and LEAVES the
+	 * clock on — which is exactly the clock the thermal controller reads through
+	 * (AUXADC_CON0_V @ auxadc_ts_base): the v56 tscpu AXI wall was this gate off.
+	 * auxadc links before thermal (mediatek/Makefile:36 vs :185), so the clock is
+	 * up before tscpu_init runs. */
+	pr_err("[FORGE_ADC] v245 mt_auxadc_init RE-ENABLED -> platform_driver_register\n");
 
 #if !defined(CONFIG_MTK_CLKMGR)
 #else
