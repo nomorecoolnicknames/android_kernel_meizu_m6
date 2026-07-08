@@ -31,6 +31,7 @@
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
 #include <linux/irq.h>
+#include <linux/of.h>
 #include <linux/pagemap.h>
 #include <linux/highmem.h>
 #include <linux/printk.h>
@@ -1251,17 +1252,110 @@ static void msdc_card_reset(struct mmc_host *mmc)
 	usleep_range(200, 500);
 }
 
+static bool m6_msdc2_trace_host(struct msdc_host *host)
+{
+	return host && host->id == 2 && host->hw &&
+	       host->hw->host_function == MSDC_SDIO;
+}
+
+static bool m6_msdc2_trace_opcode(u32 opcode)
+{
+	switch (opcode) {
+	case MMC_GO_IDLE_STATE:
+	case SD_IO_SEND_OP_COND:
+	case SD_IO_RW_DIRECT:
+	case SD_SEND_IF_COND:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void m6_msdc2_trace_state(struct msdc_host *host, const char *phase,
+	u32 opcode, u32 rawcmd, u32 arg, int err, u32 resp0, u32 intsts)
+{
+	void __iomem *base = host->base;
+
+	pr_warn("M6 MSDC2 state %s op=%u arg=0x%x raw=0x%x err=%d resp0=0x%x int=0x%x ps=0x%x cfg=0x%x sdc_cfg=0x%x sdc_cmd=0x%x sdc_arg=0x%x iocon=0x%x patch0=0x%x mclk=%u sclk=%u hclk=%u pwr=%u width=%u timing=%u\n",
+		phase, opcode, arg, rawcmd, err, resp0, intsts,
+		MSDC_READ32(MSDC_PS), MSDC_READ32(MSDC_CFG),
+		MSDC_READ32(SDC_CFG), MSDC_READ32(SDC_CMD),
+		MSDC_READ32(SDC_ARG), MSDC_READ32(MSDC_IOCON),
+		MSDC_READ32(MSDC_PATCH_BIT0), host->mclk, host->sclk,
+		host->hclk, host->power_mode, host->bus_width, host->timing);
+}
+
+static void m6_msdc2_trace_cmd5(struct msdc_host *host, struct mmc_command *cmd,
+	const char *phase, u32 rawcmd, u32 intsts)
+{
+	static int budget = 80;
+	struct mmc_host *mmc;
+	struct mmc_card *card;
+	unsigned int funcs;
+
+	if (!m6_msdc2_trace_host(host) || !cmd ||
+	    cmd->opcode != SD_IO_SEND_OP_COND)
+		return;
+	if (budget <= 0)
+		return;
+	budget--;
+
+	mmc = host->mmc;
+	card = mmc ? mmc->card : NULL;
+	funcs = card ? card->sdio_funcs : 0;
+	pr_warn_ratelimited("M6 MSDC2 CMD5 %s arg=0x%x raw=0x%x err=%d resp0=0x%x int=0x%x ocr_avail=0x%x ocr_sdio=0x%x card=%p funcs=%u bus_ops=%p power=%u clk=%u/%u width=%u timing=%u\n",
+		phase, cmd->arg, rawcmd, (int)cmd->error, cmd->resp[0],
+		intsts, mmc ? mmc->ocr_avail : 0,
+		mmc ? mmc->ocr_avail_sdio : 0, card, funcs,
+		mmc ? mmc->bus_ops : NULL, host->power_mode, host->mclk,
+		host->sclk, host->bus_width, host->timing);
+}
+
+static void m6_msdc2_trace_power(struct msdc_host *host, const char *phase,
+	u8 mode)
+{
+	void __iomem *base;
+
+	if (!m6_msdc2_trace_host(host))
+		return;
+
+	base = host->base;
+	m6_msdc2_trace_state(host, phase, 0xffffffffU, 0, mode, 0, 0,
+		MSDC_READ32(MSDC_INT));
+}
+
+static void m6_msdc2_trace_cmd(struct msdc_host *host, struct mmc_command *cmd,
+	const char *phase, u32 rawcmd, u32 intsts)
+{
+	static int budget = 160;
+
+	if (!m6_msdc2_trace_host(host) || !cmd ||
+	    !m6_msdc2_trace_opcode(cmd->opcode))
+		return;
+	if (budget <= 0)
+		return;
+	budget--;
+
+	m6_msdc2_trace_state(host, phase, cmd->opcode, rawcmd, cmd->arg,
+		(int)cmd->error, cmd->resp[0], intsts);
+	m6_msdc2_trace_cmd5(host, cmd, phase, rawcmd, intsts);
+}
+
 static void msdc_set_power_mode(struct msdc_host *host, u8 mode)
 {
 	N_MSG(CFG, "Set power mode(%d)", mode);
 	if (host->power_mode == MMC_POWER_OFF && mode != MMC_POWER_OFF) {
+		m6_msdc2_trace_power(host, "power-up-entry", mode);
 		msdc_pin_reset(host, MSDC_PIN_PULL_UP, 0);
 		msdc_pin_config(host, MSDC_PIN_PULL_UP);
+		m6_msdc2_trace_power(host, "power-up-pins", mode);
 
 		if (host->power_control)
 			host->power_control(host, 1);
+		m6_msdc2_trace_power(host, "power-up-rails", mode);
 
 		mdelay(10);
+		m6_msdc2_trace_power(host, "power-up-delay", mode);
 
 		msdc_oc_check(host);
 
@@ -1273,8 +1367,10 @@ static void msdc_set_power_mode(struct msdc_host *host, u8 mode)
 	} else if (host->power_mode != MMC_POWER_OFF && mode == MMC_POWER_OFF) {
 
 		if (is_card_sdio(host) || (host->hw->flags & MSDC_SDIO_IRQ)) {
+			m6_msdc2_trace_power(host, "power-off-sdio-keep", mode);
 			msdc_pin_config(host, MSDC_PIN_PULL_UP);
 		} else {
+			m6_msdc2_trace_power(host, "power-off-entry", mode);
 
 			if (host->power_control)
 				host->power_control(host, 0);
@@ -1288,12 +1384,38 @@ static void msdc_set_power_mode(struct msdc_host *host, u8 mode)
 }
 
 #ifdef CONFIG_PM
+static void msdc_m6_sdio_wmt_resume_rescan(struct msdc_host *host, int evt)
+{
+	struct mmc_host *mmc;
+
+	if (evt != PM_EVENT_USER_RESUME || host->id != 2 ||
+	    host->hw->host_function != MSDC_SDIO)
+		return;
+
+	mmc = host->mmc;
+	if (!mmc)
+		return;
+
+	mmc->rescan_entered = 0;
+	pr_warn_ratelimited("M6 MSDC2 WMT resume: scheduling SDIO rescan card=%p bus_ops=%p power=%u caps=0x%x pm_flags=0x%x\n",
+		mmc->card, mmc->bus_ops, mmc->ios.power_mode, mmc->caps,
+		mmc->pm_flags);
+	mmc_detect_change(mmc, msecs_to_jiffies(200));
+}
+
 static void msdc_pm(pm_message_t state, void *data)
 {
 	struct msdc_host *host = (struct msdc_host *)data;
 	void __iomem *base = host->base;
 
 	int evt = state.event;
+
+	if (host->id == 2)
+		pr_warn_ratelimited("M6 MSDC2 pm enter evt=%d suspend=%d flags=0x%lx caps=0x%x pm_caps=0x%x card=%p bus_ops=%p rescan=%d power=%u ocr=0x%x\n",
+			evt, host->suspend, host->hw->flags, host->mmc->caps,
+			host->mmc->pm_caps, host->mmc->card,
+			host->mmc->bus_ops, host->mmc->rescan_entered,
+			host->mmc->ios.power_mode, host->mmc->ocr_avail);
 
 	msdc_ungate_clock(host);
 
@@ -1380,7 +1502,13 @@ end:
 	if (host->hw->host_function == MSDC_SDIO) {
 		host->mmc->pm_flags |= MMC_PM_KEEP_POWER;
 		host->mmc->rescan_entered = 0;
+		msdc_m6_sdio_wmt_resume_rescan(host, evt);
 	}
+	if (host->id == 2)
+		pr_warn_ratelimited("M6 MSDC2 pm exit evt=%d suspend=%d card=%p bus_ops=%p rescan=%d power=%u pm_flags=0x%x\n",
+			evt, host->suspend, host->mmc->card,
+			host->mmc->bus_ops, host->mmc->rescan_entered,
+			host->mmc->ios.power_mode, host->mmc->pm_flags);
 }
 #endif
 
@@ -1875,6 +2003,8 @@ static unsigned int msdc_command_start(struct msdc_host   *host,
 	dbg_add_host_log(host->mmc, 0, cmd->opcode, cmd->arg);
 #endif
 
+	m6_msdc2_trace_cmd(host, cmd, "cmd-start", rawcmd,
+		MSDC_READ32(MSDC_INT));
 	sdc_send_cmd(rawcmd, rawarg);
 
 	return 0;
@@ -1882,6 +2012,8 @@ static unsigned int msdc_command_start(struct msdc_host   *host,
 err:
 	ERR_MSG("XXX %s timeout: before CMD<%d>", str, opcode);
 	cmd->error = (unsigned int)-ETIMEDOUT;
+	m6_msdc2_trace_cmd(host, cmd, "cmd-start-timeout", rawcmd,
+		MSDC_READ32(MSDC_INT));
 	msdc_dump_register(host);
 	msdc_reset_hw(host->id);
 	return cmd->error;
@@ -1894,7 +2026,7 @@ static u32 msdc_command_resp_polling(struct msdc_host *host,
 	unsigned long       timeout)
 {
 	void __iomem *base = host->base;
-	u32 intsts;
+	u32 intsts = 0;
 	u32 resp;
 	unsigned long tmo;
 	/* struct mmc_data   *data = host->data; */
@@ -2053,7 +2185,9 @@ static u32 msdc_command_resp_polling(struct msdc_host *host,
 	}
 #endif /* end of MTK_MSDC_USE_CMD23 */
 
- out:
+out:
+	m6_msdc2_trace_cmd(host, cmd, "cmd-done", MSDC_READ32(SDC_CMD),
+		intsts);
 	host->cmd = NULL;
 
 	if (!cmd->data && !cmd->error)
@@ -5816,6 +5950,11 @@ static void msdc_add_host(struct work_struct *work)
 	BUG_ON(!mmc);
 
 	ret = mmc_add_host(mmc);
+	if (host->id == 2)
+		pr_warn("M6 MSDC2 mmc_add_host ret=%d caps=0x%x caps2=0x%x pm_caps=0x%x card=%p bus_ops=%p rescan=%d ocr=0x%x f_min=%u f_max=%u power=%u\n",
+			ret, mmc->caps, mmc->caps2, mmc->pm_caps, mmc->card,
+			mmc->bus_ops, mmc->rescan_entered, mmc->ocr_avail,
+			mmc->f_min, mmc->f_max, mmc->ios.power_mode);
 
 	if (ret) {
 		free_irq(host->irq, host);
@@ -5836,14 +5975,26 @@ static int msdc_drv_probe(struct platform_device *pdev)
 	void __iomem *base = NULL;
 	u32 *hclks = NULL;
 	int ret = 0;
+	bool m6_is_msdc2 = pdev->dev.of_node &&
+		!strcmp(pdev->dev.of_node->name, "msdc2");
+
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 probe enter node=%s pdev_id=%d available=%d\n",
+			pdev->dev.of_node->name, pdev->id,
+			of_device_is_available(pdev->dev.of_node));
 
 	/* Allocate MMC host for this device */
 	mmc = mmc_alloc_host(sizeof(struct msdc_host), &pdev->dev);
-	if (!mmc)
+	if (!mmc) {
+		if (m6_is_msdc2)
+			pr_warn("M6 MSDC2 probe mmc_alloc_host failed\n");
 		return -ENOMEM;
+	}
 
 	ret = msdc_dt_init(pdev, mmc);
 	if (ret) {
+		if (m6_is_msdc2)
+			pr_warn("M6 MSDC2 probe msdc_dt_init ret=%d\n", ret);
 		mmc_free_host(mmc);
 		return ret;
 	}
@@ -5929,6 +6080,12 @@ static int msdc_drv_probe(struct platform_device *pdev)
 #endif
 
 	msdc_set_host_power_control(host);
+	if (host->id == 2)
+		pr_warn("M6 MSDC2 probe host_function=%u flags=0x%lx caps=0x%x caps2=0x%x pm_caps=0x%x power_control=%p request_eirq=%p register_pm=%p vmmc=%p vqmmc=%p\n",
+			host->hw->host_function, host->hw->flags, mmc->caps,
+			mmc->caps2, mmc->pm_caps, host->power_control,
+			hw->request_sdio_eirq, hw->register_pm,
+			mmc->supply.vmmc, mmc->supply.vqmmc);
 	if ((host->hw->host_function == MSDC_SD) &&
 	    !(host->mmc->caps & MMC_CAP_NONREMOVABLE)) {
 		/* Since SD card power is default on,
@@ -6041,15 +6198,28 @@ static int msdc_drv_probe(struct platform_device *pdev)
 
 	MVG_EMMC_SETUP(host);
 
-	if (hw->request_sdio_eirq)
+	if (hw->request_sdio_eirq) {
+		if (host->id == 2)
+			pr_warn("M6 MSDC2 request_sdio_eirq call request=%p host=%p\n",
+				hw->request_sdio_eirq, host);
 		/* set to combo_sdio_request_eirq() for WIFI */
 		/* msdc_eirq_sdio() will be called when EIRQ */
 		hw->request_sdio_eirq(msdc_eirq_sdio, (void *)host);
+		if (host->id == 2)
+			pr_warn("M6 MSDC2 request_sdio_eirq returned request=%p host=%p\n",
+				hw->request_sdio_eirq, host);
+	}
 
 #ifdef CONFIG_PM
 	if (hw->register_pm) {/* only for sdio */
+		if (host->id == 2)
+			pr_warn("M6 MSDC2 register_pm call register=%p cb=%p host=%p\n",
+				hw->register_pm, msdc_pm, host);
 		/* function pointer to combo_sdio_register_pm() */
 		hw->register_pm(msdc_pm, (void *)host);
+		if (host->id == 2)
+			pr_warn("M6 MSDC2 register_pm returned register=%p host=%p\n",
+				hw->register_pm, host);
 		if (hw->flags & MSDC_SYS_SUSPEND) {
 			/* will not set for WIFI */
 			ERR_MSG("MSDC_SYS_SUSPEND and register_pm both set");
@@ -6089,6 +6259,10 @@ static int msdc_drv_probe(struct platform_device *pdev)
 			host->id, __func__, __LINE__);
 		BUG();
 	}
+	if (host->id == 2)
+		pr_warn("M6 MSDC2 queued add_host caps=0x%x caps2=0x%x pm_caps=0x%x card_inserted=%d suspend=%d rescan=%d\n",
+			mmc->caps, mmc->caps2, mmc->pm_caps,
+			host->card_inserted, host->suspend, mmc->rescan_entered);
 
 #ifdef MTK_MSDC_BRINGUP_DEBUG
 	pr_debug("[%s]: msdc%d, mmc->caps=0x%x, mmc->caps2=0x%x\n",

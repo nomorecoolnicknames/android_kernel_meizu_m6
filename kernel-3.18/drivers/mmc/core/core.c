@@ -3060,6 +3060,10 @@ static void _mmc_detect_change(struct mmc_host *host, unsigned long delay,
 		pm_wakeup_event(mmc_dev(host), 5000);
 
 	host->detect_change = 1;
+	if (host->index == 2)
+		pr_warn("M6 MMC2 detect_change schedule delay=%lu cd_irq=%d caps=0x%x caps2=0x%x bus_ops=%p card=%p rescan=%d power=%u\n",
+			delay, cd_irq, host->caps, host->caps2, host->bus_ops,
+			host->card, host->rescan_entered, host->ios.power_mode);
 	mmc_schedule_delayed_work(&host->detect, delay);
 }
 
@@ -3626,7 +3630,14 @@ EXPORT_SYMBOL(mmc_hw_reset);
 
 static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 {
+	int err;
+
 	host->f_init = freq;
+	if (host->index == 2)
+		pr_warn("M6 MMC2 try_freq start freq=%u f_min=%u f_max=%u ocr=0x%x caps=0x%x caps2=0x%x power=%u bus_ops=%p card=%p\n",
+			freq, host->f_min, host->f_max, host->ocr_avail,
+			host->caps, host->caps2, host->ios.power_mode,
+			host->bus_ops, host->card);
 
 #ifdef CONFIG_MMC_DEBUG
 	pr_info("%s: %s: trying to init card at %u Hz\n",
@@ -3651,14 +3662,28 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 	mmc_send_if_cond(host, host->ocr_avail);
 
 	/* Order's important: probe SDIO, then SD, then MMC */
-	if (!mmc_attach_sdio(host))
+	err = mmc_attach_sdio(host);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 try_freq attach_sdio ret=%d bus_ops=%p card=%p\n",
+			err, host->bus_ops, host->card);
+	if (!err)
 		return 0;
-	if (!mmc_attach_sd(host))
+	err = mmc_attach_sd(host);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 try_freq attach_sd ret=%d bus_ops=%p card=%p\n",
+			err, host->bus_ops, host->card);
+	if (!err)
 		return 0;
-	if (!mmc_attach_mmc(host))
+	err = mmc_attach_mmc(host);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 try_freq attach_mmc ret=%d bus_ops=%p card=%p\n",
+			err, host->bus_ops, host->card);
+	if (!err)
 		return 0;
 
 	mmc_power_off(host);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 try_freq fail power_off freq=%u\n", freq);
 	return -EIO;
 }
 
@@ -3746,17 +3771,30 @@ void mmc_rescan(struct work_struct *work)
 		container_of(work, struct mmc_host, detect.work);
 	int i;
 
+	if (host->index == 2)
+		pr_warn("M6 MMC2 rescan enter rescan_disable=%d entered=%d detect_change=%d caps=0x%x caps2=0x%x bus_ops=%p card=%p power=%u\n",
+			host->rescan_disable, host->rescan_entered,
+			host->detect_change, host->caps, host->caps2,
+			host->bus_ops, host->card, host->ios.power_mode);
+
 	if (host->trigger_card_event && host->ops->card_event) {
 		host->ops->card_event(host);
 		host->trigger_card_event = false;
 	}
 
-	if (host->rescan_disable)
+	if (host->rescan_disable) {
+		if (host->index == 2)
+			pr_warn("M6 MMC2 rescan skip disabled\n");
 		return;
+	}
 
 	/* If there is a non-removable card registered, only scan once */
-	if ((host->caps & MMC_CAP_NONREMOVABLE) && host->rescan_entered)
+	if ((host->caps & MMC_CAP_NONREMOVABLE) && host->rescan_entered) {
+		if (host->index == 2)
+			pr_warn("M6 MMC2 rescan skip nonremovable already_entered bus_ops=%p card=%p\n",
+				host->bus_ops, host->card);
 		return;
+	}
 	host->rescan_entered = 1;
 
 	mmc_bus_get(host);
@@ -3780,6 +3818,9 @@ void mmc_rescan(struct work_struct *work)
 
 	/* if there still is a card present, stop here */
 	if (host->bus_ops != NULL) {
+		if (host->index == 2)
+			pr_warn("M6 MMC2 rescan stop existing bus_ops=%p card=%p\n",
+				host->bus_ops, host->card);
 		mmc_bus_put(host);
 		goto out;
 	}
@@ -3792,6 +3833,8 @@ void mmc_rescan(struct work_struct *work)
 
 	if (!(host->caps & MMC_CAP_NONREMOVABLE) && host->ops->get_cd &&
 			host->ops->get_cd(host) == 0) {
+		if (host->index == 2)
+			pr_warn("M6 MMC2 rescan no_card get_cd=0\n");
 		mmc_claim_host(host);
 		mmc_power_off(host);
 		mmc_release_host(host);
@@ -3808,6 +3851,10 @@ void mmc_rescan(struct work_struct *work)
 	mmc_release_host(host);
 
  out:
+	if (host->index == 2)
+		pr_warn("M6 MMC2 rescan exit bus_ops=%p card=%p power=%u rescan=%d\n",
+			host->bus_ops, host->card, host->ios.power_mode,
+			host->rescan_entered);
 	if (host->caps & MMC_CAP_NEEDS_POLL)
 		mmc_schedule_delayed_work(&host->detect, HZ);
 }

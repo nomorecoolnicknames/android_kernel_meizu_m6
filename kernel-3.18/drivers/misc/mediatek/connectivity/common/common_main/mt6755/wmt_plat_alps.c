@@ -47,6 +47,8 @@
 
 /* MTK_WCN_COMBO header files */
 #include "osal_typedef.h"
+#include "wmt_plat.h"
+#include "wmt_detect_pwr.h"
 #include "mtk_wcn_consys_hw.h"
 #include "stp_dbg.h"
 
@@ -323,12 +325,16 @@ INT32 wmt_plat_soc_init(UINT32 co_clock_type)
 {
 	CMB_STUB_CB stub_cb;
 	INT32 iret;
+	UINT32 cfg_co_clock_type = co_clock_type;
 	/*init wmt function ctrl wakelock if wake lock is supported by host platform */
 	/* Set auto-detection value only for default type 0 */
 	iret = mtk_wcn_consys_co_clock_type();
 	if (0 == co_clock_type)
 		co_clock_type = iret;
 	wmt_plat_soc_co_clock_flag_set(co_clock_type);
+	WMT_PLAT_ERR_FUNC("M6COCLK: soc_init cfg=%u auto=%d resolved=%u used=%s\n",
+		cfg_co_clock_type, iret, co_clock_type,
+		(cfg_co_clock_type != 0) ? "cfg" : "auto");
 
 	stub_cb.aif_ctrl_cb = wmt_plat_audio_ctrl;
 	stub_cb.func_ctrl_cb = wmt_plat_func_ctrl;
@@ -389,6 +395,18 @@ INT32 wmt_plat_deinit(VOID)
 	return 0;
 }
 EXPORT_SYMBOL(wmt_plat_deinit);
+
+INT32 wmt_plat_sdio_ctrl(UINT32 sdioPortNum, ENUM_FUNC_STATE on)
+{
+	INT32 ret;
+
+	ret = board_sdio_ctrl(sdioPortNum, (FUNC_OFF == on) ? 0 : 1);
+	pr_warn("M6 WMT mt6755 sdio_ctrl slot=%u state=%d ret=%d\n",
+		sdioPortNum, on, ret);
+
+	return ret;
+}
+EXPORT_SYMBOL(wmt_plat_sdio_ctrl);
 
 static INT32 wmt_plat_dump_pin_conf(VOID)
 {

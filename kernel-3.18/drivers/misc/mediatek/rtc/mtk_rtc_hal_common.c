@@ -36,7 +36,7 @@
 #include <mt_pmic_wrap.h>
 
 #define hal_rtc_xinfo(fmt, args...)		\
-		pr_notice(fmt, ##args)
+		pr_debug(fmt, ##args)
 
 #define hal_rtc_xerror(fmt, args...)	\
 		pr_err(fmt, ##args)

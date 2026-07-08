@@ -81,12 +81,21 @@ static int sdio_init_func(struct mmc_card *card, unsigned int fn)
 
 	if (!(card->quirks & MMC_QUIRK_NONSTD_SDIO)) {
 		ret = sdio_read_fbr(func);
-		if (ret)
+		if (ret) {
+			if (card->host->index == 2)
+				pr_warn("M6 MMC2 init_func fn=%u read_fbr ret=%d\n",
+					fn, ret);
 			goto fail;
+		}
 
 		ret = sdio_read_func_cis(func);
-		if (ret)
+		if (ret) {
+			if (card->host->index == 2)
+				pr_warn("M6 MMC2 init_func fn=%u read_cis ret=%d class=0x%x vendor=0x%x device=0x%x\n",
+					fn, ret, func->class, func->vendor,
+					func->device);
 			goto fail;
+		}
 	} else {
 		func->vendor = func->card->cis.vendor;
 		func->device = func->card->cis.device;
@@ -94,6 +103,10 @@ static int sdio_init_func(struct mmc_card *card, unsigned int fn)
 	}
 
 	card->sdio_func[fn - 1] = func;
+	if (card->host->index == 2)
+		pr_warn("M6 MMC2 init_func fn=%u class=0x%x vendor=0x%x device=0x%x max_blksize=%u\n",
+			fn, func->class, func->vendor, func->device,
+			func->max_blksize);
 
 	return 0;
 
@@ -601,6 +614,9 @@ static int mmc_sdio_init_card(struct mmc_host *host, u32 ocr,
 
 	BUG_ON(!host);
 	WARN_ON(!host->claimed);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 init_card enter ocr=0x%x oldcard=%p powered_resume=%d uhs=%d\n",
+			ocr, oldcard, powered_resume, mmc_host_uhs(host));
 
 	/* to query card if 1.8V signalling is supported */
 	if (mmc_host_uhs(host))
@@ -617,6 +633,9 @@ try_again:
 	 */
 	if (!powered_resume) {
 		err = mmc_send_io_op_cond(host, ocr, &rocr);
+		if (host->index == 2)
+			pr_warn("M6 MMC2 init_card CMD5 err=%d req_ocr=0x%x rocr=0x%x retries=%d\n",
+				err, ocr, rocr, retries);
 		if (err)
 			goto err;
 	}
@@ -673,6 +692,9 @@ try_again:
 	if (!powered_resume && (rocr & ocr & R4_18V_PRESENT)) {
 		err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_180,
 					ocr_card);
+		if (host->index == 2)
+			pr_warn("M6 MMC2 init_card set_signal_voltage ret=%d rocr=0x%x ocr=0x%x retries=%d\n",
+				err, rocr, ocr, retries);
 		if (err == -EAGAIN) {
 			sdio_reset(host);
 			mmc_go_idle(host);
@@ -750,6 +772,12 @@ try_again:
 		 * Read the common registers.
 		 */
 		err = sdio_read_cccr(card,  ocr);
+		if (host->index == 2)
+			pr_warn("M6 MMC2 init_card read_cccr ret=%d cccr_sdio=%u caps multi=%u low=%u wide=%u high_power=%u high_speed=%u\n",
+				err, card->cccr.sdio_vsn,
+				card->cccr.multi_block, card->cccr.low_speed,
+				card->cccr.wide_bus, card->cccr.high_power,
+				card->cccr.high_speed);
 		if (err)
 			goto remove;
 #ifdef CONFIG_MMC_EMBEDDED_SDIO
@@ -765,6 +793,10 @@ try_again:
 		 * Read the common CIS tuples.
 		 */
 		err = sdio_read_common_cis(card);
+		if (host->index == 2)
+			pr_warn("M6 MMC2 init_card common_cis ret=%d vendor=0x%x device=0x%x blksize=%u max_dtr=%u\n",
+				err, card->cis.vendor, card->cis.device,
+				card->cis.blksize, card->cis.max_dtr);
 		if (err)
 			goto remove;
 #ifdef CONFIG_MMC_EMBEDDED_SDIO
@@ -836,6 +868,10 @@ try_again:
 finish:
 	if (!oldcard)
 		host->card = card;
+	if (host->index == 2)
+		pr_warn("M6 MMC2 init_card finish type=%u rca=0x%x ocr=0x%x cis=0x%x:0x%x max_dtr=%u\n",
+			card->type, card->rca, card->ocr, card->cis.vendor,
+			card->cis.device, card->cis.max_dtr);
 	return 0;
 
 remove:
@@ -843,6 +879,9 @@ remove:
 		mmc_remove_card(card);
 
 err:
+	if (host->index == 2)
+		pr_warn("M6 MMC2 init_card err=%d ocr=0x%x rocr=0x%x oldcard=%p powered_resume=%d\n",
+			err, ocr, rocr, oldcard, powered_resume);
 	return err;
 }
 
@@ -1107,14 +1146,21 @@ static const struct mmc_bus_ops mmc_sdio_ops = {
  */
 int mmc_attach_sdio(struct mmc_host *host)
 {
-	int err, i, funcs;
+	int err, i, funcs = 0;
 	u32 ocr, rocr;
 	struct mmc_card *card;
 
 	BUG_ON(!host);
 	WARN_ON(!host->claimed);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 attach_sdio enter ocr_avail=0x%x ocr_avail_sdio=0x%x caps=0x%x caps2=0x%x power=%u\n",
+			host->ocr_avail, host->ocr_avail_sdio, host->caps,
+			host->caps2, host->ios.power_mode);
 
 	err = mmc_send_io_op_cond(host, 0, &ocr);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 attach_sdio CMD5 probe err=%d ocr=0x%x\n",
+			err, ocr);
 	if (err)
 		return err;
 
@@ -1124,6 +1170,9 @@ int mmc_attach_sdio(struct mmc_host *host)
 
 
 	rocr = mmc_select_voltage(host, ocr);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 attach_sdio select_voltage ocr=0x%x rocr=0x%x ocr_avail=0x%x\n",
+			ocr, rocr, host->ocr_avail);
 
 	/*
 	 * Can we support the voltage(s) of the card(s)?
@@ -1137,6 +1186,9 @@ int mmc_attach_sdio(struct mmc_host *host)
 	 * Detect and init the card.
 	 */
 	err = mmc_sdio_init_card(host, rocr, NULL, 0);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 attach_sdio init_card ret=%d rocr=0x%x\n",
+			err, rocr);
 	if (err)
 		goto err;
 
@@ -1165,6 +1217,9 @@ int mmc_attach_sdio(struct mmc_host *host)
 	 */
 	funcs = (ocr & 0x70000000) >> 28;
 	card->sdio_funcs = 0;
+	if (host->index == 2)
+		pr_warn("M6 MMC2 attach_sdio funcs=%d ocr=0x%x cis=0x%x:0x%x\n",
+			funcs, ocr, card->cis.vendor, card->cis.device);
 
 #ifdef CONFIG_MMC_EMBEDDED_SDIO
 	if (host->embedded_sdio_data.funcs)
@@ -1208,6 +1263,9 @@ int mmc_attach_sdio(struct mmc_host *host)
 	 */
 	mmc_release_host(host);
 	err = mmc_add_card(host->card);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 attach_sdio mmc_add_card ret=%d name=%s funcs=%d\n",
+			err, mmc_card_id(host->card), funcs);
 	if (err)
 		goto remove_added;
 
@@ -1216,11 +1274,19 @@ int mmc_attach_sdio(struct mmc_host *host)
 	 */
 	for (i = 0;i < funcs;i++) {
 		err = sdio_add_func(host->card->sdio_func[i]);
+		if (host->index == 2)
+			pr_warn("M6 MMC2 attach_sdio add_func%d ret=%d vendor=0x%x device=0x%x class=0x%x\n",
+				i + 1, err, host->card->sdio_func[i]->vendor,
+				host->card->sdio_func[i]->device,
+				host->card->sdio_func[i]->class);
 		if (err)
 			goto remove_added;
 	}
 
 	mmc_claim_host(host);
+	if (host->index == 2)
+		pr_warn("M6 MMC2 attach_sdio done card=%p funcs=%d bus_ops=%p\n",
+			host->card, funcs, host->bus_ops);
 	return 0;
 
 
@@ -1237,6 +1303,9 @@ remove:
 err:
 	mmc_detach_bus(host);
 
+	if (host->index == 2)
+		pr_warn("M6 MMC2 attach_sdio err=%d ocr=0x%x rocr=0x%x funcs=%d\n",
+			err, ocr, rocr, funcs);
 	pr_err("%s: error %d whilst initialising SDIO card\n",
 		mmc_hostname(host), err);
 #ifdef CONFIG_HUAWEI_DSM

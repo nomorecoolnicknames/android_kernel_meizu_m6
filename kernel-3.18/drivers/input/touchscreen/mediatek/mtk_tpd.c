@@ -26,6 +26,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/fb.h>
+#include <linux/errno.h>
 
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
@@ -438,6 +439,7 @@ static int tpd_probe(struct platform_device *pdev)
 {
 	int touch_type = 1;	/* 0:R-touch, 1: Cap-touch */
 	int i = 0;
+	int init_ret = 0;
 #ifndef CONFIG_CUSTOM_LCM_X
 #ifdef CONFIG_LCM_WIDTH
 	unsigned long tpd_res_x = 0, tpd_res_y = 0;
@@ -533,7 +535,16 @@ static int tpd_probe(struct platform_device *pdev)
 	for (i = 1; i < TP_DRV_MAX_COUNT; i++) {
 		/* add tpd driver into list */
 		if (tpd_driver_list[i].tpd_device_name != NULL) {
-			tpd_driver_list[i].tpd_local_init();
+			init_ret = tpd_driver_list[i].tpd_local_init();
+			if (init_ret == -EPROBE_DEFER) {
+				TPD_DMESG("[mtk-tpd] %s local init deferred\n",
+					tpd_driver_list[i].tpd_device_name);
+				input_free_device(tpd->dev);
+				kfree(tpd);
+				tpd = NULL;
+				misc_deregister(&tpd_misc_device);
+				return init_ret;
+			}
 			/* msleep(1); */
 			if (tpd_load_status == 1) {
 				TPD_DMESG("[mtk-tpd]tpd_probe, tpd_driver_name=%s\n",
@@ -548,7 +559,15 @@ static int tpd_probe(struct platform_device *pdev)
 			g_tpd_drv = &tpd_driver_list[0];
 			/* touch_type:0: r-touch, 1: C-touch */
 			touch_type = 0;
-			g_tpd_drv->tpd_local_init();
+			init_ret = g_tpd_drv->tpd_local_init();
+			if (init_ret == -EPROBE_DEFER) {
+				TPD_DMESG("[mtk-tpd]Generic touch panel deferred\n");
+				input_free_device(tpd->dev);
+				kfree(tpd);
+				tpd = NULL;
+				misc_deregister(&tpd_misc_device);
+				return init_ret;
+			}
 			TPD_DMESG("[mtk-tpd]Generic touch panel driver\n");
 		} else {
 			TPD_DMESG("[mtk-tpd]cap touch and Generic touch both are not loaded!!\n");

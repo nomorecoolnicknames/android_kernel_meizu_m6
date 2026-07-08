@@ -49,6 +49,7 @@
 #include "ddp_dither.h"
 #include "ddp_info.h"
 #include "ddp_dsi.h"
+#include "ddp_ovl.h"
 #include "ddp_rdma.h"
 #include "ddp_manager.h"
 #include "ddp_met.h"
@@ -123,6 +124,75 @@ char MTKFB_STR_HELP[] =
 	"        lcm:[on|off|init]\n"
 	"             power on/off lcm\n"
 	"\n"
+	"        m6_lcm_reinit:[0|1]\n"
+	"             Meizu M6 diagnostic Linux LCM init after boot\n"
+	"\n"
+	"        m6_dsi_dcs_status[:stock_pages]\n"
+	"             Meizu M6 diagnostic DSI/ILI9881P DCS status dump\n"
+	"        m6_dsi_dcs_status_force[:tag]\n"
+	"             Meizu M6 force one manual DCS status dump even after boot limits\n"
+	"        m6_dsi_hs_window:<tag>[:hold_ms]\n"
+	"             Meizu M6 bounded DSI HS-video IRQ/VM/window sampler\n"
+	"        m6_dsi_phy_truth[:tag]\n"
+	"             Meizu M6 read-only DSI/MIPITX/LCM lane and PHY truth dump\n"
+		"        m6_dsi_debug_mux[:tag]\n"
+		"             Meizu M6 bounded DSI/MIPITX debug mux sweep; restores selectors\n"
+		"        m6_dsi_debug_mux_stats[:tag[:samples[:delay_us]]]\n"
+		"             Meizu M6 DSI/MIPITX debug mux multi-sample stats; restores selectors\n"
+		"        m6_dsi_lkgold_muxstats_dump\n"
+		"             Meizu M6 dump cached early LK handoff MIPITX mux stats\n"
+	"        m6_dsi_clk_restore[:tag]\n"
+	"             Meizu M6 force TXRX HSTX_CKLP_EN and PHY LC_HS_TX_EN back on\n"
+	"        m6_dsi_pll_change:<pll>[:tag]\n"
+	"             Meizu M6 runtime MIPITX PLL reprogram (pll=230 stock, 240/250/265 test); live link, revert by writing old value\n"
+		"        m6_dsi_cc_probe:<0|1>[:hold_ms[:restore[:mux]]]\n"
+		"             Meizu M6 isolation toggle for TXRX HSTX_CKLP_EN; mux=1 sweep, mux=2 stats\n"
+		"        m6_dsi_lc_hs_probe:<0|1>[:hold_ms[:restore[:mux]]]\n"
+		"             Meizu M6 isolation toggle for PHY LC_HS_TX_EN; mux=1 sweep, mux=2 stats\n"
+		"        m6_dsi_mipitx_pad_window[:tag[:samples[:delay_ms]]]\n"
+		"             Meizu M6 read-only repeated MIPITX pad/top/lane sampler\n"
+		"        m6_dsi_mipitx_pad_probe:<field>:<value>[:hold_ms[:restore[:mux]]]\n"
+		"             Meizu M6 restore-safe MIPITX field isolation; mux=1 sweep, 2 stats, 3 pad window\n"
+		"        m6_dsi_mipitx_lane_group_probe:<rt|lptx|lpcd>:<value>[:hold_ms[:restore[:mux]]]\n"
+		"             Meizu M6 restore-safe all-lane MIPITX analog-field isolation; mux=1 sweep, 2 stats, 3 pad window\n"
+		"        m6_dsi_mipitx_phy_sel_probe:<value>[:hold_ms[:restore[:mux]]]\n"
+		"             Meizu M6 restore-safe MIPITX PHY_SEL lane-map isolation; mux=1 sweep, 2 stats, 3 pad window\n"
+		"        m6_dsi_mipitx_plltop_probe:<preserve>[:hold_ms[:restore[:mux[:shift]]]]\n"
+		"             Meizu M6 restore-safe MIPITX PLL_TOP preserve isolation; shift defaults to 8, shift=7 tests local bitfield\n"
+		"        m6_dsi_wrtrace_dump[:limit]\n"
+		"             Meizu M6 dump first DSI0/MIPITX register write-order trace\n"
+		"        m6_dsi_wrtrace_reset[:enable]\n"
+		"             Meizu M6 clear DSI0/MIPITX write-order trace and set capture state\n"
+	"        m6_dsi_wrtrace_enable:<0|1>\n"
+	"             Meizu M6 enable/disable DSI0/MIPITX write-order capture\n"
+	"        m6_dsi_hsa_wc:<value>[:hold_ms]\n"
+	"             Meizu M6 isolation override for DSI_HSA_WC with snapshots\n"
+	"        m6_dsi_vm_cmd_probe:<raw>[:hold_ms[:restore[:mux]]]\n"
+	"             Meizu M6 restore-safe VM_CMD_CON isolation; try 0xff511501 to clear TS_VFP_EN\n"
+	"        m6_dsi_bist_profile:<profile>:<rgb>[:hold_ms]\n"
+	"             Meizu M6 manual DSI BIST profile sweep; auto-disables\n"
+	"        m6_lcm_page5_2a:<value>[:hold_ms]\n"
+	"             Meizu M6 isolation write/read probe for ILI9881P page5 cmd 0x2A\n"
+	"        m6_lcm_mode_ctrl:<value>[:hold_ms]\n"
+	"             Meizu M6 isolation write/read probe for ILI9881P cmd 0xBB mode control\n"
+	"        m6_dsi_c2v_switch:<value>[:hold_ms]\n"
+	"             Meizu M6 diagnostic DDP DSI C2V switch path probe using cmd 0xBB\n"
+	"\n"
+	"\n"
+	"        m6_display_truth_window[:tag]\n"
+	"             Meizu M6 read-only DDP/OVL/RDMA/DSI/MIPITX/backlight truth dump\n"
+	"        m6_display_route_probe[:dump|trigger|rekick|mask]\n"
+	"             Meizu M6 DDP route probe with optional manual trigger/trigger-loop rekick\n"
+	"\n"
+	"        m6_ovl_greq_profile:[0|1|2|3]\n"
+	"             Meizu M6 isolation profiles for OVL RDMA/GREQ underflow triage\n"
+	"\n"
+	"        m6_ovl_bounds_profile:[0|1]\n"
+	"             Meizu M6 isolation profile for OVL end-prefetch/M4U boundary triage\n"
+	"\n"
+	"        m6_ovl_stale_cpu_clear:[0|1]\n"
+	"             Meizu M6 isolation switch for CPU mirroring stale disabled-layer clears\n"
+	"\n"
 	"        cabc:[ui|mov|still]\n"
 	"             cabc mode, UI/Moving picture/Still picture\n"
 	"\n"
@@ -180,6 +250,31 @@ static char LP_CUST_STR_HELP[] =
 	"ACTION:\n"
 	"       low_power_mode:Mode\n"
 	"		Mode:0(LP_CUST_DISABLE)|1(LOW_POWER_MODE)|2(JUST_MAKE_MODE)|3(PERFORMANC_MODE)\n";
+
+static void disp_m6_copy_tag(char *dst, size_t dst_size, const char *tag)
+{
+	const char *src = tag ? tag : "manual";
+	const char fallback[] = "manual";
+	size_t i = 0;
+
+	if (!dst_size)
+		return;
+
+	while (i + 1 < dst_size && src[i] &&
+	       src[i] != '\n' && src[i] != '\r' &&
+	       src[i] != ' ' && src[i] != '\t') {
+		dst[i] = src[i];
+		i++;
+	}
+	dst[i] = '\0';
+
+	if (dst[0])
+		return;
+
+	for (i = 0; i + 1 < dst_size && fallback[i]; i++)
+		dst[i] = fallback[i];
+	dst[i] = '\0';
+}
 
 /* --------------------------------------------------------------------------- */
 /* DDP and MTKFB Command Processor */
@@ -530,7 +625,9 @@ void mtkfb_process_dbg_opt(const char *opt)
 		}
 
 		if (pattern) {
+			primary_display_manual_lock();
 			DSI_BIST_Pattern_Test(DISP_MODULE_DSI0, NULL, true, pattern);
+			primary_display_manual_unlock();
 			DISPMSG("enable dsi pattern: 0x%08x\n", pattern);
 		} else {
 			primary_display_manual_lock();
@@ -538,6 +635,432 @@ void mtkfb_process_dbg_opt(const char *opt)
 			primary_display_manual_unlock();
 			return;
 		}
+	} else if (0 == strncmp(opt, "m6_dsi_bist_full:", 17)) {
+		char *p = (char *)opt + 17;
+		unsigned int pattern;
+
+		ret = kstrtouint(p, 0, &pattern);
+		if (ret) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+
+		primary_display_manual_lock();
+		DSI_M6_BIST_Full_Test(DISP_MODULE_DSI0, NULL, pattern != 0, pattern);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi bist full: 0x%08x\n", pattern);
+	} else if (0 == strncmp(opt, "m6_dsi_bist_profile:", 20)) {
+		unsigned int profile = 0;
+		unsigned int pattern = 0;
+		unsigned int hold_ms = 3000;
+		int pattern_arg = 0;
+
+		ret = sscanf(opt, "m6_dsi_bist_profile:%u:%i:%u\n",
+			     &profile, &pattern_arg, &hold_ms);
+		if (ret < 2 || pattern_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		pattern = (unsigned int)pattern_arg;
+
+		primary_display_manual_lock();
+		DSI_M6_BIST_Profile_Test(DISP_MODULE_DSI0, NULL, profile,
+					 pattern, hold_ms);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi bist profile: profile=%u pattern=0x%08x hold=%u\n",
+			profile, pattern, hold_ms);
+	} else if (0 == strncmp(opt, "m6_dsi_hs_window:", 17)) {
+		const char *arg = opt + 17;
+		const char *sep;
+		char tag[32] = {0};
+		unsigned int hold_ms = 1000;
+		size_t tag_len;
+
+		sep = strchr(arg, ':');
+		tag_len = sep ? (size_t)(sep - arg) : strnlen(arg, sizeof(tag) - 1);
+		if (tag_len == 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		if (tag_len >= sizeof(tag))
+			tag_len = sizeof(tag) - 1;
+		memcpy(tag, arg, tag_len);
+		tag[tag_len] = '\0';
+		if (sep && sep[1] != '\0') {
+			ret = kstrtouint(sep + 1, 0, &hold_ms);
+			if (ret) {
+				pr_err("error to parse cmd %s ret=%d\n",
+				       opt, ret);
+				return;
+			}
+		}
+		primary_display_manual_lock();
+		dsi_m6_dump_hs_window(tag, hold_ms);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi hs window: tag=%s hold=%u\n", tag, hold_ms);
+	} else if (0 == strncmp(opt, "m6_dsi_phy_truth", 16)) {
+		const char *tag = "manual";
+		char safe_tag[32];
+
+		if (opt[16] == ':')
+			tag = opt + 17;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+		primary_display_manual_lock();
+		dsi_m6_dump_phy_truth(safe_tag);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi phy truth: tag=%s\n", safe_tag);
+		} else if (0 == strncmp(opt, "m6_dsi_debug_mux_stats",
+					sizeof("m6_dsi_debug_mux_stats") - 1)) {
+			const size_t prefix_len = sizeof("m6_dsi_debug_mux_stats") - 1;
+			char safe_tag[32] = "manual";
+			unsigned int samples = 12;
+			unsigned int delay_us = 1000;
+
+			if (opt[prefix_len] == ':') {
+				const char *arg = opt + prefix_len + 1;
+				const char *p = arg;
+				char tag_arg[32];
+				size_t i = 0;
+
+				while (i + 1 < sizeof(tag_arg) && *p &&
+				       *p != ':' && *p != '\n' && *p != '\r' &&
+				       *p != ' ' && *p != '\t') {
+					tag_arg[i] = *p;
+					i++;
+					p++;
+				}
+				tag_arg[i] = '\0';
+				disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag_arg);
+				if (*p == ':') {
+					ret = sscanf(p + 1, "%u:%u", &samples, &delay_us);
+					if (ret < 1) {
+						pr_err("error to parse cmd %s\n", opt);
+						return;
+					}
+				}
+			}
+			primary_display_manual_lock();
+			dsi_m6_debug_mux_stats(safe_tag, samples, delay_us);
+			primary_display_manual_unlock();
+			DISPERR("M6 DSI debug_mux_stats command: tag=%s samples=%u delay_us=%u\n",
+				safe_tag, samples, delay_us);
+		} else if (0 == strncmp(opt, "m6_dsi_lkgold_muxstats_dump",
+					sizeof("m6_dsi_lkgold_muxstats_dump") - 1)) {
+			primary_display_manual_lock();
+			dsi_m6_lkgold_muxstats_dump();
+			primary_display_manual_unlock();
+			DISPERR("M6 DSI lkgold_muxstats_dump command\n");
+		} else if (0 == strncmp(opt, "m6_dsi_debug_mux", 16)) {
+			const char *tag = "manual";
+			char safe_tag[32];
+
+		if (opt[16] == ':')
+			tag = opt + 17;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+		primary_display_manual_lock();
+		dsi_m6_debug_mux_sweep(safe_tag);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI debug_mux command: tag=%s\n", safe_tag);
+	} else if (0 == strncmp(opt, "m6_dsi_clk_restore", 18)) {
+		const char *tag = "manual";
+		char safe_tag[32];
+
+		if (opt[18] == ':')
+			tag = opt + 19;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+		primary_display_manual_lock();
+		dsi_m6_force_clk_restore(safe_tag);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI clk_restore command: tag=%s\n", safe_tag);
+	} else if (0 == strncmp(opt, "m6_dsi_pll_change:", sizeof("m6_dsi_pll_change:") - 1)) {
+		unsigned int new_pll = 0;
+		const char *tag = "manual";
+		char safe_tag[32];
+		const char *colon;
+
+		ret = sscanf(opt, "m6_dsi_pll_change:%u", &new_pll);
+		if (ret < 1) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		colon = strchr(opt + sizeof("m6_dsi_pll_change:") - 1, ':');
+		if (colon)
+			tag = colon + 1;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+		primary_display_manual_lock();
+		dsi_m6_force_pll_change(new_pll, safe_tag);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI pll_change command: pll=%u tag=%s\n", new_pll, safe_tag);
+	} else if (0 == strncmp(opt, "m6_dsi_cc_probe:", sizeof("m6_dsi_cc_probe:") - 1)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+
+		ret = sscanf(opt, "m6_dsi_cc_probe:%i:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux);
+		if (ret < 1 || value_arg < 0 || value_arg > 1) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+			dsi_m6_force_cc_probe(value, hold_ms, restore, sample_mux);
+			primary_display_manual_unlock();
+			DISPERR("M6 DSI cc_probe command: value=%u hold=%u restore=%u mux=%u\n",
+				value, hold_ms, restore ? 1 : 0, sample_mux);
+	} else if (0 == strncmp(opt, "m6_dsi_lc_hs_probe:", sizeof("m6_dsi_lc_hs_probe:") - 1)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+
+		ret = sscanf(opt, "m6_dsi_lc_hs_probe:%i:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux);
+		if (ret < 1 || value_arg < 0 || value_arg > 1) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_force_lc_hs_probe(value, hold_ms, restore, sample_mux);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI lc_hs_probe command: value=%u hold=%u restore=%u mux=%u\n",
+			value, hold_ms, restore ? 1 : 0, sample_mux);
+	} else if (0 == strncmp(opt, "m6_dsi_mipitx_pad_window",
+				sizeof("m6_dsi_mipitx_pad_window") - 1)) {
+		const size_t prefix_len = sizeof("m6_dsi_mipitx_pad_window") - 1;
+		char safe_tag[32] = "manual";
+		unsigned int samples = 6;
+		unsigned int delay_ms = 100;
+
+		if (opt[prefix_len] == ':') {
+			const char *arg = opt + prefix_len + 1;
+			const char *p = arg;
+			char tag_arg[32];
+			size_t i = 0;
+
+			while (i + 1 < sizeof(tag_arg) && *p &&
+			       *p != ':' && *p != '\n' && *p != '\r' &&
+			       *p != ' ' && *p != '\t') {
+				tag_arg[i] = *p;
+				i++;
+				p++;
+			}
+			tag_arg[i] = '\0';
+			disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag_arg);
+			if (*p == ':') {
+				ret = sscanf(p + 1, "%u:%u", &samples, &delay_ms);
+				if (ret < 1) {
+					pr_err("error to parse cmd %s\n", opt);
+					return;
+				}
+			}
+		}
+		primary_display_manual_lock();
+		dsi_m6_mipitx_pad_window(safe_tag, samples, delay_ms);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI mipitx_pad_window command: tag=%s samples=%u delay_ms=%u\n",
+			safe_tag, samples, delay_ms);
+	} else if (0 == strncmp(opt, "m6_dsi_mipitx_pad_probe:",
+				sizeof("m6_dsi_mipitx_pad_probe:") - 1)) {
+		const char *p = opt + sizeof("m6_dsi_mipitx_pad_probe:") - 1;
+		char field[24];
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+		size_t i = 0;
+
+		while (i + 1 < sizeof(field) && *p &&
+		       *p != ':' && *p != '\n' && *p != '\r' &&
+		       *p != ' ' && *p != '\t') {
+			field[i] = *p;
+			i++;
+			p++;
+		}
+		field[i] = '\0';
+		if (!field[0] || *p != ':') {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		ret = sscanf(p + 1, "%i:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_mipitx_pad_probe(field, value, hold_ms, restore, sample_mux);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI mipitx_pad_probe command: field=%s value=%u hold=%u restore=%u mux=%u\n",
+			field, value, hold_ms, restore ? 1 : 0, sample_mux);
+	} else if (0 == strncmp(opt, "m6_dsi_mipitx_lane_group_probe:",
+				sizeof("m6_dsi_mipitx_lane_group_probe:") - 1)) {
+		const char *p = opt + sizeof("m6_dsi_mipitx_lane_group_probe:") - 1;
+		char group[16];
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+		size_t i = 0;
+
+		while (i + 1 < sizeof(group) && *p &&
+		       *p != ':' && *p != '\n' && *p != '\r' &&
+		       *p != ' ' && *p != '\t') {
+			group[i] = *p;
+			i++;
+			p++;
+		}
+		group[i] = '\0';
+		if (!group[0] || *p != ':') {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		ret = sscanf(p + 1, "%i:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_mipitx_lane_group_probe(group, value, hold_ms,
+					       restore, sample_mux);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI mipitx_lane_group_probe command: group=%s value=%u hold=%u restore=%u mux=%u\n",
+			group, value, hold_ms, restore ? 1 : 0, sample_mux);
+	} else if (0 == strncmp(opt, "m6_dsi_mipitx_phy_sel_probe:",
+				sizeof("m6_dsi_mipitx_phy_sel_probe:") - 1)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+
+		ret = sscanf(opt, "m6_dsi_mipitx_phy_sel_probe:%i:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_mipitx_phy_sel_probe(value, hold_ms, restore, sample_mux);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI mipitx_phy_sel_probe command: value=0x%x hold=%u restore=%u mux=%u\n",
+			value, hold_ms, restore ? 1 : 0, sample_mux);
+	} else if (0 == strncmp(opt, "m6_dsi_mipitx_plltop_probe:",
+				sizeof("m6_dsi_mipitx_plltop_probe:") - 1)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+		unsigned int shift = 8;
+
+		ret = sscanf(opt, "m6_dsi_mipitx_plltop_probe:%i:%u:%u:%u:%u\n",
+			     &value_arg, &hold_ms, &restore, &sample_mux,
+			     &shift);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		primary_display_manual_lock();
+		dsi_m6_mipitx_plltop_probe(value, hold_ms, restore, sample_mux,
+					   shift);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI mipitx_plltop_probe command: value=%u hold=%u restore=%u mux=%u shift=%u\n",
+			value, hold_ms, restore ? 1 : 0, sample_mux, shift);
+	} else if (0 == strncmp(opt, "m6_dsi_wrtrace_dump",
+				sizeof("m6_dsi_wrtrace_dump") - 1)) {
+		const unsigned int prefix = sizeof("m6_dsi_wrtrace_dump") - 1;
+		unsigned int limit = 256;
+
+		if (opt[prefix] == ':') {
+			ret = kstrtouint(opt + prefix + 1, 0, &limit);
+			if (ret) {
+				pr_err("error to parse cmd %s ret=%d\n",
+				       opt, ret);
+				return;
+			}
+		}
+		dsi_m6_wrtrace_dump(limit);
+		DISPERR("M6 DSI wrtrace dump command: limit=%u\n", limit);
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_wrtrace_reset",
+				sizeof("m6_dsi_wrtrace_reset") - 1)) {
+		const unsigned int prefix = sizeof("m6_dsi_wrtrace_reset") - 1;
+		unsigned int enable = 1;
+
+		if (opt[prefix] == ':') {
+			ret = kstrtouint(opt + prefix + 1, 0, &enable);
+			if (ret) {
+				pr_err("error to parse cmd %s ret=%d\n",
+				       opt, ret);
+				return;
+			}
+		}
+		dsi_m6_wrtrace_reset(enable);
+		DISPERR("M6 DSI wrtrace reset command: enable=%u\n",
+			enable ? 1 : 0);
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_wrtrace_enable:",
+				sizeof("m6_dsi_wrtrace_enable:") - 1)) {
+		unsigned int enable = 0;
+
+		ret = kstrtouint(opt + sizeof("m6_dsi_wrtrace_enable:") - 1,
+				 0, &enable);
+		if (ret) {
+			pr_err("error to parse cmd %s ret=%d\n", opt, ret);
+			return;
+		}
+		dsi_m6_wrtrace_enable(enable);
+		DISPERR("M6 DSI wrtrace enable command: enable=%u\n",
+			enable ? 1 : 0);
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_hsa_wc:", 14)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+
+		ret = sscanf(opt, "m6_dsi_hsa_wc:%i:%u\n",
+			     &value_arg, &hold_ms);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+
+		primary_display_manual_lock();
+		dsi_m6_force_hsa_wc(value, hold_ms);
+		primary_display_manual_unlock();
+		DISPMSG("m6 dsi hsa wc: value=0x%08x hold=%u\n",
+			value, hold_ms);
+	} else if (0 == strncmp(opt, "m6_dsi_vm_cmd_probe:",
+				sizeof("m6_dsi_vm_cmd_probe:") - 1)) {
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+		unsigned int restore = 1;
+		unsigned int sample_mux = 0;
+
+		ret = sscanf(opt, "m6_dsi_vm_cmd_probe:%x:%u:%u:%u\n",
+			     &value, &hold_ms, &restore, &sample_mux);
+		if (ret < 1) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		primary_display_manual_lock();
+		dsi_m6_force_vm_cmd(value, hold_ms, restore, sample_mux);
+		primary_display_manual_unlock();
+		DISPERR("M6 DSI vm_cmd_probe command: value=0x%x hold=%u restore=%u mux=%u\n",
+			value, hold_ms, restore ? 1 : 0, sample_mux);
 	} else if (0 == strncmp(opt, "bypass_blank:", 13)) {
 		char *p = (char *)opt + 13;
 		unsigned int blank;
@@ -585,6 +1108,175 @@ void mtkfb_process_dbg_opt(const char *opt)
 		return;
 	} else if (0 == strncmp(opt, "resume", 6)) {
 		primary_display_resume();
+	} else if (0 == strncmp(opt, "m6_lcm_reinit", 13)) {
+		char *p = (char *)opt + 13;
+		unsigned int force_power = 1;
+
+		if (*p == ':') {
+			ret = kstrtouint(p + 1, 0, &force_power);
+			if (ret) {
+				pr_err("error to parse cmd %s\n", opt);
+				return;
+			}
+		}
+		DISPERR("M6 LCM debug reinit command: force=%u\n", force_power);
+		primary_display_m6_lcm_reinit(force_power);
+		return;
+	} else if (0 == strncmp(opt, "m6_lcm_page5_2a:", 16)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+
+		ret = sscanf(opt, "m6_lcm_page5_2a:%i:%u\n",
+			     &value_arg, &hold_ms);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		DISPERR("M6 LCM page5_2a command: value=0x%x hold=%u\n",
+			value, hold_ms);
+		primary_display_m6_lcm_page5_2a(value, hold_ms);
+		return;
+	} else if (0 == strncmp(opt, "m6_lcm_mode_ctrl:", 17)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+
+		ret = sscanf(opt, "m6_lcm_mode_ctrl:%i:%u\n",
+			     &value_arg, &hold_ms);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		DISPERR("M6 LCM mode_ctrl command: value=0x%x hold=%u\n",
+			value, hold_ms);
+		primary_display_m6_lcm_mode_ctrl(value, hold_ms);
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_c2v_switch:", 18)) {
+		int value_arg = 0;
+		unsigned int value = 0;
+		unsigned int hold_ms = 1000;
+
+		ret = sscanf(opt, "m6_dsi_c2v_switch:%i:%u\n",
+			     &value_arg, &hold_ms);
+		if (ret < 1 || value_arg < 0) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		value = (unsigned int)value_arg;
+		DISPERR("M6 DSI c2v_switch command: value=0x%x hold=%u\n",
+			value, hold_ms);
+		primary_display_m6_dsi_c2v_switch(value, hold_ms);
+		return;
+	} else if (0 == strncmp(opt, "m6_display_truth_window", 23)) {
+		const char *tag = "manual";
+
+		if (opt[23] == ':')
+			tag = opt + 24;
+		DISPERR("M6 DISPLAY truth command: tag=%s\n", tag);
+		primary_display_m6_truth_window(tag);
+		return;
+	} else if (0 == strncmp(opt, "m6_display_route_probe", 22)) {
+		const char *tag = "trigger";
+		unsigned int action = 0x1;
+
+		if (opt[22] == ':')
+			tag = opt + 23;
+		if (!strncmp(tag, "dump", 4)) {
+			action = 0x0;
+		} else if (!strncmp(tag, "trigger", 7)) {
+			action = 0x1;
+		} else if (!strncmp(tag, "rekick", 6)) {
+			action = 0x3;
+		} else {
+			ret = kstrtouint((char *)tag, 0, &action);
+			if (ret) {
+				pr_err("error to parse cmd %s\n", opt);
+				return;
+			}
+		}
+		DISPERR("M6 DISPLAY route probe command: tag=%s action=0x%x\n",
+			tag, action);
+		primary_display_m6_route_probe(tag, action);
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_dcs_status_force",
+				sizeof("m6_dsi_dcs_status_force") - 1)) {
+		const unsigned int prefix = sizeof("m6_dsi_dcs_status_force") - 1;
+		const char *tag = "force";
+		char safe_tag[32];
+
+		if (opt[prefix] == ':')
+			tag = opt + prefix + 1;
+		disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+		DISPERR("M6 DSI DCS status force command: tag=%s\n", safe_tag);
+		primary_display_manual_lock();
+		dsi_m6_dump_dcs_status_force(safe_tag);
+		primary_display_manual_unlock();
+		return;
+	} else if (0 == strncmp(opt, "m6_dsi_dcs_status", 17)) {
+		const char *tag = "public";
+		char safe_tag[32];
+
+		if (opt[17] == ':')
+			tag = opt + 18;
+		if (!strncmp(tag, "stock_pages", 11)) {
+			DISPERR("M6 DSI DCS status command: stock_pages\n");
+			primary_display_m6_lcm_stock_pages();
+		} else {
+			disp_m6_copy_tag(safe_tag, sizeof(safe_tag), tag);
+			DISPERR("M6 DSI DCS status command: tag=%s\n", safe_tag);
+			primary_display_manual_lock();
+			dsi_m6_dump_dcs_status(safe_tag);
+			primary_display_manual_unlock();
+		}
+		return;
+	} else if (0 == strncmp(opt, "m6_ovl_greq_profile:", 20)) {
+		char *p = (char *)opt + 20;
+		unsigned int profile;
+
+		ret = kstrtouint(p, 0, &profile);
+		if (ret) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		primary_display_manual_lock();
+		ret = ovl_m6_set_greq_profile(profile);
+		primary_display_manual_unlock();
+		DISPERR("M6 OVL greq profile command: profile=%u ret=%d\n",
+			profile, ret);
+		return;
+	} else if (0 == strncmp(opt, "m6_ovl_bounds_profile:", 22)) {
+		char *p = (char *)opt + 22;
+		unsigned int profile;
+
+		ret = kstrtouint(p, 0, &profile);
+		if (ret) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		primary_display_manual_lock();
+		ret = ovl_m6_set_bounds_profile(profile);
+		primary_display_manual_unlock();
+		DISPERR("M6 OVL bounds profile command: profile=%u ret=%d\n",
+			profile, ret);
+		return;
+	} else if (0 == strncmp(opt, "m6_ovl_stale_cpu_clear:", 23)) {
+		char *p = (char *)opt + 23;
+		unsigned int enable;
+
+		ret = kstrtouint(p, 0, &enable);
+		if (ret) {
+			pr_err("error to parse cmd %s\n", opt);
+			return;
+		}
+		primary_display_manual_lock();
+		ret = ovl_m6_set_stale_cpu_clear(enable);
+		primary_display_manual_unlock();
+		DISPERR("M6 OVL stale cpu clear command: enable=%u ret=%d\n",
+			!!enable, ret);
+		return;
 	} else if (0 == strncmp(opt, "ata", 3)) {
 		mtkfb_fm_auto_test();
 		return;
@@ -978,4 +1670,3 @@ void sub_debug_deinit(void)
 	debugfs_remove(lowpowermode_debugfs);
 	debugfs_remove(kickdump_debugfs);
 }
-

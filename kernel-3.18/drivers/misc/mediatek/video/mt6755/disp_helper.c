@@ -140,14 +140,14 @@ struct disp_help_info help_info[OPT_COUNT] = {
 	{ DISP_OPT_SWITCH_DST_MODE, 0, "DISP_OPT_SWITCH_DST_MODE" },
 	{ DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 1, "DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE" },
 	{ DISP_OPT_SCREEN_CAP_FROM_DITHER, 0, "DISP_OPT_SCREEN_CAP_FROM_DITHER" },
-	{ DISP_OPT_BYPASS_OVL, 1, "DISP_OPT_BYPASS_OVL" },
+	{ DISP_OPT_BYPASS_OVL, 0, "DISP_OPT_BYPASS_OVL" },
 	{ DISP_OPT_FPS_CALC_WND, 10, "DISP_OPT_FPS_CALC_WND" },
-	{ DISP_OPT_SMART_OVL, 0, "DISP_OPT_SMART_OVL" },
+	{ DISP_OPT_SMART_OVL, 1, "DISP_OPT_SMART_OVL" },
 	{ DISP_OPT_DYNAMIC_DEBUG, 0, "DISP_OPT_DYNAMIC_DEBUG" },
 	{ DISP_OPT_SHOW_VISUAL_DEBUG_INFO, 0, "DISP_OPT_SHOW_VISUAL_DEBUG_INFO" },
 	{ DISP_OPT_RDMA_UNDERFLOW_AEE, 0, "DISP_OPT_RDMA_UNDERFLOW_AEE" },
 	{ DISP_OPT_GMO_OPTIMIZE, 0, "DISP_OPT_GMO_OPTIMIZE" },
-	{ DISP_OPT_CV_BYSUSPEND, 1, "DISP_OPT_CV_BYSUSPEND" },
+	{ DISP_OPT_CV_BYSUSPEND, 0, "DISP_OPT_CV_BYSUSPEND" },
 	{ DISP_OPT_DETECT_RECOVERY, 0, "DISP_OPT_DETECT_RECOVERY" },
 	{ DISP_OPT_DELAYED_TRIGGER, 0, "DISP_OPT_DELAYED_TRIGGER" },
 };
@@ -375,9 +375,8 @@ void disp_helper_option_init(void)
 	/* warm reset ovl before each trigger for cmd mode */
 	disp_helper_set_option(DISP_OPT_OVL_WARM_RESET, 0);
 
-	/* ===================Begin: lowpower option setting==================== */
+	/* M6 bring-up: restore stock-like visible overlay path; no fake events or fence releases. */
 	disp_helper_set_option(DISP_OPT_SODI_SUPPORT, 0);
-	DISPMSG("Build Station: M6 bring-up disables SODI/idle before display path settles\n");
 	disp_helper_set_option(DISP_OPT_IDLE_MGR, 0);
 
 	/* 1. vdo mode + screen idle(need idlemgr) */
@@ -404,16 +403,17 @@ void disp_helper_option_init(void)
 	/* use RGB565 format for decouple mode intermediate buffer */
 	disp_helper_set_option(DISP_OPT_DECOUPLE_MODE_USE_RGB565, 0);
 
-	disp_helper_set_option(DISP_OPT_BYPASS_PQ, 0);
+	/* M6 ISOLATION: relay PQ while PQ block counters stall before scanout. */
+	disp_helper_set_option(DISP_OPT_BYPASS_PQ, 1);
 	disp_helper_set_option(DISP_OPT_MUTEX_EOF_EN_FOR_CMD_MODE, 1);
 	disp_helper_set_option(DISP_OPT_ESD_CHECK_RECOVERY, 0);
 	disp_helper_set_option(DISP_OPT_ESD_CHECK_SWITCH, 0);
 
-	disp_helper_set_option(DISP_OPT_BYPASS_OVL, 1);
+	disp_helper_set_option(DISP_OPT_BYPASS_OVL, 0);
 	disp_helper_set_option(DISP_OPT_FPS_CALC_WND, 10);
-	disp_helper_set_option(DISP_OPT_SMART_OVL, 0);
+	disp_helper_set_option(DISP_OPT_SMART_OVL, 1);
 	disp_helper_set_option(DISP_OPT_GMO_OPTIMIZE, 0);
-	disp_helper_set_option(DISP_OPT_CV_BYSUSPEND, 1);
+	disp_helper_set_option(DISP_OPT_CV_BYSUSPEND, 0);
 	disp_helper_set_option(DISP_OPT_DYNAMIC_DEBUG, 0);
 	disp_helper_set_option(DISP_OPT_DELAYED_TRIGGER, 0);
 	/*Detect Hang thread Option*/

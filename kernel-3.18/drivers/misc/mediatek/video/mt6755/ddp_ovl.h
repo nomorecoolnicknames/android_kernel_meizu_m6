@@ -24,6 +24,53 @@
 #define OVL_NUM					(4)
 #define PRIMARY_THREE_OVL_CASCADE
 
+struct m6_ovl_layer_snapshot {
+	unsigned int valid;
+	unsigned int enabled;
+	unsigned int global_layer;
+	unsigned int source;
+	unsigned int fmt;
+	unsigned int bpp;
+	unsigned int security;
+	unsigned int key_en;
+	unsigned int key;
+	unsigned int aen;
+	unsigned int alpha;
+	unsigned int larc;
+	unsigned int con;
+	unsigned int clr;
+	unsigned int src_x;
+	unsigned int src_y;
+	unsigned int src_w;
+	unsigned int src_h;
+	unsigned int src_pitch;
+	unsigned int dst_x;
+	unsigned int dst_y;
+	unsigned int dst_w;
+	unsigned int dst_h;
+	unsigned int hw_dst_h;
+	unsigned int bounds_profile;
+	unsigned long addr;
+	unsigned long final_addr;
+	unsigned long visible_last;
+	unsigned long pitch_end;
+};
+
+struct m6_ovl_config_snapshot {
+	unsigned int seq;
+	unsigned int enabled_layers;
+	unsigned int first_global_layer;
+	unsigned int scanned_before;
+	unsigned int scanned_after;
+	unsigned int dst_w;
+	unsigned int dst_h;
+	unsigned int has_sec_layer;
+	unsigned int cmdq;
+	unsigned int direct;
+	unsigned int bypass_pq;
+	struct m6_ovl_layer_snapshot layer[4];
+};
+
 /* start overlay module */
 int ovl_start(DISP_MODULE_ENUM module, void *handle);
 
@@ -54,5 +101,9 @@ unsigned long ovl_to_index(DISP_MODULE_ENUM module);
 
 void ovl_get_info(DISP_MODULE_ENUM module, void *data);
 unsigned int ddp_ovl_get_cur_addr(bool rdma_mode, int layerid);
+int ovl_m6_set_greq_profile(unsigned int profile);
+int ovl_m6_set_bounds_profile(unsigned int profile);
+int ovl_m6_set_stale_cpu_clear(unsigned int enable);
+int ovl_m6_get_last_config_snapshot(struct m6_ovl_config_snapshot *out);
 
 #endif

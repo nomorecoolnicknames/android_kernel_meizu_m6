@@ -91,6 +91,26 @@ static int debug_enable_led = 1;
 
 #define MT_LED_INTERNAL_LEVEL_BIT_CNT 10
 
+static void m6_led_drv_log_backlight_path(const char *phase,
+					  struct cust_mt65xx_led *cust,
+					  int raw_level, int mapped_level)
+{
+	static unsigned int log_count;
+
+	if (!cust || !cust->name || strcmp(cust->name, "lcd-backlight"))
+		return;
+
+	if (log_count >= 48 && raw_level != 0 && raw_level != LED_FULL &&
+	    mapped_level != 0 && mapped_level != LED_FULL &&
+	    mapped_level != ((1 << MT_LED_INTERNAL_LEVEL_BIT_CNT) - 1))
+		return;
+
+	log_count++;
+	pr_info("[LED_DRV]M6 LED drv path[%s] name=%s mode=%d data=0x%lx raw=%d mapped=%d bl_div=%u count=%u\n",
+		phase, cust->name, cust->mode, cust->data, raw_level,
+		mapped_level, bl_div, log_count);
+}
+
 /******************************************************************************
    for DISP backlight High resolution
 ******************************************************************************/
@@ -208,6 +228,8 @@ static int brightness_set_pmic_nolock(enum mt65xx_led_pmic pmic_type, u32 level,
 
 static int mt65xx_led_set_cust(struct cust_mt65xx_led *cust, int level)
 {
+	int raw_level = level;
+
 #ifdef CONTROL_BL_TEMPERATURE
 	mutex_lock(&bl_level_limit_mutex);
 	current_level = level;
@@ -223,6 +245,7 @@ static int mt65xx_led_set_cust(struct cust_mt65xx_led *cust, int level)
 	}
 	mutex_unlock(&bl_level_limit_mutex);
 #endif
+	m6_led_drv_log_backlight_path("drv-cust", cust, raw_level, level);
 #ifdef LED_INCREASE_LED_LEVEL_MTKPATCH
 	if (MT65XX_LED_MODE_CUST_BLS_PWM == cust->mode) {
 		mt_mt65xx_led_set_cust(cust,
@@ -356,6 +379,8 @@ int mt65xx_leds_brightness_set(enum mt65xx_led_type type,
 		level = LED_FULL;
 	else if (level < 0)
 		level = 0;
+	m6_led_drv_log_backlight_path("drv-leds-set",
+		&cust_led_list[type], level, level);
 
 #ifdef CONFIG_BACKLIGHT_SUPPORT_LP8557
 	retval = gpio_request(I2C_SET_FOR_BACKLIGHT, "i2c_set_for_backlight");
@@ -400,6 +425,8 @@ EXPORT_SYMBOL(mt65xx_leds_brightness_set);
 int backlight_brightness_set(int level)
 {
 	struct cust_mt65xx_led *cust_led_list = mt_get_cust_led_list();
+	int raw_level = level;
+	int mapped_level;
 
 	if (level > ((1 << MT_LED_INTERNAL_LEVEL_BIT_CNT) - 1))
 		level = ((1 << MT_LED_INTERNAL_LEVEL_BIT_CNT) - 1);
@@ -425,15 +452,21 @@ int backlight_brightness_set(int level)
 		}
 		mutex_unlock(&bl_level_limit_mutex);
 #endif
+		m6_led_drv_log_backlight_path("drv-backlight-bls",
+			&cust_led_list[MT65XX_LED_TYPE_LCD], raw_level,
+			level);
 
 		return
 		    mt_mt65xx_led_set_cust(&cust_led_list[MT65XX_LED_TYPE_LCD],
 					   level);
 	} else {
+		mapped_level =
+		    (level >> (MT_LED_INTERNAL_LEVEL_BIT_CNT - 8));
+		m6_led_drv_log_backlight_path("drv-backlight-set",
+			&cust_led_list[MT65XX_LED_TYPE_LCD], raw_level,
+			mapped_level);
 		return mt65xx_led_set_cust(&cust_led_list[MT65XX_LED_TYPE_LCD],
-					   (level >>
-					    (MT_LED_INTERNAL_LEVEL_BIT_CNT -
-					     8)));
+					   mapped_level);
 	}
 
 }

@@ -127,7 +127,7 @@ static int Audio_Wcn_Cmb_Set(struct snd_kcontrol *kcontrol,
 static const struct snd_kcontrol_new Audio_snd_fm_i2s_controls[] = {
 	SOC_SINGLE_EXT("Audio FM I2S Volume", SND_SOC_NOPM, 0, 0x80000, 0,
 		Audio_fm_i2s_Volume_Get, Audio_fm_i2s_Volume_Set),
-	SOC_ENUM_EXT("cmb stub Audio Control", wcn_stub_audio_ctr_Enum[0],
+	SOC_ENUM_EXT("FM I2S cmb stub Audio Control", wcn_stub_audio_ctr_Enum[0],
 	Audio_Wcn_Cmb_Get, Audio_Wcn_Cmb_Set),
 };
 
@@ -230,33 +230,36 @@ static int mtk_pcm_fm_i2s_close(struct snd_pcm_substream *substream)
 
 	pr_warn("%s rate = %d\n", __func__, runtime->rate);
 
-	/* mtk_wcn_cmb_stub_audio_ctrl((CMB_STUB_AIF_X)CMB_STUB_AIF_0);//temp mark for early porting */
+	if (mPrepareDone) {
+		/* mtk_wcn_cmb_stub_audio_ctrl((CMB_STUB_AIF_X)CMB_STUB_AIF_0);//temp mark for early porting */
 
-	SetMemoryPathEnable(Soc_Aud_Digital_Block_I2S_IN_2, false);
-	if (GetMemoryPathEnable(Soc_Aud_Digital_Block_I2S_IN_2) == false) {
-		SetI2SASRCEnable(false);
-		SetI2SASRCConfig(false, 0); /* Setting to bypass ASRC */
-		Afe_Set_Reg(AFE_I2S_CON, 0x0, 0x1);
+		SetMemoryPathEnable(Soc_Aud_Digital_Block_I2S_IN_2, false);
+		if (GetMemoryPathEnable(Soc_Aud_Digital_Block_I2S_IN_2) == false) {
+			SetI2SASRCEnable(false);
+			SetI2SASRCConfig(false, 0); /* Setting to bypass ASRC */
+			Afe_Set_Reg(AFE_I2S_CON, 0x0, 0x1);
+		}
+
+		SetMemoryPathEnable(Soc_Aud_Digital_Block_I2S_OUT_DAC, false);
+		if (GetI2SDacEnable() == false) {
+			SetI2SADDAEnable(false);
+			SetI2SDacEnable(false);
+		}
+
+		/* interconnection setting */
+		SetConnection(Soc_Aud_InterCon_DisConnect, Soc_Aud_InterConnectionInput_I00,
+			      Soc_Aud_InterConnectionOutput_O13);
+		SetConnection(Soc_Aud_InterCon_DisConnect, Soc_Aud_InterConnectionInput_I01,
+			      Soc_Aud_InterConnectionOutput_O14);
+		SetConnection(Soc_Aud_InterCon_DisConnect, Soc_Aud_InterConnectionInput_I10,
+			      Soc_Aud_InterConnectionOutput_O03);
+		SetConnection(Soc_Aud_InterCon_DisConnect, Soc_Aud_InterConnectionInput_I11,
+			      Soc_Aud_InterConnectionOutput_O04);
+
+		EnableAfe(false);
+	} else {
+		pr_warn_once("mtk_pcm_fm_i2s_close before prepare; skip hardware disable\n");
 	}
-
-	SetMemoryPathEnable(Soc_Aud_Digital_Block_I2S_OUT_DAC, false);
-	if (GetI2SDacEnable() == false) {
-		SetI2SADDAEnable(false);
-		SetI2SDacEnable(false);
-	}
-
-	/* interconnection setting */
-	SetConnection(Soc_Aud_InterCon_DisConnect, Soc_Aud_InterConnectionInput_I00,
-		      Soc_Aud_InterConnectionOutput_O13);
-	SetConnection(Soc_Aud_InterCon_DisConnect, Soc_Aud_InterConnectionInput_I01,
-		      Soc_Aud_InterConnectionOutput_O14);
-	SetConnection(Soc_Aud_InterCon_DisConnect, Soc_Aud_InterConnectionInput_I10,
-		      Soc_Aud_InterConnectionOutput_O03);
-	SetConnection(Soc_Aud_InterCon_DisConnect, Soc_Aud_InterConnectionInput_I11,
-		      Soc_Aud_InterConnectionOutput_O04);
-
-
-	EnableAfe(false);
 
 	AudDrv_I2S_Clk_Off();
 	AudDrv_Clk_Off();

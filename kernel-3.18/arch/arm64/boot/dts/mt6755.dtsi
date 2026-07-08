@@ -1671,7 +1671,11 @@
 					<GIC_SPI 0 IRQ_TYPE_LEVEL_LOW>; /*MIPITX0*/
 
 			   clocks = <&mmsys MM_DISP0_SMI_COMMON>,
+					<&mmsys MM_DISP0_SMI_COMMON_M4U>,
+					<&mmsys MM_DISP0_SMI_COMMON_DISPSYS>,
 					<&mmsys MM_DISP0_SMI_LARB0>,
+					<&mmsys MM_DISP0_SMI_LARB0_M4U>,
+					<&mmsys MM_DISP0_SMI_LARB0_DISPSYS>,
 					<&mmsys MM_DISP0_DISP_OVL0>,
 					<&mmsys MM_DISP0_DISP_OVL1>,
 					<&mmsys MM_DISP0_DISP_RDMA0>,
@@ -1708,7 +1712,11 @@
 					<&topckgen TOP_SYSPLL2_D2>;
 
 		clock-names = "DISP0_SMI_COMMON",
+					"DISP0_SMI_COMMON_M4U",
+					"DISP0_SMI_COMMON_DISPSYS",
 					"DISP0_SMI_LARB0",
+					"DISP0_SMI_LARB0_M4U",
+					"DISP0_SMI_LARB0_DISPSYS",
 					"DISP0_DISP_OVL0",
 					"DISP0_DISP_OVL1",
 					"DISP0_DISP_RDMA0",
@@ -3021,7 +3029,7 @@
 
 		touch: touch {
 			compatible = "mediatek,mt6755-touch";
-			/* VTOUCH-supply = <&mt_pmic_vgp1_ldo_reg>; */
+			vtouch-supply = <&mt_pmic_vtouch_ldo_reg>;
 		};
 
 		psci {
@@ -3119,11 +3127,10 @@
 		compatible = "mediatek, dsi_te-eint";
 		status = "disabled";
 	};
-/*
-	goodix_fp: fingerprint@ {
+	goodix_fp: goodix_fp {
 		compatible = "mediatek,goodix-fp";
+		status = "disabled";
 	};
-*/
 	eint_fingerprint:eint_fingerprint{
 		 compatible = "mediatek, eint_fingerprint-eint";
 	};

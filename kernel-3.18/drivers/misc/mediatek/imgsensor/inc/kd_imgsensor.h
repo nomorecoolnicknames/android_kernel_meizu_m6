@@ -148,6 +148,7 @@ NSFeature :  : RAWSensorInfo < _id >  :  : getFlickerPara \
 #define OV9726MIPI_SENSOR_ID                    0x9726
 #define OV8865_SENSOR_ID                        0x8865
 #define OV8856_SENSOR_ID                        0x8856
+#define OV8856JSL_SENSOR_ID                     0x885A
 #define OV5695_SENSOR_ID                        0x5695
 #define OV8858_SENSOR_ID                        0x8858
 #define OV8858S_SENSOR_ID                      (0x8858+1)
@@ -301,6 +302,7 @@ NSFeature :  : RAWSensorInfo < _id >  :  : getFlickerPara \
 #define SENSOR_DRVNAME_IMX338_MIPI_RAW          "imx338mipiraw"
 #define SENSOR_DRVNAME_IMX318_MIPI_RAW          "imx318mipiraw"
 #define SENSOR_DRVNAME_IMX377_MIPI_RAW          "imx377mipiraw"
+#define SENSOR_DRVNAME_IMX278_TRULY_MIPI_RAW    "imx278trulymipiraw"
 #define SENSOR_DRVNAME_IMX278_MIPI_RAW          "imx278mipiraw"
 #define SENSOR_DRVNAME_IMX258_MIPI_RAW          "imx258mipiraw"
 #define SENSOR_DRVNAME_IMX258_MIPI_MONO         "imx258mipimono"
@@ -330,6 +332,8 @@ NSFeature :  : RAWSensorInfo < _id >  :  : getFlickerPara \
 #define SENSOR_DRVNAME_0V9726_RAW               "ov9726raw"
 #define SENSOR_DRVNAME_OV9726_MIPI_RAW          "ov9726mipiraw"
 #define SENSOR_DRVNAME_OV8865_MIPI_RAW          "ov8865mipiraw"
+#define SENSOR_DRVNAME_OV8856_MIPI_RAW          "ov8856mipiraw"
+#define SENSOR_DRVNAME_OV8856JSL_MIPI_RAW       "ov8856jslmipiraw"
 #define SENSOR_DRVNAME_OV8858_MIPI_RAW          "ov8858mipiraw"
 #define SENSOR_DRVNAME_OV8858S_MIPI_RAW         "ov8858smipiraw"
 #define SENSOR_DRVNAME_OV8830_RAW               "ov8830"

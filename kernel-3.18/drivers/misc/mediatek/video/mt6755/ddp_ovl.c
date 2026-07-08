@@ -22,15 +22,18 @@
 #endif
 #include "m4u.h"
 #include <linux/delay.h>
+#include <linux/errno.h>
 #include "ddp_info.h"
 #include "ddp_hal.h"
 #include "ddp_reg.h"
 #include "ddp_ovl.h"
 #include "primary_display.h"
+#include "disp_helper.h"
 
 #define OVL_REG_BACK_MAX          (40)
 #define OVL_LAYER_OFFSET        (0x20)
 #define OVL_RDMA_DEBUG_OFFSET   (0x4)
+#define M6_OVL_CONST_WHITE_MAGIC_KEY 0x006d3657
 
 enum OVL_COLOR_SPACE {
 	OVL_COLOR_SPACE_RGB = 0,
@@ -49,6 +52,14 @@ static DISP_MODULE_ENUM ovl_index_module[OVL_NUM] = {
 static unsigned int reg_back_cnt[OVL_NUM];
 static struct OVL_REG reg_back[OVL_NUM][OVL_REG_BACK_MAX];
 static unsigned int gOVLBackground = 0xFF000000;
+static unsigned int m6_ovl_greq_profile_id;
+static unsigned int m6_ovl_greq_profile_apply_count;
+static unsigned int m6_ovl_bounds_profile_id = 1;
+static unsigned int m6_ovl_bounds_profile_apply_count;
+static unsigned int m6_ovl_stale_cpu_clear_enabled;
+static struct m6_ovl_config_snapshot m6_ovl0_last_config_snapshot;
+static unsigned int m6_ovl0_last_config_seq;
+static unsigned int m6_ovl_reset_diag_count;
 
 static inline int is_module_ovl(DISP_MODULE_ENUM module)
 {
@@ -58,6 +69,22 @@ static inline int is_module_ovl(DISP_MODULE_ENUM module)
 		return 1;
 	else
 		return 0;
+}
+
+static const char *m6_ovl_module_name(DISP_MODULE_ENUM module)
+{
+	switch (module) {
+	case DISP_MODULE_OVL0:
+		return "OVL0";
+	case DISP_MODULE_OVL1:
+		return "OVL1";
+	case DISP_MODULE_OVL0_2L:
+		return "OVL0_2L";
+	case DISP_MODULE_OVL1_2L:
+		return "OVL1_2L";
+	default:
+		return "OVL?";
+	}
 }
 
 unsigned long ovl_base_addr(DISP_MODULE_ENUM module)
@@ -173,6 +200,66 @@ static inline DISP_MODULE_ENUM ovl_index_to_module(int index)
 	return ovl_index_module[index];
 }
 
+static const char *m6_ovl_fsm_name(unsigned int fsm)
+{
+	switch (fsm) {
+	case 0x1:
+		return "idle";
+	case 0x2:
+		return "wait_SOF";
+	case 0x4:
+		return "prepare";
+	case 0x8:
+		return "reg_update";
+	case 0x10:
+		return "eng_clr";
+	case 0x20:
+		return "eng_act";
+	case 0x40:
+		return "h_wait_w_rst";
+	case 0x80:
+		return "s_wait_w_rst";
+	case 0x100:
+		return "h_w_rst";
+	case 0x200:
+		return "s_w_rst";
+	default:
+		return "unknown";
+	}
+}
+
+static void m6_ovl_reset_diag(const char *tag, DISP_MODULE_ENUM module,
+			      void *handle, unsigned int ret)
+{
+	unsigned long ovl_base = ovl_base_addr(module);
+	unsigned int flow;
+	unsigned int idx;
+
+	if (module != DISP_MODULE_OVL0 || m6_ovl_reset_diag_count >= 96)
+		return;
+
+	idx = ++m6_ovl_reset_diag_count;
+	flow = DISP_REG_GET(ovl_base + DISP_REG_OVL_FLOW_CTRL_DBG);
+	DISPERR("M6 OVL reset[%u][%s]: module=%s handle=%p ret=%u RST=0x%x EN=0x%x SRC=0x%x INT=0x%x/0x%x FLOW=0x%x fsm=0x%x/%s rst=%u trig=%u hwrst_done=%u swrst_done=%u running=%u clr=%u VALID=0x%x READY=0x%x RDMA=0x%x IN=%u/%u OUT=%u/%u\n",
+		idx, tag, ddp_get_module_name(module), handle, ret,
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_RST),
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_EN),
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_SRC_CON),
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_INTEN),
+		DISP_REG_GET(ovl_base + DISP_REG_OVL_INTSTA), flow,
+		flow & 0x3ff, m6_ovl_fsm_name(flow & 0x3ff),
+		(flow >> 20) & 0x1, (flow >> 21) & 0x1,
+		(flow >> 23) & 0x1, (flow >> 24) & 0x1,
+		(flow >> 27) & 0x1, (flow >> 28) & 0x1,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT));
+}
+
 int ovl_start(DISP_MODULE_ENUM module, void *handle)
 {
 	unsigned long ovl_base = ovl_base_addr(module);
@@ -215,8 +302,11 @@ int ovl_reset(DISP_MODULE_ENUM module, void *handle)
 	unsigned int delay_cnt = 0;
 	unsigned long ovl_base = ovl_base_addr(module);
 
+	m6_ovl_reset_diag("enter", module, handle, 0);
 	DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_RST, 0x1);
+	m6_ovl_reset_diag("asserted", module, handle, 0);
 	DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_RST, 0x0);
+	m6_ovl_reset_diag("deasserted", module, handle, 0);
 	/*only wait if not cmdq */
 	if (handle == NULL) {
 		while (!(DISP_REG_GET(ovl_base + DISP_REG_OVL_FLOW_CTRL_DBG) & OVL_IDLE)) {
@@ -229,6 +319,7 @@ int ovl_reset(DISP_MODULE_ENUM module, void *handle)
 			}
 		}
 	}
+	m6_ovl_reset_diag("exit", module, handle, ret);
 	return ret;
 }
 
@@ -279,6 +370,202 @@ int ovl_layer_switch(DISP_MODULE_ENUM module, unsigned layer, unsigned int en, v
 	return 0;
 }
 
+static void m6_ovl_diag_log_config(DISP_MODULE_ENUM module,
+		unsigned int local_layer,
+		const OVL_CONFIG_STRUCT * const cfg,
+		unsigned int bpp,
+		unsigned int adjusted_src_x,
+		unsigned int adjusted_dst_w,
+		unsigned int programmed_dst_h,
+		unsigned int byte_offset,
+		unsigned long final_addr,
+		unsigned int con_value,
+		unsigned int clr_value)
+{
+	static unsigned int m6_ovl_diag_count;
+	unsigned long visible_span = 0;
+	unsigned long visible_end = final_addr;
+	unsigned long pitch_span = 0;
+	unsigned long pitch_end = final_addr;
+	unsigned int idx;
+	unsigned int larc = REG_FLD_VAL_GET(L_CON_FLD_LARC, con_value);
+
+	if (!is_module_ovl(module) || m6_ovl_diag_count >= 72)
+		return;
+
+	if (programmed_dst_h && adjusted_dst_w && bpp)
+		visible_span = (programmed_dst_h - 1) * cfg->src_pitch + adjusted_dst_w * bpp;
+	if (visible_span)
+		visible_end = final_addr + visible_span - 1;
+	if (programmed_dst_h && cfg->src_pitch)
+		pitch_span = programmed_dst_h * cfg->src_pitch;
+	if (pitch_span)
+		pitch_end = final_addr + pitch_span;
+
+	idx = m6_ovl_diag_count++;
+	DISPERR("M6 OVL diag cfg[%u]: mod=%s L%u global=%u en=%u source=%u larc=%u fmt=%s/0x%x bpp=%u sec=%u alpha=%u/%u const=%d key=%u/0x%x con=0x%x clr=0x%x\n",
+		idx, m6_ovl_module_name(module), local_layer, cfg->layer,
+		cfg->layer_en, cfg->source, larc,
+		unified_color_fmt_name(cfg->fmt), cfg->fmt, bpp,
+		cfg->security, cfg->aen, cfg->alpha, cfg->const_bld,
+		cfg->keyEn, cfg->key, con_value, clr_value);
+	DISPERR("M6 OVL diag cfg[%u]: mod=%s addr=0x%lx vaddr=0x%lx final=0x%lx low=0x%lx byte_off=%u src_xy=%u/%u src_wh=%u/%u dst_xywh=%u/%u/%u/%u hw_h=%u pitch=%u adj_src_x=%u adj_dst_w=%u bounds=%u\n",
+		idx, m6_ovl_module_name(module), cfg->addr, cfg->vaddr,
+		final_addr, final_addr & 0xfff, byte_offset, cfg->src_x,
+		cfg->src_y, cfg->src_w, cfg->src_h, cfg->dst_x, cfg->dst_y,
+		cfg->dst_w, cfg->dst_h, programmed_dst_h, cfg->src_pitch,
+		adjusted_src_x, adjusted_dst_w, m6_ovl_bounds_profile_id);
+	DISPERR("M6 OVL diag end[%u]: mod=%s L%u final=0x%lx visible_span=0x%lx visible_last=0x%lx next=0x%lx pitch_span=0x%lx pitch_end=0x%lx fault_if_next=0x%lx\n",
+		idx, m6_ovl_module_name(module), local_layer, final_addr,
+		visible_span, visible_end, visible_end + 1, pitch_span,
+		pitch_end, pitch_end);
+}
+
+static bool m6_ovl_scan_diag_sample(unsigned int *count)
+{
+	unsigned int n = (*count)++;
+
+	return n < 24 || ((n & 0x3ff) == 0);
+}
+
+static bool m6_ovl_bounds_profile_active(DISP_MODULE_ENUM module,
+	const OVL_CONFIG_STRUCT * const cfg)
+{
+	return m6_ovl_bounds_profile_id == 1 &&
+		module == DISP_MODULE_OVL0 &&
+		disp_helper_get_option(DISP_OPT_BYPASS_PQ) &&
+		!primary_display_is_decouple_mode() &&
+		cfg->layer_en &&
+		cfg->source == OVL_LAYER_SOURCE_MEM &&
+		cfg->security == DISP_NORMAL_BUFFER &&
+		cfg->dst_h > 1;
+}
+
+static unsigned int m6_ovl_programmed_dst_h(DISP_MODULE_ENUM module,
+	const OVL_CONFIG_STRUCT * const cfg)
+{
+	if (m6_ovl_bounds_profile_active(module, cfg))
+		return cfg->dst_h - 1;
+	return cfg->dst_h;
+}
+
+static unsigned long m6_ovl_calc_final_addr(DISP_MODULE_ENUM module,
+	const OVL_CONFIG_STRUCT * const cfg, unsigned int programmed_dst_h,
+	unsigned int *bpp_out, unsigned long *visible_last, unsigned long *pitch_end)
+{
+	unsigned int bpp = ufmt_get_Bpp(cfg->fmt);
+	unsigned int src_x = cfg->src_x;
+	unsigned int dst_w = cfg->dst_w;
+	unsigned int offset;
+	unsigned long final_addr;
+	unsigned long visible_span = 0;
+	unsigned long pitch_span = 0;
+
+	if (cfg->fmt == UFMT_UYVY || cfg->fmt == UFMT_VYUY ||
+	    cfg->fmt == UFMT_YUYV || cfg->fmt == UFMT_YVYU) {
+		if (src_x % 2) {
+			src_x -= 1;
+			dst_w += 1;
+		}
+		if ((src_x + dst_w) % 2)
+			dst_w += 1;
+	}
+
+	offset = src_x * bpp + cfg->src_y * cfg->src_pitch;
+	final_addr = cfg->addr + offset;
+	if (programmed_dst_h && dst_w && bpp)
+		visible_span = (programmed_dst_h - 1) * cfg->src_pitch + dst_w * bpp;
+	if (programmed_dst_h && cfg->src_pitch)
+		pitch_span = programmed_dst_h * cfg->src_pitch;
+
+	if (bpp_out)
+		*bpp_out = bpp;
+	if (visible_last)
+		*visible_last = visible_span ? final_addr + visible_span - 1 : final_addr;
+	if (pitch_end)
+		*pitch_end = pitch_span ? final_addr + pitch_span : final_addr;
+	(void)module;
+	return final_addr;
+}
+
+static void m6_ovl_capture_last_config(DISP_MODULE_ENUM module,
+		disp_ddp_path_config *pConfig, void *handle,
+		unsigned int enabled_layers, unsigned int first_global_layer,
+		unsigned int scanned_before, unsigned int has_sec_layer)
+{
+	struct m6_ovl_config_snapshot snap = { 0 };
+	unsigned int local_layer;
+
+	if (module != DISP_MODULE_OVL0 ||
+	    !disp_helper_get_option(DISP_OPT_BYPASS_PQ) ||
+	    primary_display_is_decouple_mode())
+		return;
+
+	snap.seq = ++m6_ovl0_last_config_seq;
+	snap.enabled_layers = enabled_layers;
+	snap.first_global_layer = first_global_layer;
+	snap.scanned_before = scanned_before;
+	snap.scanned_after = pConfig->ovl_layer_scanned;
+	snap.dst_w = pConfig->dst_w;
+	snap.dst_h = pConfig->dst_h;
+	snap.has_sec_layer = has_sec_layer;
+	snap.cmdq = !!handle;
+	snap.direct = !primary_display_is_decouple_mode();
+	snap.bypass_pq = disp_helper_get_option(DISP_OPT_BYPASS_PQ);
+
+	for (local_layer = 0; local_layer < ovl_layer_num(module); local_layer++) {
+		unsigned int global_layer = first_global_layer + local_layer;
+		OVL_CONFIG_STRUCT *cfg;
+		struct m6_ovl_layer_snapshot *layer = &snap.layer[local_layer];
+
+		if (global_layer >= ARRAY_SIZE(pConfig->ovl_config))
+			break;
+
+		cfg = &pConfig->ovl_config[global_layer];
+		layer->valid = 1;
+		layer->enabled = cfg->layer_en;
+		layer->global_layer = global_layer;
+		layer->source = cfg->source;
+		layer->fmt = cfg->fmt;
+		layer->security = cfg->security;
+		layer->key_en = cfg->keyEn;
+		layer->key = cfg->key;
+		layer->aen = cfg->aen;
+		layer->alpha = cfg->alpha;
+		layer->src_x = cfg->src_x;
+		layer->src_y = cfg->src_y;
+		layer->src_w = cfg->src_w;
+		layer->src_h = cfg->src_h;
+		layer->src_pitch = cfg->src_pitch;
+		layer->dst_x = cfg->dst_x;
+		layer->dst_y = cfg->dst_y;
+		layer->dst_w = cfg->dst_w;
+		layer->dst_h = cfg->dst_h;
+		layer->hw_dst_h = m6_ovl_programmed_dst_h(module, cfg);
+		layer->bounds_profile = m6_ovl_bounds_profile_id;
+		layer->addr = cfg->addr;
+		layer->final_addr = m6_ovl_calc_final_addr(module, cfg,
+			layer->hw_dst_h, &layer->bpp, &layer->visible_last,
+			&layer->pitch_end);
+		layer->con = DISP_REG_GET(ovl_base_addr(module) +
+			DISP_REG_OVL_L0_CON + local_layer * OVL_LAYER_OFFSET);
+		layer->clr = DISP_REG_GET(ovl_base_addr(module) +
+			DISP_REG_OVL_L0_CLR + local_layer * 4);
+		layer->larc = REG_FLD_VAL_GET(L_CON_FLD_LARC, layer->con);
+	}
+
+	m6_ovl0_last_config_snapshot = snap;
+}
+
+int ovl_m6_get_last_config_snapshot(struct m6_ovl_config_snapshot *out)
+{
+	if (!out || !m6_ovl0_last_config_snapshot.seq)
+		return 0;
+
+	*out = m6_ovl0_last_config_snapshot;
+	return 1;
+}
+
 static int ovl_layer_config(DISP_MODULE_ENUM module,
 		unsigned int layer,
 		unsigned int is_engine_sec,
@@ -294,9 +581,12 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 	unsigned long ovl_base = ovl_base_addr(module);
 	unsigned long layer_offset = ovl_base + layer * OVL_LAYER_OFFSET;
 	unsigned int offset = 0;
+	unsigned long final_addr = 0;
+	unsigned int clr_value = 0xff000000;
 	enum UNIFIED_COLOR_FMT format = cfg->fmt;
 	unsigned int src_x = cfg->src_x;
 	unsigned int dst_w = cfg->dst_w;
+	unsigned int programmed_dst_h = m6_ovl_programmed_dst_h(module, cfg);
 
 	if (cfg->dst_w > OVL_MAX_WIDTH)
 		BUG();
@@ -397,22 +687,42 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 
 	DISP_REG_SET(handle, DISP_REG_OVL_L0_CON + layer_offset, value);
 
-	DISP_REG_SET(handle, DISP_REG_OVL_L0_CLR + ovl_base + layer * 4, 0xff000000);
+	if (cfg->source == OVL_LAYER_SOURCE_RESERVED &&
+	    !cfg->keyEn && cfg->key == M6_OVL_CONST_WHITE_MAGIC_KEY)
+		clr_value = 0xffffffff;
+	DISP_REG_SET(handle, DISP_REG_OVL_L0_CLR + ovl_base + layer * 4,
+		     clr_value);
 
-	DISP_REG_SET(handle, DISP_REG_OVL_L0_SRC_SIZE + layer_offset, cfg->dst_h << 16 | dst_w);
+	if (programmed_dst_h != cfg->dst_h &&
+	    m6_ovl_bounds_profile_apply_count < 96) {
+		DISPERR("M6 OVL bounds profile apply[%u]: profile=%u mod=%s L%u global=%u dst_h=%u->%u dst_w=%u addr=0x%lx pitch=%u fmt=%s/0x%x\n",
+			m6_ovl_bounds_profile_apply_count,
+			m6_ovl_bounds_profile_id, m6_ovl_module_name(module),
+			layer, cfg->layer, cfg->dst_h, programmed_dst_h,
+			dst_w, cfg->addr, cfg->src_pitch,
+			unified_color_fmt_name(cfg->fmt), cfg->fmt);
+		m6_ovl_bounds_profile_apply_count++;
+	}
+
+	DISP_REG_SET(handle, DISP_REG_OVL_L0_SRC_SIZE + layer_offset,
+		programmed_dst_h << 16 | dst_w);
 
 	if (rotate)
-		offset = (src_x + dst_w) * Bpp + (cfg->src_y + cfg->dst_h - 1) * cfg->src_pitch - 1;
+		offset = (src_x + dst_w) * Bpp + (cfg->src_y + programmed_dst_h - 1) * cfg->src_pitch - 1;
 	else
 		offset = src_x * Bpp + cfg->src_y * cfg->src_pitch;
 
+	final_addr = cfg->addr + offset;
+	m6_ovl_diag_log_config(module, layer, cfg, Bpp, src_x, dst_w,
+		programmed_dst_h, offset, final_addr, value, clr_value);
+
 	if (!is_engine_sec) {
-		DISP_REG_SET(handle, DISP_REG_OVL_L0_ADDR + layer_offset, cfg->addr + offset);
+		DISP_REG_SET(handle, DISP_REG_OVL_L0_ADDR + layer_offset, final_addr);
 	} else {
 		unsigned int size;
 		int m4u_port;
 
-		size = (cfg->dst_h - 1) * cfg->src_pitch + dst_w * Bpp;
+		size = (programmed_dst_h - 1) * cfg->src_pitch + dst_w * Bpp;
 		m4u_port = ovl_to_m4u_port(module);
 		if (cfg->security != DISP_SECURE_BUFFER) {
 			/* ovl is sec but this layer is non-sec */
@@ -444,6 +754,26 @@ static int ovl_layer_config(DISP_MODULE_ENUM module,
 	DISP_REG_SET(handle, DISP_REG_OVL_L0_PITCH + layer_offset, value);
 
 	return 0;
+}
+
+static void m6_ovl_clear_inactive_layer(DISP_MODULE_ENUM module,
+	unsigned int layer, void *handle)
+{
+	unsigned long ovl_base = ovl_base_addr(module);
+	unsigned long layer_offset = layer * OVL_LAYER_OFFSET;
+
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_RDMA0_CTRL +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_CON +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_SRC_SIZE +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_ADDR +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_PITCH +
+		layer_offset, 0);
+	DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_L0_OFFSET +
+		layer_offset, 0);
 }
 
 static void ovl_store_regs(DISP_MODULE_ENUM module)
@@ -486,97 +816,98 @@ static void ovl_restore_regs(DISP_MODULE_ENUM module, void *handle)
 int ovl_clock_on(DISP_MODULE_ENUM module, void *handle)
 {
 	unsigned long ovl_base = ovl_base_addr(module);
+	int ret = 0;
 
 	DISPDBG("%s clock_on\n", ddp_get_module_name(module));
-	/* do not set CG */
-/*
 #ifdef ENABLE_CLK_MGR
-
 	switch (module) {
 	case DISP_MODULE_OVL0:
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_OVL0, ddp_get_module_name(module));
+		ret = enable_clock(MT_CG_DISP0_DISP_OVL0, ddp_get_module_name(module));
 #else
-		ddp_clk_enable(DISP0_DISP_OVL0);
+		ret = ddp_clk_enable(DISP0_DISP_OVL0);
+		ret += ddp_clk_enable(DISP0_DISP_OVL0_MOUT);
 #endif
 		break;
 	case DISP_MODULE_OVL1:
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_OVL1, ddp_get_module_name(module));
+		ret = enable_clock(MT_CG_DISP0_DISP_OVL1, ddp_get_module_name(module));
 #else
-		ddp_clk_enable(DISP0_DISP_OVL1);
+		ret = ddp_clk_enable(DISP0_DISP_OVL1);
 #endif
 		break;
 	case DISP_MODULE_OVL0_2L:
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_OVL0_2L, ddp_get_module_name(module));
+		ret = enable_clock(MT_CG_DISP0_DISP_OVL0_2L, ddp_get_module_name(module));
 #else
-		ddp_clk_enable(DISP0_DISP_2L_OVL0);
+		ret = ddp_clk_enable(DISP0_DISP_2L_OVL0);
 #endif
 		break;
 	case DISP_MODULE_OVL1_2L:
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_OVL1_2L, ddp_get_module_name(module));
+		ret = enable_clock(MT_CG_DISP0_DISP_OVL1_2L, ddp_get_module_name(module));
 #else
-		ddp_clk_enable(DISP0_DISP_2L_OVL1);
+		ret = ddp_clk_enable(DISP0_DISP_2L_OVL1);
 #endif
 		break;
 	default:
 		DISPERR("invalid ovl module=%d\n", module);
 		BUG();
 	}
-
+	DISPMSG("M6 DDP clk: %s on ret=%d CG=0x%x\n",
+		ddp_get_module_name(module), ret, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-*/
 	/* DCM Setting -- Enable DCM */
 	/* DISP_REG_SET(NULL, ovl_base + DISP_REG_OVL_FUNC_DCM0, 0x10); */
 	DISP_REG_SET(NULL, ovl_base + DISP_REG_OVL_FUNC_DCM1, 0x10);
 
-	return 0;
+	return ret;
 }
 
 int ovl_clock_off(DISP_MODULE_ENUM module, void *handle)
 {
+	int ret = 0;
+
 	DISPDBG("%s clock_off\n", ddp_get_module_name(module));
-	/* do not set CG */
-/*
 #ifdef ENABLE_CLK_MGR
 	switch (module) {
 	case DISP_MODULE_OVL0:
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_OVL0, ddp_get_module_name(module));
 #else
-		ddp_clk_disable(DISP0_DISP_OVL0);
+		ret = ddp_clk_disable(DISP0_DISP_OVL0_MOUT);
+		ret += ddp_clk_disable(DISP0_DISP_OVL0);
 #endif
 		break;
 	case DISP_MODULE_OVL1:
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_OVL1, ddp_get_module_name(module));
 #else
-		ddp_clk_disable(DISP0_DISP_OVL1);
+		ret = ddp_clk_disable(DISP0_DISP_OVL1);
 #endif
 		break;
 	case DISP_MODULE_OVL0_2L:
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_OVL0_2L, ddp_get_module_name(module));
 #else
-		ddp_clk_disable(DISP0_DISP_2L_OVL0);
+		ret = ddp_clk_disable(DISP0_DISP_2L_OVL0);
 #endif
 		break;
 	case DISP_MODULE_OVL1_2L:
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_OVL1_2L, ddp_get_module_name(module));
 #else
-		ddp_clk_disable(DISP0_DISP_2L_OVL1);
+		ret = ddp_clk_disable(DISP0_DISP_2L_OVL1);
 #endif
 		break;
 	default:
 		DISPERR("invalid ovl module=%d\n", module);
 		BUG();
 	}
+	DISPMSG("M6 DDP clk: %s off ret=%d CG=0x%x\n",
+		ddp_get_module_name(module), ret, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-*/
-	return 0;
+	return ret;
 }
 
 int ovl_resume(DISP_MODULE_ENUM module, void *handle)
@@ -792,17 +1123,35 @@ static int ovl_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, 
 	int enabled_layers = 0;
 	int has_sec_layer = 0;
 	unsigned int local_layer, global_layer, layer_id;
+	unsigned int scanned_before = pConfig->ovl_layer_scanned;
+	unsigned int first_global_layer = 0;
+	bool m6_log_scan = false;
+	unsigned int m6_scan_idx = 0;
+	static unsigned int m6_ovl_scan_diag_count;
+	static unsigned int m6_ovl_cpu_preclear_count;
+	static unsigned int m6_ovl_cpu_layer_mirror_count;
 
 	if (pConfig->dst_dirty)
 		ovl_roi(module, pConfig->dst_w, pConfig->dst_h, gOVLBackground, handle);
 
 	if (!pConfig->ovl_dirty)
 		return 0;
+	if (is_module_ovl(module)) {
+		m6_log_scan = m6_ovl_scan_diag_sample(&m6_ovl_scan_diag_count);
+		m6_scan_idx = m6_ovl_scan_diag_count - 1;
+	}
 
 	for (global_layer = 0; global_layer < TOTAL_OVL_LAYER_NUM; global_layer++) {
 		if (!(pConfig->ovl_layer_scanned & (1 << global_layer)))
 			break;
 	}
+	first_global_layer = global_layer;
+	if (m6_log_scan)
+		DISPERR("M6 OVL scan[%u]: mod=%s dirty ovl=%u dst=%u scanned_before=0x%x first_global=%u layer_count=%lu total=%u dst=%ux%u\n",
+			m6_scan_idx, m6_ovl_module_name(module), pConfig->ovl_dirty,
+			pConfig->dst_dirty, scanned_before, first_global_layer,
+			ovl_layer_num(module), TOTAL_OVL_LAYER_NUM,
+			pConfig->dst_w, pConfig->dst_h);
 	if (global_layer > TOTAL_OVL_LAYER_NUM - ovl_layer_num(module)) {
 		DISPERR("%s: %s scan error, layer_scanned=%u\n", __func__,
 		       ddp_get_module_name(module), pConfig->ovl_layer_scanned);
@@ -841,12 +1190,90 @@ static int ovl_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, 
 			continue;
 		print_layer_config_args(module, local_layer, ovl_cfg);
 		ovl_layer_config(module, local_layer, has_sec_layer, ovl_cfg, handle);
+		if (module == DISP_MODULE_OVL0 &&
+		    disp_helper_get_option(DISP_OPT_BYPASS_PQ) &&
+		    !primary_display_is_decouple_mode() &&
+		    !has_sec_layer) {
+			if (m6_ovl_cpu_layer_mirror_count < 80) {
+				DISPERR("M6 OVL cpu layer mirror[%u]: mod=%s L%u global=%u addr=0x%lx pitch=%u fmt=%s/0x%x src=%u dst=%ux%u handle=%p direct=%d bypass_pq=%d\n",
+					m6_ovl_cpu_layer_mirror_count,
+					m6_ovl_module_name(module), local_layer,
+					global_layer, ovl_cfg->addr,
+					ovl_cfg->src_pitch,
+					unified_color_fmt_name(ovl_cfg->fmt),
+					ovl_cfg->fmt, ovl_cfg->source,
+					ovl_cfg->dst_w, ovl_cfg->dst_h, handle,
+					!primary_display_is_decouple_mode(),
+					disp_helper_get_option(DISP_OPT_BYPASS_PQ));
+				m6_ovl_cpu_layer_mirror_count++;
+			}
+			ovl_layer_config(module, local_layer, has_sec_layer, ovl_cfg, NULL);
+		}
 
 		enabled_layers |= 1 << local_layer;
 
 	}
 
+	if (module == DISP_MODULE_OVL0 &&
+	    disp_helper_get_option(DISP_OPT_BYPASS_PQ) &&
+	    !primary_display_is_decouple_mode()) {
+		unsigned long ovl_base = ovl_base_addr(module);
+		unsigned int old_src = DISP_REG_GET(ovl_base + DISP_REG_OVL_SRC_CON);
+		unsigned int layer_mask = (1U << ovl_layer_num(module)) - 1;
+		unsigned int stale_layers = old_src & ~enabled_layers & layer_mask;
+
+		if (stale_layers && m6_ovl_cpu_preclear_count < 80) {
+			DISPERR("M6 OVL stale clear[%u]: mod=%s old_src=0x%x enabled=0x%x stale=0x%x handle=%p cpu_clear=%u direct=%d bypass_pq=%d bounds_default=%u\n",
+				m6_ovl_cpu_preclear_count,
+				m6_ovl_module_name(module), old_src, enabled_layers,
+				stale_layers, handle,
+				!handle || m6_ovl_stale_cpu_clear_enabled,
+				!primary_display_is_decouple_mode(),
+				disp_helper_get_option(DISP_OPT_BYPASS_PQ),
+				m6_ovl_bounds_profile_id);
+			m6_ovl_cpu_preclear_count++;
+		}
+		if (stale_layers) {
+			unsigned int i;
+			unsigned int cpu_clear =
+				!handle || m6_ovl_stale_cpu_clear_enabled;
+			unsigned int stale_intsta_clear =
+				((stale_layers & 0xfU) << 5) | (1U << 2) |
+				(1U << 13);
+
+			DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_SRC_CON,
+				enabled_layers);
+			if (cpu_clear)
+				DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_SRC_CON,
+					enabled_layers);
+			for (i = 0; i < ovl_layer_num(module); i++) {
+				if (stale_layers & (1U << i)) {
+					m6_ovl_clear_inactive_layer(module, i,
+						handle);
+					if (handle && cpu_clear)
+						m6_ovl_clear_inactive_layer(module,
+							i, NULL);
+				}
+			}
+			DISP_REG_SET(handle, ovl_base + DISP_REG_OVL_INTSTA,
+				~stale_intsta_clear);
+			if (cpu_clear)
+				DISP_CPU_REG_SET(ovl_base + DISP_REG_OVL_INTSTA,
+					~stale_intsta_clear);
+		}
+	}
 	DISP_REG_SET(handle, ovl_base_addr(module) + DISP_REG_OVL_SRC_CON, enabled_layers);
+	m6_ovl_capture_last_config(module, pConfig, handle, enabled_layers,
+		first_global_layer, scanned_before, has_sec_layer);
+	if (m6_log_scan)
+		DISPERR("M6 OVL scan[%u]: mod=%s scanned_after=0x%x first_global=%u enabled=0x%x SRC=0x%x EN=0x%x ROI=0x%x PATH=0x%x FLOW=0x%x\n",
+			m6_scan_idx, m6_ovl_module_name(module),
+			pConfig->ovl_layer_scanned, first_global_layer, enabled_layers,
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_SRC_CON),
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_EN),
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_ROI_SIZE),
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_DATAPATH_CON),
+			DISP_REG_GET(ovl_base_addr(module) + DISP_REG_OVL_FLOW_CTRL_DBG));
 
 	return 0;
 }
@@ -1146,16 +1573,71 @@ static int ovl_golden_setting(DISP_MODULE_ENUM module, enum dst_module_type dst_
 {
 	unsigned long ovl_base = ovl_base_addr(module);
 	unsigned int regval;
+	unsigned int ultra_th = 0xff;
+	unsigned int pre_ultra_th = 0xff;
+	unsigned int fifo_size = 144;
+	unsigned int layer_greq = 5;
+	unsigned int ostd_greq = 0xff;
+	unsigned int greq_dis_cnt = 0;
+	unsigned int flush_preultra = 1;
+	unsigned int flush_ultra = 0;
+	unsigned int urg_layer_greq = 5;
+	unsigned int urg_th = 0;
+	unsigned int urg_bias = 0;
+	unsigned int buf_low_ultra = 0;
+	unsigned int buf_low_preultra = 0;
+	unsigned int profile = m6_ovl_greq_profile_id;
 	int i, layer_num;
 
 	layer_num = ovl_layer_num(module);
 
+	switch (profile) {
+	case 0:
+		break;
+	case 1:
+		flush_ultra = 1;
+		urg_th = 0x3ff;
+		urg_bias = 1;
+		buf_low_ultra = 0x10;
+		buf_low_preultra = 0x20;
+		break;
+	case 2:
+		layer_greq = 7;
+		urg_layer_greq = 7;
+		flush_ultra = 1;
+		urg_th = 0x3ff;
+		urg_bias = 1;
+		buf_low_ultra = 0x20;
+		buf_low_preultra = 0x40;
+		break;
+	case 3:
+		pre_ultra_th = 0x80;
+		ultra_th = 0x80;
+		layer_greq = 3;
+		urg_layer_greq = 3;
+		ostd_greq = 0x40;
+		flush_preultra = 0;
+		flush_ultra = 0;
+		break;
+	default:
+		profile = 0;
+		break;
+	}
+
+	if (module == DISP_MODULE_OVL0 && profile &&
+	    m6_ovl_greq_profile_apply_count < 64) {
+		DISPERR("M6 OVL greq profile apply[%u]: profile=%u dst=%d cmdq=%p layer_num=%d ultra=0x%x pre=0x%x fifo=%u layer=%u urg=%u ostd=0x%x dis=%u flush=%u/%u urg_th=0x%x urg_bias=%u buf=%u/%u\n",
+			m6_ovl_greq_profile_apply_count, profile, dst_mod_type,
+			cmdq, layer_num, ultra_th, pre_ultra_th, fifo_size,
+			layer_greq, urg_layer_greq, ostd_greq, greq_dis_cnt,
+			flush_preultra, flush_ultra, urg_th, urg_bias,
+			buf_low_ultra, buf_low_preultra);
+		m6_ovl_greq_profile_apply_count++;
+	}
+
 	/* DISP_REG_OVL_RDMA0_MEM_GMC_SETTING */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_ULTRA_THRESHOLD, 0xff);
-	if (dst_mod_type == DST_MOD_REAL_TIME)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_PRE_ULTRA_THRESHOLD, 0xff);
-	else
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_PRE_ULTRA_THRESHOLD, /*0x78*/ 0xff);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_ULTRA_THRESHOLD, ultra_th);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_MEM_GMC_PRE_ULTRA_THRESHOLD, pre_ultra_th);
 
 	for (i = 0; i < layer_num; i++) {
 		unsigned long layer_offset = i * OVL_LAYER_OFFSET + ovl_base;
@@ -1164,7 +1646,7 @@ static int ovl_golden_setting(DISP_MODULE_ENUM module, enum dst_module_type dst_
 	}
 
 	/* DISP_REG_OVL_RDMA0_FIFO_CTRL */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_FIFO_SIZE, 144);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_FIFO_SIZE, fifo_size);
 	for (i = 0; i < layer_num; i++) {
 		unsigned long layer_offset = i * OVL_LAYER_OFFSET + ovl_base;
 
@@ -1172,31 +1654,31 @@ static int ovl_golden_setting(DISP_MODULE_ENUM module, enum dst_module_type dst_
 	}
 
 	/* DISP_REG_OVL_RDMA_GREQ_NUM */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER0_GREQ_NUM, 5);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER0_GREQ_NUM, layer_greq);
 	if (layer_num > 1)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER1_GREQ_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER1_GREQ_NUM, layer_greq);
 	if (layer_num > 2)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER2_GREQ_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER2_GREQ_NUM, layer_greq);
 	if (layer_num > 3)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER3_GREQ_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER3_GREQ_NUM, layer_greq);
 
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_OSTD_GREQ_NUM, 0xff);
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_GREQ_DIS_CNT, 0);
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_IOBUF_FLUSH_PREULTRA, 1);
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_IOBUF_FLUSH_ULTRA, 0);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_OSTD_GREQ_NUM, ostd_greq);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_GREQ_DIS_CNT, greq_dis_cnt);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_IOBUF_FLUSH_PREULTRA, flush_preultra);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_IOBUF_FLUSH_ULTRA, flush_ultra);
 	DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_RDMA_GREQ_NUM, regval);
 
 	/* DISP_REG_OVL_RDMA_GREQ_URG_NUM */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER0_GREQ_URG_NUM, 5);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER0_GREQ_URG_NUM, urg_layer_greq);
 	if (layer_num > 0)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER1_GREQ_URG_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER1_GREQ_URG_NUM, urg_layer_greq);
 	if (layer_num > 1)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER2_GREQ_URG_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER2_GREQ_URG_NUM, urg_layer_greq);
 	if (layer_num > 2)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER3_GREQ_URG_NUM, 5);
+		regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_LAYER3_GREQ_URG_NUM, urg_layer_greq);
 
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_ARG_GREQ_URG_TH, 0);
-	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_ARG_URG_BIAS, 0);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_ARG_GREQ_URG_TH, urg_th);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_GREQ_ARG_URG_BIAS, urg_bias);
 	DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_RDMA_GREQ_URG_NUM, regval);
 
 	/* DISP_REG_OVL_RDMA_ULTRA_SRC */
@@ -1219,17 +1701,56 @@ static int ovl_golden_setting(DISP_MODULE_ENUM module, enum dst_module_type dst_
 	DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_RDMA_ULTRA_SRC, regval);
 
 	/* DISP_REG_OVL_RDMAn_BUF_LOW */
-	regval = REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_ULTRA_TH, 0);
-	if (dst_mod_type == DST_MOD_REAL_TIME)
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_PREULTRA_TH, 0);
-	else
-		regval |= REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_PREULTRA_TH, /*0x30*/ 0x0);
+	regval = REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_ULTRA_TH, buf_low_ultra);
+	regval |= REG_FLD_VAL(FLD_OVL_RDMA_BUF_LOW_PREULTRA_TH, buf_low_preultra);
 
 	for (i = 0; i < layer_num; i++)
 		DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_RDMAn_BUF_LOW(i), regval);
 
 	/* DISP_REG_OVL_FUNC_DCM1 -- no need anymore, because we set it @ovl_clock_on()*/
 	/* DISP_REG_SET(cmdq, ovl_base + DISP_REG_OVL_FUNC_DCM1, 0x10); */
+
+	return 0;
+}
+
+int ovl_m6_set_greq_profile(unsigned int profile)
+{
+	if (profile > 3) {
+		DISPERR("M6 OVL greq profile reject: profile=%u valid=0..3\n",
+			profile);
+		return -EINVAL;
+	}
+
+	m6_ovl_greq_profile_id = profile;
+	DISPERR("M6 OVL greq profile set: profile=%u; applying OVL0 CPU registers now\n",
+		profile);
+	ovl_golden_setting(DISP_MODULE_OVL0, DST_MOD_REAL_TIME, NULL);
+
+	return 0;
+}
+
+int ovl_m6_set_bounds_profile(unsigned int profile)
+{
+	if (profile > 1) {
+		DISPERR("M6 OVL bounds profile reject: profile=%u valid=0..1\n",
+			profile);
+		return -EINVAL;
+	}
+
+	m6_ovl_bounds_profile_id = profile;
+	m6_ovl_bounds_profile_apply_count = 0;
+	DISPERR("M6 OVL bounds profile set: profile=%u; future OVL0 MEM layer configs will use it\n",
+		profile);
+
+	return 0;
+}
+
+int ovl_m6_set_stale_cpu_clear(unsigned int enable)
+{
+	m6_ovl_stale_cpu_clear_enabled = !!enable;
+	DISPERR("M6 OVL stale cpu clear set: enable=%u; future stale disabled layer clears will %s CPU mirror\n",
+		m6_ovl_stale_cpu_clear_enabled,
+		m6_ovl_stale_cpu_clear_enabled ? "use" : "skip");
 
 	return 0;
 }

@@ -24,6 +24,47 @@
 
 #define INVALID_PIN_ID (0xFFFFFFFF)
 
+static int m6_wmt_detect_pin_value(unsigned int id)
+{
+	INT32 num;
+
+	if (id >= GPIO_PIN_ID_MAX)
+		return -EINVAL;
+
+	num = gpio_ctrl_info.gpio_ctrl_state[id].gpio_num;
+	if (num == INVALID_PIN_ID || !gpio_is_valid(num))
+		return -EINVAL;
+
+	return gpio_get_value(num);
+}
+
+static void m6_wmt_detect_dump_pin(const char *stage, unsigned int id)
+{
+	INT32 num;
+
+	if (id >= GPIO_PIN_ID_MAX)
+		return;
+
+	num = gpio_ctrl_info.gpio_ctrl_state[id].gpio_num;
+	WMT_DETECT_INFO_FUNC("M6 WMT detect GPIO %s id=%u name=%s num=%d valid=%d val=%d pull_dis=%p in_pd=%p in_pu=%p\n",
+		stage, id, gpio_pin_name[id], num,
+		num != INVALID_PIN_ID && gpio_is_valid(num),
+		m6_wmt_detect_pin_value(id),
+		gpio_ctrl_info.gpio_ctrl_state[id].gpio_state[GPIO_PULL_DIS],
+		gpio_ctrl_info.gpio_ctrl_state[id].gpio_state[GPIO_IN_PULLDOWN],
+		gpio_ctrl_info.gpio_ctrl_state[id].gpio_state[GPIO_IN_PULLUP]);
+}
+
+static void m6_wmt_detect_dump_key_pins(const char *stage)
+{
+	m6_wmt_detect_dump_pin(stage, GPIO_COMBO_LDO_EN_PIN);
+	m6_wmt_detect_dump_pin(stage, GPIO_COMBO_PMUV28_EN_PIN);
+	m6_wmt_detect_dump_pin(stage, GPIO_COMBO_PMU_EN_PIN);
+	m6_wmt_detect_dump_pin(stage, GPIO_COMBO_RST_PIN);
+	m6_wmt_detect_dump_pin(stage, GPIO_COMBO_BGF_EINT_PIN);
+	m6_wmt_detect_dump_pin(stage, GPIO_WIFI_EINT_PIN);
+}
+
 /*copied form WMT module*/
 static int wmt_detect_dump_pin_conf(void)
 {
@@ -50,24 +91,36 @@ static int wmt_detect_dump_pin_conf(void)
 
 int _wmt_detect_output_low(unsigned int id)
 {
+	int before = m6_wmt_detect_pin_value(id);
+
 	if (INVALID_PIN_ID != gpio_ctrl_info.gpio_ctrl_state[id].gpio_num) {
 		gpio_direction_output(gpio_ctrl_info.gpio_ctrl_state[id].gpio_num, 0);
 		WMT_DETECT_DBG_FUNC("WMT-DETECT: set GPIO%d to output %d\n",
 				gpio_ctrl_info.gpio_ctrl_state[id].gpio_num,
 				gpio_get_value(gpio_ctrl_info.gpio_ctrl_state[id].gpio_num));
 	}
+	WMT_DETECT_INFO_FUNC("M6 WMT detect gpio_out_low id=%u name=%s num=%d before=%d after=%d\n",
+		id, id < GPIO_PIN_ID_MAX ? gpio_pin_name[id] : (PUINT8)"?",
+		id < GPIO_PIN_ID_MAX ? gpio_ctrl_info.gpio_ctrl_state[id].gpio_num : -1,
+		before, m6_wmt_detect_pin_value(id));
 
 	return 0;
 }
 
 int _wmt_detect_output_high(unsigned int id)
 {
+	int before = m6_wmt_detect_pin_value(id);
+
 	if (INVALID_PIN_ID != gpio_ctrl_info.gpio_ctrl_state[id].gpio_num) {
 		gpio_direction_output(gpio_ctrl_info.gpio_ctrl_state[id].gpio_num, 1);
 		WMT_DETECT_DBG_FUNC("WMT-DETECT: set GPIO%d to output %d\n",
 				gpio_ctrl_info.gpio_ctrl_state[id].gpio_num,
 				gpio_get_value(gpio_ctrl_info.gpio_ctrl_state[id].gpio_num));
 	}
+	WMT_DETECT_INFO_FUNC("M6 WMT detect gpio_out_high id=%u name=%s num=%d before=%d after=%d\n",
+		id, id < GPIO_PIN_ID_MAX ? gpio_pin_name[id] : (PUINT8)"?",
+		id < GPIO_PIN_ID_MAX ? gpio_ctrl_info.gpio_ctrl_state[id].gpio_num : -1,
+		before, m6_wmt_detect_pin_value(id));
 
 	return 0;
 }
@@ -81,6 +134,10 @@ int _wmt_detect_read_gpio_input(unsigned int id)
 		WMT_DETECT_DBG_FUNC("WMT-DETECT: get GPIO%d val%d\n",
 				gpio_ctrl_info.gpio_ctrl_state[id].gpio_num, retval);
 	}
+	WMT_DETECT_INFO_FUNC("M6 WMT detect gpio_read id=%u name=%s num=%d val=%d\n",
+		id, id < GPIO_PIN_ID_MAX ? gpio_pin_name[id] : (PUINT8)"?",
+		id < GPIO_PIN_ID_MAX ? gpio_ctrl_info.gpio_ctrl_state[id].gpio_num : -1,
+		retval);
 
 	return retval;
 }
@@ -95,6 +152,8 @@ int _wmt_detect_read_gpio_input(unsigned int id)
 static int wmt_detect_chip_pwr_on(void)
 {
 	int retval = -1;
+
+	m6_wmt_detect_dump_key_pins("pwr_on-enter");
 	/*setting validiation check*/
 	if ((INVALID_PIN_ID == gpio_ctrl_info.gpio_ctrl_state[GPIO_COMBO_PMU_EN_PIN].gpio_num) ||
 		(INVALID_PIN_ID == gpio_ctrl_info.gpio_ctrl_state[GPIO_COMBO_RST_PIN].gpio_num) ||
@@ -167,6 +226,7 @@ static int wmt_detect_chip_pwr_on(void)
 	msleep(MAX_ON_STABLE_TIME);
 
 	retval = 0;
+	m6_wmt_detect_dump_key_pins("pwr_on-exit");
 	return retval;
 }
 
@@ -203,6 +263,7 @@ int wmt_detect_chip_pwr_ctrl(int on)
 {
 	int retval = -1;
 
+	m6_wmt_detect_dump_key_pins(on ? "chip_pwr_ctrl-on" : "chip_pwr_ctrl-off");
 	if (0 == on) {
 		/*power off combo chip */
 		retval = wmt_detect_chip_pwr_off();
@@ -211,6 +272,7 @@ int wmt_detect_chip_pwr_ctrl(int on)
 		/*power on combo chip */
 		retval = wmt_detect_chip_pwr_on();
 	}
+	WMT_DETECT_INFO_FUNC("M6 WMT detect chip_pwr_ctrl on=%d ret=%d\n", on, retval);
 	return retval;
 }
 

@@ -55,6 +55,12 @@ static DEFINE_SPINLOCK(imgsensor_drv_lock);
 
 extern void ov8856_otp_update(void);
 
+static bool ov8856jsl_match_sensor_id(kal_uint32 sensor_id)
+{
+	return sensor_id == OV8856_SENSOR_ID ||
+		sensor_id == OV8856JSL_SENSOR_ID;
+}
+
 static imgsensor_info_struct imgsensor_info = { 
 	.sensor_id = OV8856_SENSOR_ID,		//record sensor id defined in Kd_imgsensor.h
 	
@@ -152,7 +158,7 @@ static imgsensor_info_struct imgsensor_info = {
 	.isp_driving_current = ISP_DRIVING_8MA, //mclk driving current
 	.sensor_interface_type = SENSOR_INTERFACE_TYPE_MIPI,//sensor_interface_type
          .mipi_sensor_type = MIPI_OPHY_NCSI2, //0,MIPI_OPHY_NCSI2;  1,MIPI_OPHY_CSI2
-         .mipi_settle_delay_mode = MIPI_SETTLEDELAY_MANUAL,//0,MIPI_SETTLEDELAY_AUTO; 1,MIPI_SETTLEDELAY_MANNUAL
+         .mipi_settle_delay_mode = MIPI_SETTLEDELAY_AUTO,//M6: front OV8856JSL black preview - match proven-good IMX278 back sensor (AUTO, imx278mipiraw_Sensor.c:146) so SENINF self-measures LP->HS settle instead of trusting the hardcoded 85; was MANUAL
 	.sensor_output_dataformat = SENSOR_OUTPUT_FORMAT_RAW_B,//sensor output first pixel color
 	.mclk = 24,//mclk value, suggest 24 or 26 for 24Mhz or 26Mhz
 	.mipi_lane_num = SENSOR_MIPI_4_LANE,//mipi lane num
@@ -1011,7 +1017,10 @@ static kal_uint32 get_imgsensor_id(UINT32 *sensor_id)
 		spin_unlock(&imgsensor_drv_lock);
 		do {
 			*sensor_id = ((read_cmos_sensor(0x300B) << 8) | read_cmos_sensor(0x300C));
-            if (*sensor_id == imgsensor_info.sensor_id) {
+            if (ov8856jsl_match_sensor_id(*sensor_id)) {
+              if (*sensor_id != imgsensor_info.sensor_id)
+                LOGE("accept alternate sensor id: expected 0x%x, got 0x%x\n",
+                  imgsensor_info.sensor_id, *sensor_id);
               if((read_cmos_sensor(0x302A)) == 0xB0){
                 ov8856version = OV8856R1A;
                 LOG_INF("i2c write id: 0x%x, sensor id: 0x%x, ov8856version = %d(0=r2a,1=r1a)\n", imgsensor.i2c_write_id,*sensor_id,ov8856version);	
@@ -1033,7 +1042,7 @@ static kal_uint32 get_imgsensor_id(UINT32 *sensor_id)
 		i++;
 		retry = 2;
 	}
-	if (*sensor_id != imgsensor_info.sensor_id) {
+	if (!ov8856jsl_match_sensor_id(*sensor_id)) {
 		// if Sensor ID is not correct, Must set *sensor_id to 0xFFFFFFFF 
 		*sensor_id = 0xFFFFFFFF;
 		return ERROR_SENSOR_CONNECT_FAIL;
@@ -1073,7 +1082,10 @@ static kal_uint32 open(void)
 		spin_unlock(&imgsensor_drv_lock);
 		do {
 			sensor_id = ((read_cmos_sensor(0x300B) << 8) | read_cmos_sensor(0x300C));
-			if (sensor_id == imgsensor_info.sensor_id) {				
+			if (ov8856jsl_match_sensor_id(sensor_id)) {
+				if (sensor_id != imgsensor_info.sensor_id)
+					LOGE("accept alternate sensor id: expected 0x%x, got 0x%x\n",
+						imgsensor_info.sensor_id, sensor_id);
 				LOG_INF("i2c write id: 0x%x, sensor id: 0x%x\n", imgsensor.i2c_write_id,sensor_id);	  
 				break;
 			}	
@@ -1081,11 +1093,11 @@ static kal_uint32 open(void)
 			retry--;
 		} while(retry > 0);
 		i++;
-		if (sensor_id == imgsensor_info.sensor_id)
+		if (ov8856jsl_match_sensor_id(sensor_id))
 			break;
 		retry = 2;
 	}		 
-	if (imgsensor_info.sensor_id != sensor_id)
+	if (!ov8856jsl_match_sensor_id(sensor_id))
 		return ERROR_SENSOR_CONNECT_FAIL;
 	
 	/* initail sequence write in  */

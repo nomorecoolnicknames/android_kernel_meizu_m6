@@ -73,7 +73,7 @@
 
 #define PMICTAG                "[Auxadc] "
 /*#if defined PMIC_DEBUG_PR_DBG*/
-#define PMICLOG2(fmt, arg...)   pr_err(PMICTAG fmt, ##arg)
+#define PMICLOG2(fmt, arg...)   pr_debug(PMICTAG fmt, ##arg)
 /*
 #else
 #define PMICLOG2(fmt, arg...)

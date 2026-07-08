@@ -556,6 +556,29 @@ INT32 wmt_lib_set_hif(ULONG hifconf)
 	P_WMT_HIF_CONF pHif = &gDevWmt.rWmtHifConf;
 
 	val = hifconf & 0xF;
+
+#ifdef CONFIG_MTK_COMBO_CHIP_CONSYS_6755
+	/*
+	 * M6 (MT6755) WCN is the integrated on-die CONSYS (chip id 0x0326),
+	 * whose AP<->CONSYS control transport is BTIF (STP_BTIF_FULL), not SDIO.
+	 * The integrated CONSYS exposes no SDIO function, so an SDIO STP mode
+	 * makes hif_sdio_stp_on() fail ("no supported func probed", -8) and WMT
+	 * power-on aborts -> no Wi-Fi/BT.
+	 *
+	 * The shipped proprietary wmt_launcher does not recognize chip id 0x0326
+	 * and falls back to its built-in default "SDIO Mode", overriding the
+	 * "-m 3" (BTIF) launch argument and handing the kernel STP_SDIO. Coerce
+	 * that stray SDIO request to BTIF here so the integrated CONSYS is always
+	 * driven over its real transport regardless of the launcher's bad default.
+	 */
+	if ((val & 0xF) == STP_SDIO) {
+		WMT_INFO_FUNC("M6 WMT integrated CONSYS_6755: override HIF SDIO->BTIF (hifconf=0x%lx)\n",
+			      hifconf);
+		hifconf = (hifconf & ~((ULONG)0xF)) | STP_BTIF_FULL;
+		val = hifconf & 0xF;
+	}
+#endif
+
 	switch (val) {
 	case STP_UART_FULL:
 		pHif->hifType = WMT_HIF_UART;

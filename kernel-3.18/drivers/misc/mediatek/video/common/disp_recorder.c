@@ -117,7 +117,7 @@ unsigned int dprec_error_log_id = 0;
 static dprec_logger old_logger[DPREC_LOGGER_NUM];
 char dprec_error_log_buffer[DPREC_ERROR_LOG_BUFFER_LENGTH];
 static dprec_logger_event dprec_vsync_irq_event;
-static met_log_map dprec_met_info[DISP_SESSION_MEMORY + 2] = {
+static met_log_map __maybe_unused dprec_met_info[DISP_SESSION_MEMORY + 2] = {
 	{"UNKWON", 0, 0},
 	{"OVL0-DSI", 0, 0},
 	{"OVL1-MHL", 0, 0},

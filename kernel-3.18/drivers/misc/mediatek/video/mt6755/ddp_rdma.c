@@ -35,6 +35,8 @@
 /* #include "mmdvfs_mgr.h" */
 #include "disp_lowpower.h"
 
+extern void aee_sram_printk(const char *fmt, ...);
+
 #define MMSYS_CLK_LOW (0)
 #define MMSYS_CLK_HIGH (1)
 #define MMSYS_CLK_MEDIUM (2)
@@ -62,6 +64,62 @@ static unsigned int rdma_index(DISP_MODULE_ENUM module)
 		ASSERT(0);
 	}
 	return idx;
+}
+
+static void rdma_m6_dump_state(const char *tag, DISP_MODULE_ENUM module, void *handle)
+{
+	static unsigned int count;
+	unsigned int idx = rdma_index(module);
+	unsigned int base;
+
+	if (module != DISP_MODULE_RDMA0 || count >= 18)
+		return;
+
+	count++;
+	base = idx * DISP_RDMA_INDEX_OFFSET;
+	aee_sram_printk("M6R%02u %s G=%x S=%x/%x F=%x I=%u/%u O=%u/%u V=%x/%x M=%x/%x/%x\n",
+		count, tag ? tag : "null",
+		DISP_REG_GET(base + DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(base + DISP_REG_RDMA_SIZE_CON_0),
+		DISP_REG_GET(base + DISP_REG_RDMA_SIZE_CON_1),
+		DISP_REG_GET(base + DISP_REG_RDMA_FIFO_CON),
+		DISP_REG_GET(base + DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(base + DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(base + DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(base + DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF));
+	DISPERR("M6 RDMA diag[%s]#%u handle=%p INTEN=0x%x INTSTA=0x%x GLOBAL=0x%x SIZE=0x%x/%x MEM=0x%x ADDR=0x%x PITCH=0x%x FIFO=0x%x/%x IN=%u/%u OUT=%u/%u route=0x%x/%x OVL0_MOUT=0x%x COLOR0_SEL=0x%x DITHER_MOUT=0x%x RDMA0_SOUT=0x%x DSI0_SEL=0x%x mutex=0x%x/%x/%x mmsys=0x%x/%x\n",
+		tag ? tag : "null", count, handle,
+		DISP_REG_GET(base + DISP_REG_RDMA_INT_ENABLE),
+		DISP_REG_GET(base + DISP_REG_RDMA_INT_STATUS),
+		DISP_REG_GET(base + DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(base + DISP_REG_RDMA_SIZE_CON_0),
+		DISP_REG_GET(base + DISP_REG_RDMA_SIZE_CON_1),
+		DISP_REG_GET(base + DISP_REG_RDMA_MEM_CON),
+		DISP_REG_GET(base + DISP_REG_RDMA_MEM_START_ADDR),
+		DISP_REG_GET(base + DISP_REG_RDMA_MEM_SRC_PITCH),
+		DISP_REG_GET(base + DISP_REG_RDMA_FIFO_CON),
+		DISP_REG_GET(base + DISP_REG_RDMA_FIFO_LOG),
+		DISP_REG_GET(base + DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(base + DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(base + DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(base + DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_COLOR0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DITHER_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1));
 }
 
 static inline unsigned long rdma_to_cmdq_engine(DISP_MODULE_ENUM module)
@@ -125,13 +183,15 @@ int rdma_start(DISP_MODULE_ENUM module, void *handle)
 	    REG_FLD_VAL(INT_STATUS_FLD_FRAME_START_INT_FLAG, 1) |
 	    REG_FLD_VAL(INT_STATUS_FLD_FRAME_END_INT_FLAG, 1) |
 	    REG_FLD_VAL(INT_STATUS_FLD_EOF_ABNORMAL_INT_FLAG, 1) |
-	    REG_FLD_VAL(INT_STATUS_FLD_FIFO_UNDERFLOW_INT_FLAG, 1) |
-	    REG_FLD_VAL(INT_STATUS_FLD_TARGET_LINE_INT_FLAG, 0) |
-	    REG_FLD_VAL(INT_STATUS_FLD_FIFO_EMPTY_INT_FLAG, 0);
+		    REG_FLD_VAL(INT_STATUS_FLD_FIFO_UNDERFLOW_INT_FLAG, 1) |
+		    REG_FLD_VAL(INT_STATUS_FLD_TARGET_LINE_INT_FLAG, 0) |
+		    REG_FLD_VAL(INT_STATUS_FLD_FIFO_EMPTY_INT_FLAG, 0);
 
+	rdma_m6_dump_state("start-before", module, handle);
 	DISP_REG_SET(handle, idx * DISP_RDMA_INDEX_OFFSET + DISP_REG_RDMA_INT_ENABLE, regval);
 	DISP_REG_SET_FIELD(handle, GLOBAL_CON_FLD_ENGINE_EN,
 			   idx * DISP_RDMA_INDEX_OFFSET + DISP_REG_RDMA_GLOBAL_CON, 1);
+	rdma_m6_dump_state("start-after-enqueue", module, handle);
 
 	return 0;
 }
@@ -586,6 +646,7 @@ static int rdma_config(DISP_MODULE_ENUM module,
 
 	DISPDBG("RDMAConfig idx %d, mode %d, address 0x%lx, inputformat %s, pitch %u, width %u, height %u,sec%d\n",
 	     idx, mode, address, unified_color_fmt_name(inFormat), pitch, width, height, sec);
+	rdma_m6_dump_state("config-before", module, handle);
 	ASSERT(idx <= RDMA_INSTANCES);
 	if ((width > RDMA_MAX_WIDTH) || (height > RDMA_MAX_HEIGHT))
 		DISPERR("RDMA input overflow, w=%d, h=%d, max_w=%d, max_h=%d\n", width, height,
@@ -671,6 +732,7 @@ static int rdma_config(DISP_MODULE_ENUM module,
 
 	set_rdma_width_height(width, height);
 	rdma_set_ultra_l(idx, bpp, handle, p_golden_setting);
+	rdma_m6_dump_state("config-after-enqueue", module, handle);
 
 	return 0;
 }
@@ -684,36 +746,32 @@ void rdma_set_target_line(DISP_MODULE_ENUM module, unsigned int line, void *hand
 
 static int rdma_clock_on(DISP_MODULE_ENUM module, void *handle)
 {
-	unsigned int idx;
+	unsigned int idx = rdma_index(module);
+	int ret = 0;
 
-	idx = rdma_index(module);
-	/* do not set CG */
-/*
 #ifdef ENABLE_CLK_MGR
 #ifdef CONFIG_MTK_CLKMGR
 	if (idx == 0)
-		enable_clock(MT_CG_DISP0_DISP_RDMA0, "RDMA0");
+		ret = enable_clock(MT_CG_DISP0_DISP_RDMA0, "RDMA0");
 	else
-		enable_clock(MT_CG_DISP0_DISP_RDMA1, "RDMA1");
+		ret = enable_clock(MT_CG_DISP0_DISP_RDMA1, "RDMA1");
 #else
 	if (idx == 0)
-		ddp_clk_enable(DISP0_DISP_RDMA0);
+		ret = ddp_clk_enable(DISP0_DISP_RDMA0);
 	else
-		ddp_clk_enable(DISP0_DISP_RDMA1);
+		ret = ddp_clk_enable(DISP0_DISP_RDMA1);
 #endif
 #endif
-*/
-	DISPDBG("rdma_%d_clock_on CG 0x%x\n", idx, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
-	return 0;
+	DISPMSG("M6 DDP clk: rdma_%d on ret=%d CG=0x%x\n", idx, ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
+	return ret;
 }
 
 static int rdma_clock_off(DISP_MODULE_ENUM module, void *handle)
 {
-	unsigned int idx;
+	unsigned int idx = rdma_index(module);
+	int ret = 0;
 
-	idx = rdma_index(module);
-	/* do not set CG */
-/*
 #ifdef ENABLE_CLK_MGR
 #ifdef CONFIG_MTK_CLKMGR
 	if (idx == 0)
@@ -722,15 +780,14 @@ static int rdma_clock_off(DISP_MODULE_ENUM module, void *handle)
 		disable_clock(MT_CG_DISP0_DISP_RDMA1, "RDMA1");
 #else
 	if (idx == 0)
-		ddp_clk_disable(DISP0_DISP_RDMA0);
+		ret = ddp_clk_disable(DISP0_DISP_RDMA0);
 	else
-		ddp_clk_disable(DISP0_DISP_RDMA1);
-
+		ret = ddp_clk_disable(DISP0_DISP_RDMA1);
 #endif
 #endif
-*/
-	DISPDBG("rdma_%d_clock_off CG 0x%x\n", idx, DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
-	return 0;
+	DISPMSG("M6 DDP clk: rdma_%d off ret=%d CG=0x%x\n", idx, ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
+	return ret;
 }
 
 static int rdma_init(DISP_MODULE_ENUM module, void *handle)
@@ -938,6 +995,12 @@ static int do_rdma_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConf
 
 	if (pConfig->fps)
 		rdma_fps[rdma_index(module)] = pConfig->fps / 100;
+	DISPERR("M6 RDMA cfg_input: module=%d handle=%p dst_dirty=%d rdma_dirty=%d mode=%d addr=0x%lx in=%s pitch=%u wh=%u/%u dst=%u/%u/%u/%u sec=%d fps=%u lcm_bpp=%u\n",
+		module, handle, pConfig->dst_dirty, pConfig->rdma_dirty,
+		mode, r_config->address, unified_color_fmt_name(inFormat),
+		r_config->pitch, width, height, r_config->dst_x, r_config->dst_y,
+		r_config->dst_w, r_config->dst_h, r_config->security,
+		pConfig->fps, pConfig->lcm_bpp);
 
 	if (mode == RDMA_MODE_DIRECT_LINK && r_config->security != DISP_NORMAL_BUFFER)
 		DISPERR("%s: rdma directlink BUT is sec ??!!\n", __func__);
@@ -1048,12 +1111,15 @@ static int setup_rdma_sec(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig
 
 static int rdma_config_l(DISP_MODULE_ENUM module, disp_ddp_path_config *pConfig, void *handle)
 {
+	rdma_m6_dump_state("config-l-enter", module, handle);
 	if (pConfig->dst_dirty || pConfig->rdma_dirty) {
 
 		setup_rdma_sec(module, pConfig, handle);
 
 		do_rdma_config_l(module, pConfig, handle);
+		rdma_m6_dump_state("config-l-after-do", module, handle);
 	}
+	rdma_m6_dump_state("config-l-exit", module, handle);
 	return 0;
 }
 

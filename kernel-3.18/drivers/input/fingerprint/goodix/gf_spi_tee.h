@@ -61,6 +61,20 @@ struct gf_key {
 	uint32_t value;   /* key down = 1, key up = 0 */
 };
 
+typedef enum gf_nav_event {
+	GF_NAV_NONE = 0,
+	GF_NAV_FINGER_UP,
+	GF_NAV_FINGER_DOWN,
+	GF_NAV_UP,
+	GF_NAV_DOWN,
+	GF_NAV_LEFT,
+	GF_NAV_RIGHT,
+	GF_NAV_CLICK,
+	GF_NAV_HEAVY,
+	GF_NAV_LONG_PRESS,
+	GF_NAV_DOUBLE_CLICK
+} gf_nav_event_t;
+
 enum gf_netlink_cmd {
 	GF_NETLINK_TEST = 0,
 	GF_NETLINK_IRQ = 1,
@@ -106,6 +120,7 @@ struct gf_ioc_chip_info {
 #define GF_IOC_CHIP_INFO	_IOR(GF_IOC_MAGIC, 13, struct gf_ioc_chip_info)
 /*goodix SMT*/
 #define GF_IOC_FTM		_IOR(GF_IOC_MAGIC, 14, u8)
+#define GF_IOC_NAV_EVENT	_IOW(GF_IOC_MAGIC, 14, u32)
 
 
 /* for SPI REE transfer */

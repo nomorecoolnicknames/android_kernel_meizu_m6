@@ -33,6 +33,8 @@
 
 #include "m4u.h"
 
+extern void aee_sram_printk(const char *fmt, ...);
+
 #pragma GCC optimize("O0")
 
 typedef struct module_map_s {
@@ -71,10 +73,10 @@ typedef struct selection_s {
 unsigned int module_list_scenario[DDP_SCENARIO_MAX][DDP_ENING_NUM] = {
 	/*PRIMARY_DISP */
 	{
-	 DISP_MODULE_OVL0_2L, DISP_MODULE_OVL0, DISP_MODULE_OVL1_2L, DISP_MODULE_OVL0_VIRTUAL,
-	 DISP_MODULE_COLOR0, DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA,
-	 DISP_MODULE_DITHER,
-	 DISP_MODULE_RDMA0, DISP_MODULE_UFOE, DISP_MODULE_PWM0, DISP_MODULE_DSI0, -1, -1},
+	 DISP_MODULE_OVL0, DISP_MODULE_OVL0_VIRTUAL, DISP_MODULE_COLOR0,
+	 DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA,
+	 DISP_MODULE_DITHER, DISP_MODULE_RDMA0, DISP_MODULE_UFOE,
+	 DISP_MODULE_PWM0, DISP_MODULE_DSI0, -1, -1, -1, -1},
 
 	/*PRIMARY_RDMA0_COLOR0_DISP */
 	{
@@ -88,26 +90,27 @@ unsigned int module_list_scenario[DDP_SCENARIO_MAX][DDP_ENING_NUM] = {
 
 	/*PRIMARY_BYPASS_RDMA */
 	{
-	 DISP_MODULE_OVL0_2L, DISP_MODULE_OVL0, DISP_MODULE_OVL1_2L, DISP_MODULE_OVL0_VIRTUAL,
-	 DISP_MODULE_COLOR0, DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA,
-	 DISP_MODULE_DITHER,
-	 DISP_MODULE_UFOE, DISP_MODULE_PWM0, DISP_MODULE_DSI0, -1, -1},
+	 DISP_MODULE_OVL0, DISP_MODULE_OVL0_VIRTUAL, DISP_MODULE_COLOR0,
+	 DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA,
+	 DISP_MODULE_DITHER, DISP_MODULE_UFOE, DISP_MODULE_PWM0,
+	 DISP_MODULE_DSI0, -1, -1, -1, -1},
 
 	/*PRIMARY_OVL_MEMOUT */
 	{
-	 DISP_MODULE_OVL0_2L, DISP_MODULE_OVL0, DISP_MODULE_OVL1_2L, DISP_MODULE_OVL0_VIRTUAL,
-	 DISP_MODULE_WDMA0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+	 DISP_MODULE_OVL0, DISP_MODULE_OVL0_VIRTUAL, DISP_MODULE_WDMA0,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
 
 	/*PRIMARY_DITHER_MEMOUT */
 	{
-	 DISP_MODULE_OVL0_2L, DISP_MODULE_OVL0, DISP_MODULE_OVL1_2L, DISP_MODULE_OVL0_VIRTUAL,
-	 DISP_MODULE_COLOR0, DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA,
-	 DISP_MODULE_DITHER, DISP_MODULE_WDMA0, -1, -1, -1, -1, -1},
+	 DISP_MODULE_OVL0, DISP_MODULE_OVL0_VIRTUAL, DISP_MODULE_COLOR0,
+	 DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA,
+	 DISP_MODULE_DITHER, DISP_MODULE_WDMA0, -1, -1, -1, -1, -1, -1, -1},
 	/*PRIMARY_UFOE_MEMOUT */
 	{
-	 DISP_MODULE_OVL0_2L, DISP_MODULE_OVL0, DISP_MODULE_OVL1_2L, DISP_MODULE_OVL0_VIRTUAL,
-	 DISP_MODULE_COLOR0, DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA,
-	 DISP_MODULE_DITHER, DISP_MODULE_RDMA0, DISP_MODULE_UFOE, DISP_MODULE_WDMA0, -1, -1, -1},
+	 DISP_MODULE_OVL0, DISP_MODULE_OVL0_VIRTUAL, DISP_MODULE_COLOR0,
+	 DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA,
+	 DISP_MODULE_DITHER, DISP_MODULE_RDMA0, DISP_MODULE_UFOE,
+	 DISP_MODULE_WDMA0, -1, -1, -1, -1, -1},
 	/*SUB_DISP */
 	{
 	 DISP_MODULE_OVL1, DISP_MODULE_RDMA1, DISP_MODULE_DPI, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -120,23 +123,26 @@ unsigned int module_list_scenario[DDP_SCENARIO_MAX][DDP_ENING_NUM] = {
 	 DISP_MODULE_OVL1, DISP_MODULE_WDMA1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
 	/*PRIMARY_DISP ALL*/
 	{
-	 DISP_MODULE_OVL0_2L, DISP_MODULE_OVL0, DISP_MODULE_OVL1_2L, DISP_MODULE_OVL0_VIRTUAL, DISP_MODULE_WDMA0,
-	 DISP_MODULE_COLOR0, DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA, DISP_MODULE_DITHER,
-	 DISP_MODULE_RDMA0, DISP_MODULE_UFOE, DISP_MODULE_PWM0, DISP_MODULE_DSI0, -1},
+	 DISP_MODULE_OVL0, DISP_MODULE_OVL0_VIRTUAL, DISP_MODULE_WDMA0,
+	 DISP_MODULE_COLOR0, DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA,
+	 DISP_MODULE_DITHER, DISP_MODULE_RDMA0, DISP_MODULE_UFOE,
+	 DISP_MODULE_PWM0, DISP_MODULE_DSI0, -1, -1, -1},
 	/*SUB_ALL */
 	{
 	 DISP_MODULE_OVL1, DISP_MODULE_WDMA1, DISP_MODULE_RDMA1, DISP_MODULE_DPI, -1, -1, -1, -1,
 	 -1, -1, -1, -1, -1, -1, -1},
 	/*DDP_SCENARIO_DITHER_1TO2*/
 	{
-	 DISP_MODULE_OVL0_2L, DISP_MODULE_OVL0, DISP_MODULE_OVL1_2L, DISP_MODULE_OVL0_VIRTUAL,
-	 DISP_MODULE_COLOR0, DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA, DISP_MODULE_DITHER,
-	 DISP_MODULE_WDMA0, DISP_MODULE_RDMA0, DISP_MODULE_UFOE, DISP_MODULE_PWM0, DISP_MODULE_DSI0, -1},
+	 DISP_MODULE_OVL0, DISP_MODULE_OVL0_VIRTUAL, DISP_MODULE_COLOR0,
+	 DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA, DISP_MODULE_DITHER,
+	 DISP_MODULE_WDMA0, DISP_MODULE_RDMA0, DISP_MODULE_UFOE,
+	 DISP_MODULE_PWM0, DISP_MODULE_DSI0, -1, -1, -1},
 	/*DDP_SCENARIO_UFOE_1TO2*/
 	{
-	 DISP_MODULE_OVL0_2L, DISP_MODULE_OVL0, DISP_MODULE_OVL1_2L, DISP_MODULE_OVL0_VIRTUAL,
-	 DISP_MODULE_COLOR0, DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA, DISP_MODULE_DITHER,
-	 DISP_MODULE_RDMA0, DISP_MODULE_UFOE, DISP_MODULE_WDMA0, DISP_MODULE_PWM0, DISP_MODULE_DSI0, -1},
+	 DISP_MODULE_OVL0, DISP_MODULE_OVL0_VIRTUAL, DISP_MODULE_COLOR0,
+	 DISP_MODULE_CCORR, DISP_MODULE_AAL, DISP_MODULE_GAMMA, DISP_MODULE_DITHER,
+	 DISP_MODULE_RDMA0, DISP_MODULE_UFOE, DISP_MODULE_WDMA0,
+	 DISP_MODULE_PWM0, DISP_MODULE_DSI0, -1, -1, -1},
 };
 
 /* 1st para is mout's input, 2nd para is mout's output */
@@ -213,6 +219,7 @@ int ddp_path_init(void)
 	return 0;
 }
 
+
 static module_map_t module_mutex_map[DISP_MODULE_NUM] = {
 	{DISP_MODULE_OVL0, 7},
 	{DISP_MODULE_OVL1, 8},
@@ -249,6 +256,39 @@ static module_map_t module_mutex_map[DISP_MODULE_NUM] = {
 	{DISP_MODULE_OVL0_VIRTUAL, -1},
 	{DISP_MODULE_UNKNOWN, -1},
 };
+
+static unsigned int ddp_mutex_module_mask(DISP_MODULE_ENUM module)
+{
+	int bit;
+
+	if (module < 0 || module >= DISP_MODULE_NUM)
+		return 0;
+
+	bit = module_mutex_map[module].bit;
+	if (bit < 0)
+		return 0;
+
+	return 1U << bit;
+}
+
+static int ddp_m6_primary_direct_mutex_isolation(DDP_SCENARIO_ENUM scenario)
+{
+	if (!disp_helper_get_option(DISP_OPT_BYPASS_PQ))
+		return 0;
+
+	return scenario == DDP_SCENARIO_PRIMARY_DISP ||
+		scenario == DDP_SCENARIO_PRIMARY_RDMA0_COLOR0_DISP;
+}
+
+static unsigned int ddp_m6_primary_direct_mutex_clear_mask(void)
+{
+	/*
+	 * DISP_OPT_BYPASS_PQ bypasses picture processing, not the physical
+	 * direct-link bridge.  COLOR0 -> CCORR -> AAL -> GAMMA -> DITHER must
+	 * stay in the mutex for VALID/READY to propagate to RDMA0.
+	 */
+	return ddp_mutex_module_mask(DISP_MODULE_OVL1_2L);
+}
 
 /* module can be connect if 1 */
 static module_map_t module_can_connect[DISP_MODULE_NUM] = {
@@ -396,6 +436,65 @@ static int ddp_get_module_num_l(int *module_list)
 	return num;
 }
 
+static void ddp_m6_sram_path(const char *tag, int *module_list, int mutex_id, void *handle)
+{
+	static unsigned int count;
+	unsigned int module_num;
+
+	if (module_list == NULL || count >= 8)
+		return;
+
+	module_num = ddp_get_module_num_l(module_list);
+	if (module_num == 0)
+		return;
+	if (module_list[0] != DISP_MODULE_OVL0 ||
+	    module_list[module_num - 1] != DISP_MODULE_DSI0)
+		return;
+
+	count++;
+	aee_sram_printk("M6X%02u %s f=%d l=%d m=%d V=%x/%x S=%x/%x/%x/%x/%x M=%x/%x/%x R=%x %u/%u %u/%u D=%x/%x\n",
+		count, tag ? tag : "null", module_list[0],
+		module_list[module_num - 1], mutex_id,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_COLOR0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DITHER_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(mutex_id)),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x16c));
+	DISPERR("M6 DDP sram path[%s]#%u handle=%p first=%s last=%s mutex=%d valid=0x%x ready=0x%x ovl0=0x%x color=0x%x dither=0x%x rdma_sout=0x%x dsi_sel=0x%x m=0x%x/0x%x/0x%x rdma=0x%x in=%u/%u out=%u/%u dsi=0x%x/0x%x\n",
+		tag ? tag : "null", count, handle,
+		ddp_get_module_name(module_list[0]),
+		ddp_get_module_name(module_list[module_num - 1]), mutex_id,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_OVL0_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_COLOR0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DITHER_MOUT_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_EN(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX_SOF(mutex_id)),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+		DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x16c));
+}
+
 /* config mout/msel to creat a compelte path */
 static void ddp_connect_path_l(int *module_list, void *handle)
 {
@@ -408,6 +507,7 @@ static void ddp_connect_path_l(int *module_list, void *handle)
 
 	DISPDBG("connect_path: %s to %s\n", ddp_get_module_name(module_list[0]),
 	       ddp_get_module_name(module_list[module_num - 1]));
+	ddp_m6_sram_path("connect-before", module_list, 0, handle);
 	/* connect mout */
 	for (i = 0; i < module_num - 1; i++) {
 		for (j = 0; j < DDP_MOUT_NUM; j++) {
@@ -502,6 +602,7 @@ static void ddp_connect_path_l(int *module_list, void *handle)
 			}
 		}
 	}
+	ddp_m6_sram_path("connect-after", module_list, 0, handle);
 }
 
 static void ddp_check_path_l(int *module_list)
@@ -733,13 +834,15 @@ static int ddp_mutex_set_l(int mutex_id, int *module_list, DDP_MODE ddp_mode, vo
 	sof_val = REG_FLD_VAL(SOF_FLD_MUTEX0_SOF, sof_src);
 	sof_val |= REG_FLD_VAL(SOF_FLD_MUTEX0_EOF, eof_src);
 	DISP_REG_SET(handle, DISP_REG_CONFIG_MUTEX_SOF(mutex_id), sof_val);
+	ddp_m6_sram_path("mutex-set", module_list, mutex_id, handle);
 
 	DISPDBG("mutex %d value=0x%x, sof=%s, eof=%s\n", mutex_id,
 	       value, ddp_get_mutex_sof_name(sof_src), ddp_get_mutex_sof_name(eof_src));
 	return 0;
 }
 
-static void ddp_check_mutex_l(int mutex_id, int *module_list, DDP_MODE ddp_mode)
+static void ddp_check_mutex_l(int mutex_id, int *module_list, DDP_MODE ddp_mode,
+			      unsigned int clear_mask)
 {
 	int i = 0;
 	uint32_t real_value = 0;
@@ -757,6 +860,7 @@ static void ddp_check_mutex_l(int mutex_id, int *module_list, DDP_MODE ddp_mode)
 		if (module_mutex_map[module_list[i]].bit != -1)
 			expect_value |= (1 << module_mutex_map[module_list[i]].bit);
 	}
+	expect_value &= ~clear_mask;
 	if (expect_value != real_value)
 		DISPDMP("error:mutex %d error: expect 0x%x, real 0x%x\n", mutex_id, expect_value,
 			real_value);
@@ -1023,14 +1127,38 @@ void ddp_check_path(DDP_SCENARIO_ENUM scenario)
 
 void ddp_check_mutex(int mutex_id, DDP_SCENARIO_ENUM scenario, DDP_MODE mode)
 {
+	unsigned int clear_mask = 0;
+
 	DISPDBG("check mutex %d on scenario %s\n", mutex_id, ddp_get_scenario_name(scenario));
-	ddp_check_mutex_l(mutex_id, module_list_scenario[scenario], mode);
+	if (ddp_m6_primary_direct_mutex_isolation(scenario))
+		clear_mask = ddp_m6_primary_direct_mutex_clear_mask();
+	ddp_check_mutex_l(mutex_id, module_list_scenario[scenario], mode, clear_mask);
 }
 
 int ddp_mutex_set(int mutex_id, DDP_SCENARIO_ENUM scenario, DDP_MODE mode, void *handle)
 {
-	if (scenario < DDP_SCENARIO_MAX)
-		return ddp_mutex_set_l(mutex_id, module_list_scenario[scenario], mode, handle);
+	int ret;
+	unsigned int clear_mask;
+	unsigned int before;
+	unsigned int queued;
+
+	if (scenario < DDP_SCENARIO_MAX) {
+		ret = ddp_mutex_set_l(mutex_id, module_list_scenario[scenario], mode, handle);
+		if (ret)
+			return ret;
+
+		if (!ddp_m6_primary_direct_mutex_isolation(scenario))
+			return 0;
+
+		clear_mask = ddp_m6_primary_direct_mutex_clear_mask();
+		before = DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id));
+		queued = before & ~clear_mask;
+		DISP_REG_MASK(handle, DISP_REG_CONFIG_MUTEX_MOD(mutex_id), 0, clear_mask);
+		DISPMSG("M6 DDP mutex isolate: keep PQ bridge scenario=%s mutex=%d MOD 0x%x queued=0x%x now=0x%x clear=0x%x\n",
+			ddp_get_scenario_name(scenario), mutex_id, before, queued,
+			DISP_REG_GET(DISP_REG_CONFIG_MUTEX_MOD(mutex_id)), clear_mask);
+		return 0;
+	}
 	DISPERR("Invalid scenario %d when setting mutex\n", scenario);
 	return -1;
 }
@@ -1124,7 +1252,16 @@ int ddp_mutex_clear(int mutex_id, void *handle)
 
 int ddp_mutex_enable(int mutex_id, DDP_SCENARIO_ENUM scenario, void *handle)
 {
-	return ddp_mutex_enable_l(mutex_id, handle);
+	int ret;
+
+	if (scenario == DDP_SCENARIO_PRIMARY_DISP)
+		ddp_m6_sram_path("mutex-enable-before",
+				 module_list_scenario[scenario], mutex_id, handle);
+	ret = ddp_mutex_enable_l(mutex_id, handle);
+	if (scenario == DDP_SCENARIO_PRIMARY_DISP)
+		ddp_m6_sram_path("mutex-enable-after",
+				 module_list_scenario[scenario], mutex_id, handle);
+	return ret;
 }
 
 int ddp_mutex_disenable(int mutex_id, DDP_SCENARIO_ENUM scenario, void *handle)
@@ -1165,17 +1302,19 @@ int ddp_path_top_clock_on(void)
 	enable_clock(MT_CG_DISP0_SMI_COMMON, "DDP_SMI");
 	enable_clock(MT_CG_DISP0_SMI_LARB0, "DDP_LARB0");
 #else
-	if (need_enable) {
-		if (disp_helper_get_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK))
-			ddp_clk_prepare_enable(MM_VENCPLL);
-		ddp_clk_prepare_enable(DISP_MTCMOS_CLK);
-		ddp_clk_prepare_enable(DISP0_SMI_COMMON);
-		ddp_clk_prepare_enable(DISP0_SMI_LARB0);
-	} else {
+	if (!need_enable)
 		need_enable = 1;
-		if (disp_helper_get_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK))
-			ddp_clk_prepare_enable(MM_VENCPLL);
-	}
+	if (disp_helper_get_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK))
+		ddp_clk_prepare_enable(MM_VENCPLL);
+	ddp_clk_prepare_enable(DISP_MTCMOS_CLK);
+	ddp_clk_prepare_enable(DISP0_SMI_COMMON);
+	ddp_clk_prepare_enable(DISP0_SMI_COMMON_M4U);
+	ddp_clk_prepare_enable(DISP0_SMI_COMMON_DISPSYS);
+	ddp_clk_prepare_enable(DISP0_SMI_LARB0);
+	ddp_clk_prepare_enable(DISP0_SMI_LARB0_M4U);
+	ddp_clk_prepare_enable(DISP0_SMI_LARB0_DISPSYS);
+	ddp_clk_prepare_enable(DISP0_DISP_OVL0_MOUT);
+	DISPMSG("M6 DDP SMI clk: mtcmos/common+m4u+dispsys/larb0+m4u+dispsys/ovl0_mout enabled in order\n");
 #endif
 	/* enable_clock(MT_CG_DISP0_MUTEX_32K   , "DDP_MUTEX"); */
 	DISPMSG("ddp CG:%x\n", DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
@@ -1197,7 +1336,12 @@ int ddp_path_top_clock_off(void)
 	disable_clock(MT_CG_DISP0_SMI_LARB0, "DDP_LARB0");
 	disable_clock(MT_CG_DISP0_SMI_COMMON, "DDP_SMI");
 #else
+	ddp_clk_disable_unprepare(DISP0_DISP_OVL0_MOUT);
+	ddp_clk_disable_unprepare(DISP0_SMI_LARB0_DISPSYS);
+	ddp_clk_disable_unprepare(DISP0_SMI_LARB0_M4U);
 	ddp_clk_disable_unprepare(DISP0_SMI_LARB0);
+	ddp_clk_disable_unprepare(DISP0_SMI_COMMON_DISPSYS);
+	ddp_clk_disable_unprepare(DISP0_SMI_COMMON_M4U);
 	ddp_clk_disable_unprepare(DISP0_SMI_COMMON);
 	ddp_clk_disable_unprepare(DISP_MTCMOS_CLK);
 	if (disp_helper_get_option(DISP_OPT_DYNAMIC_SWITCH_MMSYSCLK))
@@ -1233,5 +1377,3 @@ int ddp_convert_ovl_input_to_rdma(RDMA_CONFIG_STRUCT *rdma_cfg, OVL_CONFIG_STRUC
 	rdma_cfg->yuv_range = ovl_cfg->yuv_range;
 	return 0;
 }
-
-

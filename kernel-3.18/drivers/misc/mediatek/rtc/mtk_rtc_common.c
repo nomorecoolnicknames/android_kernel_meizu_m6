@@ -878,6 +878,70 @@ static int __init rtc_device_init(void)
 }*/
 
 
+/* ===== FORGE bring-up auto-recovery guard (test builds only) =====
+ * Gated by cmdline token "forgeguard". When armed, sets the MTK RTC
+ * recovery spare bit EARLY (here, at late_initcall) so ANY boot failure
+ * (kernel panic, silent i2c hang, watchdog reset) makes preloader/LK boot
+ * recovery on the next reset -- no buttons. The flashing harness clears it
+ * via /proc/forge_recovery_guard once Android boot completes, so a healthy
+ * kernel reboots normally. Remove the cmdline token to disable entirely.
+ */
+#include <linux/notifier.h>
+#include <linux/proc_fs.h>
+#include <linux/uaccess.h>
+
+extern char *saved_command_line;
+
+static void forge_set_recovery(u16 v)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&rtc_lock, flags);
+	hal_rtc_set_spare_register(RTC_FAC_RESET, v);
+	spin_unlock_irqrestore(&rtc_lock, flags);
+}
+
+static int forge_panic_notify(struct notifier_block *nb, unsigned long e, void *p)
+{
+	forge_set_recovery(0x1);	/* atomic-safe: spinlock + PMIC reg write */
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block forge_panic_nb = {
+	.notifier_call = forge_panic_notify,
+	.priority = INT_MAX,	/* set the bit before AEE in case AEE stalls */
+};
+
+static ssize_t forge_guard_write(struct file *f, const char __user *buf,
+				 size_t n, loff_t *off)
+{
+	char c = 0;
+
+	if (n >= 1 && copy_from_user(&c, buf, 1) == 0) {
+		if (c == '0')
+			forge_set_recovery(0x0);	/* disarm: boot OK */
+		else if (c == '1')
+			forge_set_recovery(0x1);	/* re-arm */
+	}
+	return n;
+}
+
+static const struct file_operations forge_guard_fops = {
+	.owner = THIS_MODULE,
+	.write = forge_guard_write,
+};
+
+static void forge_recovery_guard_init(void)
+{
+	if (!saved_command_line || !strstr(saved_command_line, "forgeguard"))
+		return;
+	atomic_notifier_chain_register(&panic_notifier_list, &forge_panic_nb);
+	proc_create("forge_recovery_guard", 0600, NULL, &forge_guard_fops);
+	forge_set_recovery(0x1);	/* arm now: covers hangs before any panic */
+	rtc_xinfo("FORGE recovery guard ARMED (boot-fail -> recovery; clear: echo 0 > /proc/forge_recovery_guard)\n");
+}
+/* ===== end FORGE guard ===== */
+
 static int __init rtc_late_init(void)
 {
 	unsigned long flags;
@@ -895,6 +959,8 @@ static int __init rtc_late_init(void)
 #if (defined(MTK_GPS_MT3332))
 	hal_rtc_set_gpio_32k_status(0, true);
 #endif
+
+	forge_recovery_guard_init();
 
 	return 0;
 }

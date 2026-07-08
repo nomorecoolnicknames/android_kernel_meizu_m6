@@ -24,7 +24,10 @@
 #endif
 #include <linux/interrupt.h>
 #include <linux/time.h>
-#include <linux/rtpm_prio.h>
+/* M6: linux/rtpm_prio.h absent in this 3.18.140 tree; only RTPM_PRIO_TPD was used */
+#ifndef RTPM_PRIO_TPD
+#define RTPM_PRIO_TPD (MAX_RT_PRIO - 2)
+#endif
 
 #include <linux/proc_fs.h>
 #include <linux/uaccess.h>
@@ -176,6 +179,9 @@ extern unsigned char gtp_default_FW_fl[];
 #define GTP_INT_TRIGGER  1
 #endif
 #define GTP_MAX_TOUCH      5
+/* M6: fallback resolution when chip config read fails (no-SEND_CFG path); stock Flyme DTB tpd-resolution */
+#define GTP_MAX_WIDTH      1080
+#define GTP_MAX_HEIGHT     1920
 
 #define TPD_POWER_SOURCE_CUSTOM	MT6323_POWER_LDO_VGP1	/* MT6323_POWER_LDO_VGP1 */
 #define VELOCITY_CUSTOM

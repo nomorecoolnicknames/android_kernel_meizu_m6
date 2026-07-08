@@ -180,6 +180,58 @@ extern "C" {
 	/* defined in mtkfb.c */
 	extern bool is_ipoh_bootup;
 
+	struct m6_dsi_live_snapshot {
+		bool valid;
+		uint32_t start;
+		uint32_t status;
+		uint32_t inten;
+		uint32_t intsta;
+		uint32_t mode;
+		uint32_t txrx;
+		uint32_t psctrl;
+		uint32_t vsa;
+		uint32_t vbp;
+		uint32_t vfp;
+		uint32_t vact;
+		uint32_t hsa;
+		uint32_t hbp;
+		uint32_t hfp;
+		uint32_t bllp;
+		uint32_t hstx_ckl;
+		uint32_t phy_lccon;
+		uint32_t phy_ld0con;
+		uint32_t phy_syncon;
+		uint32_t phy_timecon0;
+		uint32_t phy_timecon1;
+		uint32_t phy_timecon2;
+		uint32_t phy_timecon3;
+		uint32_t vm_cmd;
+		uint32_t vm_payload[8];
+		uint32_t bist_pattern;
+		uint32_t bist_con;
+		uint32_t debug_sel;
+		uint32_t state_dbg[10];
+		uint32_t mipitx_lane_c;
+		uint32_t mipitx_lane0;
+		uint32_t mipitx_lane1;
+		uint32_t mipitx_lane2;
+		uint32_t mipitx_lane3;
+		uint32_t mipitx_top;
+		uint32_t mipitx_bg;
+		uint32_t mipitx_con;
+		uint32_t mipitx_pll[7];
+		uint32_t mipitx_rgs;
+		uint32_t mipitx_gpi;
+		uint32_t mipitx_pull;
+		uint32_t mipitx_phy_sel;
+		uint32_t mipitx_sw_ctrl;
+		uint32_t mipitx_sw0;
+		uint32_t mipitx_sw1;
+		uint32_t mipitx_dbg;
+		uint32_t mipitx_apb;
+		uint32_t mipitx_dbg_out;
+		uint32_t mipitx_apb_async;
+	};
 
 	void DSI_ChangeClk(DISP_MODULE_ENUM module, uint32_t clk);
 	int32_t DSI_ssc_enable(uint32_t dsi_idx, uint32_t en);
@@ -193,10 +245,53 @@ extern "C" {
 				       uint8_t *buffer, uint8_t buffer_size);
 	void *get_dsi_params_handle(uint32_t dsi_idx);
 	void dsi_analysis(DISP_MODULE_ENUM module);
+	void dsi_m6_dump_live(const char *tag);
+	void dsi_m6_dump_takeover(const char *tag);
+	void dsi_m6_dump_hs_window(const char *tag, unsigned int hold_ms);
+	void dsi_m6_dump_phy_truth(const char *tag);
+	void dsi_m6_debug_mux_sweep(const char *tag);
+	void dsi_m6_debug_mux_stats(const char *tag, unsigned int samples,
+				    unsigned int delay_us);
+	void dsi_m6_lkgold_muxstats_dump(void);
+	void dsi_m6_mipitx_pad_window(const char *tag, unsigned int samples,
+				      unsigned int delay_ms);
+	void dsi_m6_mipitx_pad_probe(const char *field_name, unsigned int value,
+				     unsigned int hold_ms, unsigned int restore,
+				     unsigned int sample_mux);
+	void dsi_m6_mipitx_lane_group_probe(const char *group_name,
+					    unsigned int value,
+					    unsigned int hold_ms,
+					    unsigned int restore,
+					    unsigned int sample_mux);
+	void dsi_m6_mipitx_phy_sel_probe(unsigned int value, unsigned int hold_ms,
+					 unsigned int restore,
+					 unsigned int sample_mux);
+	void dsi_m6_mipitx_plltop_probe(unsigned int value, unsigned int hold_ms,
+					unsigned int restore,
+					unsigned int sample_mux,
+					unsigned int shift);
+	void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms);
+	void dsi_m6_force_vm_cmd(unsigned int value, unsigned int hold_ms,
+				 unsigned int restore,
+				 unsigned int sample_mux);
+	void dsi_m6_force_clk_restore(const char *tag);
+	void dsi_m6_force_pll_change(unsigned int new_pll, const char *tag);
+	void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
+				   unsigned int restore, unsigned int sample_mux);
+	void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
+				      unsigned int restore, unsigned int sample_mux);
+	bool dsi_m6_capture_live_snapshot(struct m6_dsi_live_snapshot *snap);
+	void dsi_m6_dump_dcs_status(const char *tag);
+	void dsi_m6_dump_dcs_status_force(const char *tag);
+	void dsi_m6_wrtrace_dump(unsigned int limit);
+	void dsi_m6_wrtrace_reset(unsigned int enable);
+	void dsi_m6_wrtrace_enable(unsigned int enable);
 	void DSI_LFR_UPDATE(DISP_MODULE_ENUM module, cmdqRecHandle cmdq);
 	void DSI_Set_LFR(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, unsigned int mode,
 			 unsigned int type, unsigned int enable, unsigned int skip_num);
 	DSI_STATUS DSI_BIST_Pattern_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bool enable, unsigned int color);
+	DSI_STATUS DSI_M6_BIST_Full_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bool enable, unsigned int color);
+	DSI_STATUS DSI_M6_BIST_Profile_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, unsigned int profile, unsigned int color, unsigned int hold_ms);
 	int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq);
 	DSI_STATUS DSI_DumpRegisters(DISP_MODULE_ENUM module, int level);
 	void DSI_ForceConfig(int forceconfig);

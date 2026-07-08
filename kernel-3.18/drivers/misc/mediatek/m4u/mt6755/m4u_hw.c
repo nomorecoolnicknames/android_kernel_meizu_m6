@@ -13,6 +13,7 @@
 
 #include <linux/slab.h>
 #include <linux/interrupt.h>
+#include <linux/mm.h>
 
 #include "m4u_priv.h"
 #include "m4u_platform.h"
@@ -24,6 +25,17 @@
 #include <mt-plat/mt_lpae.h>
 
 static m4u_domain_t gM4uDomain;
+
+/* M6 HWC guard-page remap: a single zeroed scratch physical page mapped into
+ * the M4U page table at the OVL0 end-of-valid-MVA prefetch fault address so
+ * the OVL0 read engine completes its one-page-past-end burst instead of
+ * stalling (which causes RDMA0 underflow -> RDMA0_EOF never pulses -> HWC
+ * frame serialization breaks -> display lag/jitter). The fault is verified
+ * benign (delta=0x0, exactly one page past a valid display buffer end) by
+ * the existing disp-TF bypass logic. This is the PROPER-FIX replacement for
+ * the suppress-dump-only bypass; it makes the prefetch read valid. */
+static struct page *m6_ovl_guard_scratch_page;
+static DEFINE_MUTEX(m6_ovl_guard_lock);
 
 static unsigned long gM4UBaseAddr[TOTAL_M4U_NUM];
 static unsigned long gLarbBaseAddr[SMI_LARB_NR];
@@ -2035,10 +2047,25 @@ irqreturn_t MTK_M4U_isr(int irq, void *dev_id)
 		m4u_port = m4u_get_port_by_tf_id(m4u_index, regval);
 
 		/* dump something quickly */
-		m4u_dump_rs_info(m4u_index, m4u_slave_id);
-		m4u_dump_invalid_main_tlb(m4u_index, m4u_slave_id);
-		m4u_dump_main_tlb(m4u_index, 0);
-		m4u_dump_pfh_tlb(m4u_index);
+		{
+			/* M6: these four dumps print THOUSANDS of printk lines per
+			 * fault (whole main+pfh TLB). Display OVL prefetch faults
+			 * (handled by the disp-TF bypass below) fire periodically
+			 * during normal scrolling; each unconditional dump froze
+			 * the frame pipeline for seconds — SurfaceFlinger "Timed
+			 * out waiting for hw vsync", screen black until wake.
+			 * Keep full dumps for the first couple of faults only;
+			 * the short one-line fault report below always prints. */
+			static unsigned int m6_full_dump_count;
+
+			if (m6_full_dump_count < 2) {
+				m6_full_dump_count++;
+				m4u_dump_rs_info(m4u_index, m4u_slave_id);
+				m4u_dump_invalid_main_tlb(m4u_index, m4u_slave_id);
+				m4u_dump_main_tlb(m4u_index, 0);
+				m4u_dump_pfh_tlb(m4u_index);
+			}
+		}
 
 		if (IntrSrc & F_INT_TRANSLATION_FAULT(m4u_slave_id)) {
 			int bypass_DISP_TF = 0;
@@ -2051,14 +2078,89 @@ irqreturn_t MTK_M4U_isr(int irq, void *dev_id)
 				unsigned int valid_mva = 0;
 				unsigned int valid_size = 0;
 				unsigned int valid_mva_end = 0;
+				static unsigned int m6_disp_tf_bypass_count;
+				static unsigned int m6_disp_tf_corr_count;
+				static unsigned int m6_ovl_guard_remap_count;
+				static unsigned int m6_ovl_guard_fail_count;
 
 				m4u_query_mva_info(fault_mva-1, 0, &valid_mva, &valid_size);
 				if (0 != valid_mva && 0 != valid_size)
 					valid_mva_end = valid_mva+valid_size;
 
 				if (0 != valid_mva_end && fault_mva < valid_mva_end+SZ_4K) {
+					if (m4u_port == M4U_PORT_DISP_OVL0 &&
+					    m6_disp_tf_corr_count < 8 &&
+					    gM4uPort[m4u_port].fault_fn) {
+						M4UMSG("M6 M4U disp tf corr callback[%u]: port=%s fault=0x%x valid=0x%x size=0x%x end=0x%x delta=0x%x layer=%d wr=%d id=0x%x\n",
+							m6_disp_tf_corr_count,
+							m4u_get_port_name(m4u_port),
+							fault_mva, valid_mva,
+							valid_size, valid_mva_end,
+							fault_mva - valid_mva_end,
+							layer, write, regval);
+						gM4uPort[m4u_port].fault_fn(m4u_port,
+							fault_mva,
+							gM4uPort[m4u_port].fault_data);
+						m6_disp_tf_corr_count++;
+					}
+
+					/* M6 HWC guard-page remap: map one scratch
+					 * 4K physical page at fault_mva so the OVL0
+					 * prefetch read completes. This is the
+					 * PROPER-FIX for the end-of-valid-MVA
+					 * prefetch fault that causes RDMA0
+					 * underflow and breaks RDMA0_EOF. Only
+					 * fires for OVL0, only for the verified
+					 * benign one-page-past-end case. */
+					if (m4u_port == M4U_PORT_DISP_OVL0 &&
+					    m6_ovl_guard_scratch_page) {
+						unsigned int guard_mva =
+							fault_mva & ~(SZ_4K - 1);
+						m4u_domain_t *guard_dom =
+							m4u_get_domain_by_port(
+								m4u_port);
+						int gret;
+
+						mutex_lock(&m6_ovl_guard_lock);
+						gret = m4u_map_4K(guard_dom,
+							guard_mva,
+							page_to_phys(
+								m6_ovl_guard_scratch_page),
+							M4U_PROT_READ |
+							M4U_PROT_WRITE |
+							M4U_PROT_CACHE);
+						mutex_unlock(&m6_ovl_guard_lock);
+						if (gret == 0 &&
+						    m6_ovl_guard_remap_count < 96) {
+							M4UMSG("M6 M4U ovl guard remap[%u]: fault=0x%x guard_mva=0x%x valid_end=0x%x delta=0x%x layer=%d\n",
+								m6_ovl_guard_remap_count,
+								fault_mva, guard_mva,
+								valid_mva_end,
+								fault_mva - valid_mva_end,
+								layer);
+							m6_ovl_guard_remap_count++;
+						} else if (gret &&
+							   m6_ovl_guard_fail_count < 16) {
+							M4UMSG("M6 M4U ovl guard remap FAIL[%u]: ret=%d fault=0x%x guard_mva=0x%x\n",
+								m6_ovl_guard_fail_count,
+								gret, fault_mva,
+								guard_mva);
+							m6_ovl_guard_fail_count++;
+						}
+					}
+
 					M4UMSG("bypass disp TF, valid mva=0x%x, size=0x%x, mva_end=0x%x\n",
 						valid_mva, valid_size, valid_mva_end);
+					if (m6_disp_tf_bypass_count < 96) {
+						M4UMSG("M6 M4U disp tf bypass[%u]: port=%s fault=0x%x valid=0x%x size=0x%x end=0x%x delta=0x%x layer=%d wr=%d id=0x%x\n",
+							m6_disp_tf_bypass_count,
+							m4u_get_port_name(m4u_port),
+							fault_mva, valid_mva,
+							valid_size, valid_mva_end,
+							fault_mva - valid_mva_end,
+							layer, write, regval);
+						m6_disp_tf_bypass_count++;
+					}
 					bypass_DISP_TF = 1;
 				}
 			}
@@ -2287,6 +2389,16 @@ int m4u_domain_init(struct m4u_device *m4u_dev, void *priv_reserve)
 	m4u_pgtable_init(m4u_dev, &gM4uDomain);
 
 	m4u_mvaGraph_init(priv_reserve);
+
+	/* M6 HWC guard-page: allocate one zeroed scratch page used to remap
+	 * OVL0 end-of-valid-MVA prefetch faults so the read engine completes
+	 * instead of stalling (prevents RDMA0 underflow / broken RDMA0_EOF). */
+	m6_ovl_guard_scratch_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (!m6_ovl_guard_scratch_page)
+		M4UMSG("M6 M4U ovl guard: scratch page alloc FAILED\n");
+	else
+		M4UMSG("M6 M4U ovl guard: scratch page ready pa=0x%llx\n",
+			(unsigned long long)page_to_phys(m6_ovl_guard_scratch_page));
 
 	return 0;
 }

@@ -115,6 +115,26 @@ static int debug_enable_led_hal = 1;
 	} \
 } while (0)
 
+static void m6_led_log_backlight_path(const char *phase,
+				      struct cust_mt65xx_led *cust,
+				      int raw_level, int mapped_level)
+{
+	static unsigned int log_count;
+
+	if (!cust || !cust->name || strcmp(cust->name, "lcd-backlight"))
+		return;
+
+	if (log_count >= 48 && raw_level != 0 && raw_level != LED_FULL &&
+	    mapped_level != 0 && mapped_level != LED_FULL)
+		return;
+
+	log_count++;
+	pr_info("[LED]M6 LED path[%s] name=%s mode=%d data=0x%lx raw=%d mapped=%d bl=%u duty=%u div=%u count=%u\n",
+		phase, cust->name, cust->mode, cust->data, raw_level,
+		mapped_level, bl_brightness_hal, bl_duty_hal, bl_div_hal,
+		log_count);
+}
+
 /*****************PWM *************************************************/
 #define PWM_DIV_NUM 8
 static int time_array_hal[PWM_DIV_NUM] = {
@@ -338,6 +358,42 @@ struct cust_mt65xx_led *mt_get_cust_led_list(void)
 {
 	struct cust_mt65xx_led *cust_led_list = get_cust_led_dtsi();
 	return cust_led_list;
+}
+
+void m6_led_dump_backlight_truth(const char *tag)
+{
+	struct cust_mt65xx_led *cust = mt_get_cust_led_list();
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int support = Cust_GetBacklightLevelSupport_byPWM();
+	unsigned int i;
+
+	if (!cust) {
+		pr_info("[LED]M6 DISPLAY truth[%s][backlight]: cust=NULL bl=%u duty=%u div=%u pwm_div=%u support=%u\n",
+			safe_tag, bl_brightness_hal, bl_duty_hal, bl_div_hal,
+			backlight_PWM_div_hal, support);
+		return;
+	}
+
+	for (i = 0; i < MT65XX_LED_TYPE_TOTAL; i++) {
+		const char *name = cust[i].name ? cust[i].name : "null";
+
+		if (strcmp(name, "lcd-backlight"))
+			continue;
+		pr_info("[LED]M6 DISPLAY truth[%s][backlight]: idx=%u name=%s mode=%d data=0x%lx bl=%u duty=%u div=%u pwm_div=%u cfg=%u/%u/%u/%u/%u support=%u\n",
+			safe_tag, i, name, cust[i].mode, cust[i].data,
+			bl_brightness_hal, bl_duty_hal, bl_div_hal,
+			backlight_PWM_div_hal,
+			cust[i].config_data.clock_source,
+			cust[i].config_data.div,
+			cust[i].config_data.low_duration,
+			cust[i].config_data.High_duration,
+			cust[i].config_data.pmic_pad, support);
+		return;
+	}
+
+	pr_info("[LED]M6 DISPLAY truth[%s][backlight]: lcd-backlight not found bl=%u duty=%u div=%u pwm_div=%u support=%u\n",
+		safe_tag, bl_brightness_hal, bl_duty_hal, bl_div_hal,
+		backlight_PWM_div_hal, support);
 }
 
 /****************************************************************************
@@ -1544,6 +1600,8 @@ int mt_mt65xx_led_set_cust(struct cust_mt65xx_led *cust, int level)
 						     &cust->config_data);
 			}
 			bl_duty_hal = level;
+			m6_led_log_backlight_path("cust-pwm",
+				cust, tmp_level, level);
 
 		} else {
 			if (level == 0) {
@@ -1592,6 +1650,7 @@ int mt_mt65xx_led_set_cust(struct cust_mt65xx_led *cust, int level)
 		if (strcmp(cust->name, "lcd-backlight") == 0)
 			bl_brightness_hal = level;
 		LEDS_DEBUG("brightness_set_cust:backlight control by LCM\n");
+		m6_led_log_backlight_path("cust-lcm", cust, level, level);
 		/* warning for this API revork */
 		return ((cust_brightness_set) (cust->data)) (level, bl_div_hal);
 
@@ -1599,6 +1658,7 @@ int mt_mt65xx_led_set_cust(struct cust_mt65xx_led *cust, int level)
 		if (strcmp(cust->name, "lcd-backlight") == 0)
 			bl_brightness_hal = level;
 		//mtkfb_set_backlight_level(level/4);
+		m6_led_log_backlight_path("cust-bls-pwm", cust, level, level);
 		return ((cust_set_brightness) (cust->data)) (level);
 
 	case MT65XX_LED_MODE_NONE:
@@ -1623,6 +1683,7 @@ void mt_mt65xx_led_set(struct led_classdev *led_cdev, enum led_brightness level)
 {
 	struct mt65xx_led_data *led_data =
 	    container_of(led_cdev, struct mt65xx_led_data, cdev);
+	int raw_level = level;
 	/* unsigned long flags; */
 	/* spin_lock_irqsave(&leds_lock, flags); */
 
@@ -1661,6 +1722,8 @@ static int bk_state=0;
 			    ("Set Backlight directly %d at time %lu, mapping level is %d\n",
 			     led_data->level, jiffies, level); */
 			backlight_debug_log(led_data->level, level);
+			m6_led_log_backlight_path("class-aal",
+				&led_data->cust, raw_level, level);
 			/* mt_mt65xx_led_set_cust(&led_data->cust, led_data->level); */
 			disp_aal_notify_backlight_changed((((1 <<
 							     MT_LED_INTERNAL_LEVEL_BIT_CNT)
@@ -1689,6 +1752,8 @@ static int bk_state=0;
 			    ("Set Backlight directly %d at time %lu, mapping level is %d\n",
 			     led_data->level, jiffies, level); */
 			backlight_debug_log(led_data->level, level);
+			m6_led_log_backlight_path("class-direct",
+				&led_data->cust, raw_level, level);
 			if (MT65XX_LED_MODE_CUST_BLS_PWM == led_data->cust.mode) {
 				mt_mt65xx_led_set_cust(&led_data->cust,
 						       ((((1 <<

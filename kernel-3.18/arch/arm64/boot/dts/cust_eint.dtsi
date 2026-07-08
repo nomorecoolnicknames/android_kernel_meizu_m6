@@ -20,8 +20,8 @@
 // add by changjingyang
 &eint_fingerprint{
 		interrupt-parent = <&eintc>;
-		interrupts = <7 2>;
-		debounce = <7 0>;
+		interrupts = <12 2>;
+		debounce = <12 0>;
 	};
 
 &eintc {

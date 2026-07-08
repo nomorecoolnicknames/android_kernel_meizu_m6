@@ -58,6 +58,7 @@ do { \
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 #include <mtk_wcn_cmb_stub.h>
 #include "wmt_detect.h"
@@ -80,6 +81,8 @@ do { \
 #ifndef MTK_WCN_CMB_FOR_SDIO_1V_AUTOK
 #define MTK_WCN_CMB_FOR_SDIO_1V_AUTOK 0
 #endif
+
+#define M6_WIFI_IRQ_INVALID 0xffffffffU
 
 #if MTK_WCN_CMB_FOR_SDIO_1V_AUTOK
 struct work_struct *g_sdio_1v_autok_wk = NULL;
@@ -141,11 +144,47 @@ static pm_callback_t mtk_wcn_cmb_sdio_pm_cb;
 static void *mtk_wcn_cmb_sdio_pm_data;
 static void *mtk_wcn_cmb_sdio_eirq_data;
 
-static u32 wifi_irq = 0xffffffff;
+static u32 wifi_irq = M6_WIFI_IRQ_INVALID;
 /*******************************************************************************
 *                  F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************
 */
+
+static bool m6_wifi_irq_valid(void)
+{
+	return wifi_irq != M6_WIFI_IRQ_INVALID && wifi_irq != 0;
+}
+
+static struct device_node *m6_cmb_find_wifi_irq_node(const char **source)
+{
+	struct device_node *node;
+
+	node = of_find_compatible_node(NULL, NULL, "mediatek,connectivity-combo");
+	if (node) {
+		*source = "mediatek,connectivity-combo";
+		return node;
+	}
+
+	node = of_find_compatible_node(NULL, NULL, "mediatek,wifi");
+	if (node) {
+		*source = "mediatek,wifi";
+		return node;
+	}
+
+	*source = "missing";
+	return NULL;
+}
+
+static void m6_cmb_trace_irq_node(const char *phase, const char *source,
+	struct device_node *node, int gpio, int request_ret)
+{
+	pr_warn_ratelimited("M6 CMB wifi-irq %s source=%s node=%p gpio5=%d gpio_valid=%d wifi_irq=%u irq_valid=%d request_ret=%d claim=%d enable=%d handler=%p data=%p\n",
+		phase, source, node, gpio, gpio_is_valid(gpio), wifi_irq,
+		m6_wifi_irq_valid(), request_ret,
+		atomic_read(&sdio_claim_irq_enable_flag),
+		atomic_read(&irq_enable_flag), mtk_wcn_cmb_sdio_eirq_handler,
+		mtk_wcn_cmb_sdio_eirq_data);
+}
 
 
 /*******************************************************************************
@@ -446,26 +485,34 @@ EXPORT_SYMBOL(mtk_wcn_cmb_stub_do_reset);
 
 static void mtk_wcn_cmb_sdio_enable_eirq(void)
 {
+	pr_warn_ratelimited("M6 CMB SDIO enable_eirq flag=%d wifi_irq=%u valid=%d handler=%p data=%p\n",
+		atomic_read(&irq_enable_flag), wifi_irq, m6_wifi_irq_valid(),
+		mtk_wcn_cmb_sdio_eirq_handler, mtk_wcn_cmb_sdio_eirq_data);
 	if (atomic_read(&irq_enable_flag))
 		CMB_STUB_LOG_DBG("wifi eint has been enabled\n");
 	else {
 		atomic_set(&irq_enable_flag, 1);
-		if (wifi_irq != 0xfffffff) {
+		if (m6_wifi_irq_valid()) {
 			enable_irq(wifi_irq);
 			CMB_STUB_LOG_DBG(" enable WIFI EINT irq %d !!\n", wifi_irq);
-		}
+		} else
+			CMB_STUB_LOG_WARN("wifi_irq is not available\n");
 	}
 }
 
 static void mtk_wcn_cmb_sdio_disable_eirq(void)
 {
+	pr_warn_ratelimited("M6 CMB SDIO disable_eirq flag=%d wifi_irq=%u valid=%d handler=%p data=%p\n",
+		atomic_read(&irq_enable_flag), wifi_irq, m6_wifi_irq_valid(),
+		mtk_wcn_cmb_sdio_eirq_handler, mtk_wcn_cmb_sdio_eirq_data);
 	if (!atomic_read(&irq_enable_flag))
 		CMB_STUB_LOG_DBG("wifi eint has been disabled!\n");
 	else {
-		if (wifi_irq != 0xfffffff) {
+		if (m6_wifi_irq_valid()) {
 			disable_irq_nosync(wifi_irq);
 			CMB_STUB_LOG_DBG("disable WIFI EINT irq %d !!\n", wifi_irq);
-		}
+		} else
+			CMB_STUB_LOG_WARN("wifi_irq is not available\n");
 		atomic_set(&irq_enable_flag, 0);
 	}
 }
@@ -480,9 +527,10 @@ irqreturn_t mtk_wcn_cmb_sdio_eirq_handler_stub(int irq, void *data)
 static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, void *data)
 {
 	struct device_node *node;
+	const char *irq_source;
 	int ret = -EINVAL;
+	int gpio_wifi_eint_pin = -ENOENT;
 #if 0
-	unsigned int gpio_wifi_eint_pin;
 #endif
 
 	CMB_STUB_LOG_INFO("enter %s\n", __func__);
@@ -491,27 +539,66 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 	mtk_wcn_cmb_sdio_eirq_data = data;
 	mtk_wcn_cmb_sdio_eirq_handler = irq_handler;
 
-	node = (struct device_node *)of_find_compatible_node(NULL, NULL, "mediatek,connectivity-combo");
+	node = m6_cmb_find_wifi_irq_node(&irq_source);
+	pr_warn("M6 CMB SDIO request_eirq handler=%p data=%p node=%p source=%s\n",
+		irq_handler, data, node, irq_source);
 	if (node) {
-#if 0
 		gpio_wifi_eint_pin = of_get_gpio(node, 5);
-		CMB_STUB_LOG_INFO("WIFI EINT pin %d !!\n", gpio_wifi_eint_pin);
+#if 0
+		CMB_STUB_LOG_INFO("WIFI EINT pin %d !!\n",
+			gpio_wifi_eint_pin);
 		wifi_irq = gpio_to_irq(gpio_wifi_eint_pin);
 #else
+		m6_cmb_trace_irq_node("irq-parse-entry", irq_source, node,
+			gpio_wifi_eint_pin, ret);
 		wifi_irq = irq_of_parse_and_map(node, 0);/* get wifi eint num */
 #endif
 #if 1
-		ret = request_irq(wifi_irq, mtk_wcn_cmb_sdio_eirq_handler_stub, IRQF_TRIGGER_LOW,
-				"WIFI-eint", NULL);
-		CMB_STUB_LOG_DBG("WIFI EINT irq %d !!\n", wifi_irq);
+#ifdef CONFIG_MTK_COMBO_CHIP_CONSYS_6755
+		/*
+		 * M6 (MT6755) WCN is the integrated on-die CONSYS. Its
+		 * wifi@180f0000 "interrupts=<GIC_SPI 238>" (Linux IRQ 270) is the
+		 * AHB WiFi-HIF *data* interrupt that the gen2 wlan driver claims in
+		 * wlanProbe (request_irq AHB_SLAVE_HIF). The legacy SDIO-combo eirq
+		 * path here (meant for external combo chips like MT6628 that sit on
+		 * an SDIO slot with a separate GPIO EINT) parses the SAME node and
+		 * grabs IRQ 270 first as "WIFI-eint" -> genirq flags-mismatch ->
+		 * wlanProbe request_irq fails -> "wmt call wlan probe fail(-1)" ->
+		 * WiFi func_on -2. The integrated CONSYS has no SDIO EINT, so this
+		 * request is both wrong and harmful: skip it and leave IRQ 270 for
+		 * the AHB data driver. FACT: dmesg "genirq: Flags mismatch irq 270
+		 * (AHB_SLAVE_HIF) vs (WIFI-eint)".
+		 */
+		wifi_irq = M6_WIFI_IRQ_INVALID;
+		ret = 0;
+		pr_warn("M6 CMB SDIO request_eirq: integrated CONSYS_6755, skip WIFI-eint grab (leave IRQ for AHB wlan)\n");
+#else
+		if (m6_wifi_irq_valid()) {
+			ret = request_irq(wifi_irq, mtk_wcn_cmb_sdio_eirq_handler_stub,
+				IRQF_TRIGGER_LOW, "WIFI-eint", NULL);
+			CMB_STUB_LOG_DBG("WIFI EINT irq %d !!\n", wifi_irq);
+		} else {
+			ret = -ENODEV;
+		}
+#endif
+		pr_warn("M6 CMB SDIO request_eirq source=%s parsed_irq=%u valid=%d request_ret=%d\n",
+			irq_source, wifi_irq, m6_wifi_irq_valid(), ret);
+		m6_cmb_trace_irq_node("irq-parse-result", irq_source, node,
+			gpio_wifi_eint_pin, ret);
 #endif
 
 		if (ret)
 			CMB_STUB_LOG_WARN("WIFI EINT IRQ LINE NOT AVAILABLE!!\n");
 		else
 			mtk_wcn_cmb_sdio_disable_eirq();/*not ,chip state is power off*/
-	} else
-		CMB_STUB_LOG_WARN("[%s] can't find connectivity compatible node\n", __func__);
+	} else {
+		wifi_irq = M6_WIFI_IRQ_INVALID;
+		pr_warn("M6 CMB SDIO request_eirq missing wifi irq node wifi_irq=%u\n",
+			wifi_irq);
+		m6_cmb_trace_irq_node("irq-missing-node", irq_source, node,
+			gpio_wifi_eint_pin, ret);
+		CMB_STUB_LOG_WARN("[%s] can't find wifi irq compatible node\n", __func__);
+	}
 
 	CMB_STUB_LOG_INFO("exit %s\n", __func__);
 }
@@ -519,9 +606,12 @@ static void mtk_wcn_cmb_sdio_request_eirq(msdc_sdio_irq_handler_t irq_handler, v
 static void mtk_wcn_cmb_sdio_register_pm(pm_callback_t pm_cb, void *data)
 {
 	CMB_STUB_LOG_DBG("mtk_wcn_cmb_sdio_register_pm (0x%p, 0x%p)\n", pm_cb, data);
+	pr_warn("M6 CMB SDIO register_pm cb=%p data=%p\n", pm_cb, data);
 	/* register pm change callback */
 	mtk_wcn_cmb_sdio_pm_cb = pm_cb;
 	mtk_wcn_cmb_sdio_pm_data = data;
+	pr_warn("M6 CMB SDIO register_pm stored cb=%p data=%p\n",
+		mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data);
 }
 
 static void mtk_wcn_cmb_sdio_on(int sdio_port_num)
@@ -529,6 +619,9 @@ static void mtk_wcn_cmb_sdio_on(int sdio_port_num)
 	pm_message_t state = {.event = PM_EVENT_USER_RESUME };
 
 	CMB_STUB_LOG_INFO("mtk_wcn_cmb_sdio_on (%d)\n", sdio_port_num);
+	pr_warn_ratelimited("M6 CMB SDIO on port=%d cb=%p data=%p wifi_irq=%u\n",
+		sdio_port_num, mtk_wcn_cmb_sdio_pm_cb,
+		mtk_wcn_cmb_sdio_pm_data, wifi_irq);
 
 	/* 1. disable sdio eirq */
 	mtk_wcn_cmb_sdio_disable_eirq();
@@ -537,7 +630,12 @@ static void mtk_wcn_cmb_sdio_on(int sdio_port_num)
 	if (mtk_wcn_cmb_sdio_pm_cb) {
 		/* pr_warn("mtk_wcn_cmb_sdio_pm_cb(PM_EVENT_USER_RESUME, 0x%p, 0x%p)\n",
 		 * mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data); */
+		pr_warn_ratelimited("M6 CMB SDIO on invoking pm cb=%p data=%p evt=%d\n",
+			mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data,
+			state.event);
 		mtk_wcn_cmb_sdio_pm_cb(state, mtk_wcn_cmb_sdio_pm_data);
+		pr_warn_ratelimited("M6 CMB SDIO on returned from pm cb=%p\n",
+			mtk_wcn_cmb_sdio_pm_cb);
 	} else
 		CMB_STUB_LOG_WARN("mtk_wcn_cmb_sdio_on no sd callback!!\n");
 }
@@ -547,12 +645,20 @@ static void mtk_wcn_cmb_sdio_off(int sdio_port_num)
 	pm_message_t state = {.event = PM_EVENT_USER_SUSPEND };
 
 	CMB_STUB_LOG_INFO("mtk_wcn_cmb_sdio_off (%d)\n", sdio_port_num);
+	pr_warn_ratelimited("M6 CMB SDIO off port=%d cb=%p data=%p wifi_irq=%u\n",
+		sdio_port_num, mtk_wcn_cmb_sdio_pm_cb,
+		mtk_wcn_cmb_sdio_pm_data, wifi_irq);
 
 	/* 1. call sd callback */
 	if (mtk_wcn_cmb_sdio_pm_cb) {
 		/* pr_warn("mtk_wcn_cmb_sdio_off(PM_EVENT_USER_SUSPEND, 0x%p, 0x%p)\n",
 		 * mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data); */
+		pr_warn_ratelimited("M6 CMB SDIO off invoking pm cb=%p data=%p evt=%d\n",
+			mtk_wcn_cmb_sdio_pm_cb, mtk_wcn_cmb_sdio_pm_data,
+			state.event);
 		mtk_wcn_cmb_sdio_pm_cb(state, mtk_wcn_cmb_sdio_pm_data);
+		pr_warn_ratelimited("M6 CMB SDIO off returned from pm cb=%p\n",
+			mtk_wcn_cmb_sdio_pm_cb);
 	} else
 		CMB_STUB_LOG_WARN("mtk_wcn_cmb_sdio_off no sd callback!!\n");
 
@@ -562,7 +668,18 @@ static void mtk_wcn_cmb_sdio_off(int sdio_port_num)
 
 int board_sdio_ctrl(unsigned int sdio_port_num, unsigned int on)
 {
+	int wake_ret = -ENODEV;
+
 	CMB_STUB_LOG_DBG("mt_mtk_wcn_cmb_sdio_ctrl (%d, %d)\n", sdio_port_num, on);
+	pr_warn_ratelimited("M6 CMB board_sdio_ctrl port=%u on=%u cb=%p data=%p wifi_irq=%u valid=%d\n",
+		sdio_port_num, on, mtk_wcn_cmb_sdio_pm_cb,
+		mtk_wcn_cmb_sdio_pm_data, wifi_irq, m6_wifi_irq_valid());
+	pr_warn_ratelimited("M6 CMB board_sdio_ctrl entry port=%u on=%u cb=%p data=%p handler=%p irq_data=%p wifi_irq=%u valid=%d claim=%d enable=%d\n",
+		sdio_port_num, on, mtk_wcn_cmb_sdio_pm_cb,
+		mtk_wcn_cmb_sdio_pm_data, mtk_wcn_cmb_sdio_eirq_handler,
+		mtk_wcn_cmb_sdio_eirq_data, wifi_irq, m6_wifi_irq_valid(),
+		atomic_read(&sdio_claim_irq_enable_flag),
+		atomic_read(&irq_enable_flag));
 	if (on) {
 #if 1
 		CMB_STUB_LOG_DBG("board_sdio_ctrl force off before on\n");
@@ -572,18 +689,27 @@ int board_sdio_ctrl(unsigned int sdio_port_num, unsigned int on)
 #endif
 		/* off -> on */
 		mtk_wcn_cmb_sdio_on(sdio_port_num);
-		if (wifi_irq != 0xfffffff)
-			irq_set_irq_wake(wifi_irq, 1);
+		if (m6_wifi_irq_valid())
+			wake_ret = irq_set_irq_wake(wifi_irq, 1);
 		else
 			CMB_STUB_LOG_WARN("wifi_irq is not available\n");
+		pr_warn_ratelimited("M6 CMB board_sdio_ctrl wake port=%u on=%u wifi_irq=%u valid=%d ret=%d\n",
+			sdio_port_num, on, wifi_irq, m6_wifi_irq_valid(), wake_ret);
 	} else {
-			if (wifi_irq != 0xfffffff)
-				irq_set_irq_wake(wifi_irq, 0);
-			else
-				CMB_STUB_LOG_WARN("wifi_irq is not available\n");
-			/* on -> off */
-			mtk_wcn_cmb_sdio_off(sdio_port_num);
+		if (m6_wifi_irq_valid())
+			wake_ret = irq_set_irq_wake(wifi_irq, 0);
+		else
+			CMB_STUB_LOG_WARN("wifi_irq is not available\n");
+		pr_warn_ratelimited("M6 CMB board_sdio_ctrl wake port=%u on=%u wifi_irq=%u valid=%d ret=%d\n",
+			sdio_port_num, on, wifi_irq, m6_wifi_irq_valid(), wake_ret);
+		/* on -> off */
+		mtk_wcn_cmb_sdio_off(sdio_port_num);
 	}
+	pr_warn_ratelimited("M6 CMB board_sdio_ctrl exit port=%u on=%u wake_ret=%d cb=%p data=%p wifi_irq=%u valid=%d claim=%d enable=%d\n",
+		sdio_port_num, on, wake_ret, mtk_wcn_cmb_sdio_pm_cb,
+		mtk_wcn_cmb_sdio_pm_data, wifi_irq, m6_wifi_irq_valid(),
+		atomic_read(&sdio_claim_irq_enable_flag),
+		atomic_read(&irq_enable_flag));
 
 	return 0;
 }

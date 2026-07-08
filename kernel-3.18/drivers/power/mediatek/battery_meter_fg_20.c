@@ -271,6 +271,74 @@ signed int g_tracking_point = CUST_TRACKING_POINT;
 signed int g_rtc_fg_soc = 0;
 signed int g_I_SENSE_offset = 0;
 
+#define M6_FG_LOW_SOC_MAX 10
+#define M6_FG_HIGH_VOLTAGE_MV 4300
+/* Last-resort UI SOC when the voltage->SOC profile is unavailable. */
+#define M6_FG_GUARD_FALLBACK_SOC 50
+/* Never let the voltage-guarded SOC drop below this while charger present and
+ * voltage is high; the real daemon SOC is known-bad in that case. */
+#define M6_FG_GUARD_MIN_SOC 15
+
+/*
+ * m6_fg_soc_by_voltage() - kernel-side OCV->SOC using the active battery
+ * profile already populated in batt_meter_table_cust_data.battery_profile_t2[]
+ * at meter init. Mirrors the canonical MTK fgauge_read_capacity_by_v():
+ * percentage column is DOD, voltage column is OCV, SOC = 100 - DOD, clamp to
+ * 100 above the top saddle and 0 below the bottom saddle. Used to give the M6
+ * low-SOC guard a value that tracks the measured voltage instead of a flat
+ * constant. Returns -1 if no usable profile is present.
+ */
+static signed int m6_fg_soc_by_voltage(void);
+
+static kal_bool m6_fg_low_soc_on_high_voltage(signed int soc, const char *tag)
+{
+	signed int vbat = BMT_status.bat_vol;
+	signed int zcv = gFG_voltage;
+	kal_bool charger = KAL_FALSE;
+
+	if (soc < 0 || soc > M6_FG_LOW_SOC_MAX)
+		return KAL_FALSE;
+
+	if (bat_is_charger_exist() == KAL_TRUE ||
+	    BMT_status.charger_exist == KAL_TRUE ||
+	    gFG_coulomb_is_charging != 0)
+		charger = KAL_TRUE;
+
+	if (charger != KAL_TRUE)
+		return KAL_FALSE;
+
+	if (vbat < M6_FG_HIGH_VOLTAGE_MV && zcv < M6_FG_HIGH_VOLTAGE_MV)
+		return KAL_FALSE;
+
+	bm_notice("M6 FG impossible low %s=%d at vbat=%d zcv=%d ichg=%d charger=%d/%d; applying guarded UI floor\n",
+		  tag, soc, vbat, zcv, BMT_status.ICharging,
+		  BMT_status.charger_exist, charger);
+	return KAL_TRUE;
+}
+
+static signed int m6_fg_guard_ui_soc(signed int soc, const char *tag)
+{
+	signed int v_soc;
+
+	if (!m6_fg_low_soc_on_high_voltage(soc, tag))
+		return soc;
+
+	/* Daemon SOC is impossibly low vs voltage: substitute a
+	 * voltage-tracking SOC from the active profile instead of a flat floor.
+	 */
+	v_soc = m6_fg_soc_by_voltage();
+	if (v_soc < 0)
+		v_soc = M6_FG_GUARD_FALLBACK_SOC;
+	if (v_soc < M6_FG_GUARD_MIN_SOC)
+		v_soc = M6_FG_GUARD_MIN_SOC;
+	if (v_soc > 100)
+		v_soc = 100;
+
+	bm_notice("M6 FG guard %s: daemon soc=%d -> voltage soc=%d\n",
+		  tag, soc, v_soc);
+	return v_soc;
+}
+
 /* SW FG */
 signed int oam_v_ocv_init = 0;
 signed int oam_v_ocv_1 = 0;
@@ -580,6 +648,68 @@ void fgauge_get_profile_id(void)
 }
 #endif
 #endif
+
+/*
+ * Kernel OCV->SOC using the active battery profile (T2 / 25C saddle table)
+ * populated at meter init in batt_meter_table_cust_data.battery_profile_t2[].
+ * Equivalent to the canonical fgauge_read_capacity_by_v() in battery_meter.c:
+ * the profile 'percentage' column is DOD and 'voltage' is OCV(mV); we
+ * interpolate DOD at the input OCV and return SOC = 100 - DOD.
+ *
+ * Prefers the daemon software-OCV (gFG_voltage / ZCV) when it looks sane,
+ * otherwise falls back to the instantaneous battery voltage. Returns -1 if the
+ * profile table is not yet available so callers can use a safe fallback.
+ */
+static signed int m6_fg_soc_by_voltage(void)
+{
+	BATTERY_PROFILE_STRUCT *profile_p =
+		batt_meter_table_cust_data.battery_profile_t2;
+	int saddles = batt_meter_table_cust_data.battery_profile_t2_size;
+	signed int ocv = gFG_voltage;
+	signed int dod = 0;
+	int i;
+
+	if (profile_p == NULL || saddles < 2)
+		return -1;
+
+	/* gFG_voltage is the daemon SWOCV; if it is zero/implausible, fall back
+	 * to the measured terminal voltage so we still track reality.
+	 */
+	if (ocv < 3000 || ocv > 4500)
+		ocv = BMT_status.bat_vol;
+	if (ocv <= 0)
+		return -1;
+
+	if (ocv >= profile_p[0].voltage)
+		return 100;			/* at/above full saddle */
+	if (ocv <= profile_p[saddles - 1].voltage)
+		return 0;			/* at/below empty saddle */
+
+	for (i = 0; i < saddles - 1; i++) {
+		if (ocv <= profile_p[i].voltage &&
+		    ocv >= profile_p[i + 1].voltage) {
+			signed int v_hi = profile_p[i].voltage;
+			signed int v_lo = profile_p[i + 1].voltage;
+			signed int d_hi = profile_p[i].percentage;
+			signed int d_lo = profile_p[i + 1].percentage;
+
+			if (v_hi == v_lo)
+				dod = d_hi;
+			else
+				dod = d_hi +
+				    ((v_hi - ocv) * (d_lo - d_hi)) /
+				    (v_hi - v_lo);
+			break;
+		}
+	}
+
+	if (dod < 0)
+		dod = 0;
+	if (dod > 100)
+		dod = 100;
+
+	return 100 - dod;
+}
 
 /* ============================================================ // */
 /* function prototype */
@@ -4689,8 +4819,28 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 			signed int rtcvalue = 0;
 
 			memcpy(&rtcvalue, &msg->fgd_data[0], sizeof(rtcvalue));
-			set_rtc_spare_fg_value(rtcvalue);
-			bm_notice("[fg_res] set rtc = %d\n", rtcvalue);
+			if (m6_fg_low_soc_on_high_voltage(rtcvalue, "RTC")) {
+				/* Daemon wants to persist an impossibly-low SOC
+				 * (e.g. 6) while voltage is high. Persist a
+				 * voltage-derived value instead so the stale RTC
+				 * SOC is overwritten and the gauge can self-heal
+				 * across reboots rather than being frozen.
+				 */
+				signed int v_soc = m6_fg_soc_by_voltage();
+
+				if (v_soc < 0)
+					v_soc = M6_FG_GUARD_FALLBACK_SOC;
+				if (v_soc < M6_FG_GUARD_MIN_SOC)
+					v_soc = M6_FG_GUARD_MIN_SOC;
+				if (v_soc > 100)
+					v_soc = 100;
+				set_rtc_spare_fg_value(v_soc);
+				bm_notice("[fg_res] override impossible rtc=%d -> %d (voltage)\n",
+					  rtcvalue, v_soc);
+			} else {
+				set_rtc_spare_fg_value(rtcvalue);
+				bm_notice("[fg_res] set rtc = %d\n", rtcvalue);
+			}
 		}
 		break;
 
@@ -4723,6 +4873,7 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 	case FG_DAEMON_CMD_SET_SOC:
 		{
 			memcpy(&gFG_capacity_by_c, &msg->fgd_data[0], sizeof(gFG_capacity_by_c));
+			m6_fg_low_soc_on_high_voltage(gFG_capacity_by_c, "SOC");
 			bm_debug("[fg_res] SOC = %d\n", gFG_capacity_by_c);
 			BMT_status.SOC = gFG_capacity_by_c;
 		}
@@ -4732,6 +4883,7 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 		{
 			signed int UI_SOC = 0;
 			memcpy(&UI_SOC, &msg->fgd_data[0], sizeof(UI_SOC));
+			UI_SOC = m6_fg_guard_ui_soc(UI_SOC, "UI_SOC");
 			bm_debug("[fg_res] UI_SOC = %d\n", UI_SOC);
 			BMT_status.UI_SOC = UI_SOC;
 		}
@@ -4742,6 +4894,7 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 			signed int UI_SOC;
 
 			memcpy(&UI_SOC, &msg->fgd_data[0], sizeof(UI_SOC));
+			UI_SOC = m6_fg_guard_ui_soc(UI_SOC, "UI_SOC2");
 			bm_debug("[fg_res] UI_SOC2 = %d\n", UI_SOC);
 #ifdef USING_SMOOTH_UI_SOC2
 			temp_UI_SOC2 = UI_SOC;
@@ -4861,6 +5014,7 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 			signed int VBATSOC = 0;
 
 			memcpy(&VBATSOC, &msg->fgd_data[0], sizeof(VBATSOC));
+			m6_fg_low_soc_on_high_voltage(VBATSOC, "VBATSOC");
 			bm_print(BM_LOG_CRTI, "[fg_res] VBATSOC = %d\n", VBATSOC);
 			gFG_vbat_soc = VBATSOC;
 		}

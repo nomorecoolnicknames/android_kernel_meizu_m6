@@ -138,12 +138,22 @@ symbols using #define
 #define POINT_READ_BUF						(3 + FTS_TOUCH_STEP * CFG_MAX_TOUCH_POINTS)
 #define FT_FW_NAME_MAX_LEN				50
 #define TPD_DELAY							(2 * HZ / 100)
-#define TPD_RES_X							1200	/* 480 */
-#define TPD_RES_Y							1920	/* 800 */
+/* M6 panel is 720x1280 (HD). The FT5x26 IC reports raw coords directly in
+ * this portrait space (verified by getevent: raw X 0..720 = horizontal,
+ * raw Y 0..1280 = vertical, increasing right/down). Earlier 1080x1920 was a
+ * wrong donor value that, combined with the 90-deg rotation matrix below,
+ * swapped axes and compressed motion ("barely moves" / lockscreen stuck). */
+#define TPD_RES_X							720
+#define TPD_RES_Y							1280
 #define FT_PROXIMITY_ENABLE				0
 
 #if (defined(TPD_HAVE_CALIBRATION) && !defined(TPD_CUSTOM_CALIBRATION))
-#define TPD_CALIBRATION_MATRIX_ROTATION {0, -4096, 4915200, 4096, 0, 0, 0, 0}
+/* Identity: out_x = raw_x, out_y = raw_y. The IC already reports in the
+ * correct 720x1280 portrait orientation, so NO rotation/scaling is applied.
+ * Previous {0,-4096,4915200,4096,0,0,0,0} rotated 90 deg (const 4915200/4096
+ * = 1200) which is what broke touch. Format per tpd_calibrate_driver():
+ * out_x=(m0*x+m1*y+m2)>>12, out_y=(m3*x+m4*y+m5)>>12. */
+#define TPD_CALIBRATION_MATRIX_ROTATION {4096, 0, 0, 0, 4096, 0, 0, 0}
 #endif
 
 /*********************Custom Define end*************************************************/

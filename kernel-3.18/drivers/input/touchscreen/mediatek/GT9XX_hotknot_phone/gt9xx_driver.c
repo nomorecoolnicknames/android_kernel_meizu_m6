@@ -1463,12 +1463,19 @@ reset_proc:
 	GTP_GPIO_OUTPUT(GTP_INT_PORT, 0);
 	msleep(20);
 
-	ret = regulator_set_voltage(tpd->reg, 2800000, 2800000);	/* set 2.8v */
-	if (ret)
-		GTP_DEBUG("regulator_set_voltage() failed!\n");
-	ret = regulator_enable(tpd->reg);	/* enable regulator */
-	if (ret)
-		GTP_DEBUG("regulator_enable() failed!\n");
+	/* M6: tpd->reg can be ERR_PTR (vtouch regulator EPROBE_DEFER) -> guard
+	 * against dereferencing an error pointer (was a data-abort panic). */
+	if (!IS_ERR_OR_NULL(tpd->reg)) {
+		ret = regulator_set_voltage(tpd->reg, 2800000, 2800000);	/* set 2.8v */
+		if (ret)
+			GTP_DEBUG("regulator_set_voltage() failed!\n");
+		ret = regulator_enable(tpd->reg);	/* enable regulator */
+		if (ret)
+			GTP_DEBUG("regulator_enable() failed!\n");
+	} else {
+		GTP_ERROR("tpd->reg invalid (%ld); skip regulator (rail assumed on)\n",
+			  PTR_ERR(tpd->reg));
+	}
 
 	gtp_reset_guitar(client, 20);
 
@@ -2828,8 +2835,11 @@ exit_work_func:
 static int tpd_local_init(void)
 {
 	tpd->reg = regulator_get(tpd->tpd_dev, "vtouch");
-	if (IS_ERR(tpd->reg))
-		GTP_ERROR("regulator_get() failed!\n");
+	if (IS_ERR(tpd->reg)) {
+		GTP_ERROR("regulator_get(vtouch) failed (%ld); NULLing so later regulator_* are no-ops (rail assumed on)\n",
+			  PTR_ERR(tpd->reg));
+		tpd->reg = NULL;	/* regulator core tolerates NULL; avoids ERR_PTR deref panic */
+	}
 
 #if defined(CONFIG_GTP_ESD_PROTECT)
 	clk_tick_cnt = 2 * HZ;

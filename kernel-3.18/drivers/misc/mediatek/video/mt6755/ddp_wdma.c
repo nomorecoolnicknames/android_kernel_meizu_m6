@@ -281,33 +281,34 @@ static int wdma_config(DISP_MODULE_ENUM module,
 
 static int wdma_clock_on(DISP_MODULE_ENUM module, void *handle)
 {
-	/* DISPMSG("wmda%d_clock_on\n",idx); */
-	/* do not set CG */
-/*
+	unsigned int idx = wdma_index(module);
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 #ifdef CONFIG_MTK_CLKMGR
 	if (idx == 0)
-		enable_clock(MT_CG_DISP0_DISP_WDMA0, "WDMA0");
+		ret = enable_clock(MT_CG_DISP0_DISP_WDMA0, "WDMA0");
 	else
-		enable_clock(MT_CG_DISP0_DISP_WDMA1, "WDMA1");
+		ret = enable_clock(MT_CG_DISP0_DISP_WDMA1, "WDMA1");
 #else
 	if (idx == 0)
-		ddp_clk_enable(DISP0_DISP_WDMA0);
+		ret = ddp_clk_enable(DISP0_DISP_WDMA0);
 	else
-		ddp_clk_enable(DISP0_DISP_WDMA1);
+		ret = ddp_clk_enable(DISP0_DISP_WDMA1);
 #endif
 #endif
-*/
+	DISPMSG("M6 DDP clk: wdma_%d on ret=%d CG=0x%x\n", idx, ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 	/* DCM Setting -- Enable DCM */
 	DISP_REG_MASK(NULL, DISP_REG_WDMA_EN, 0x80000000, 0x80000000);
-	return 0;
+	return ret;
 }
 
 static int wdma_clock_off(DISP_MODULE_ENUM module, void *handle)
 {
-	/* DISPMSG("wdma%d_clock_off\n",idx); */
-	/* do not set CG */
-/*
+	unsigned int idx = wdma_index(module);
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 #ifdef CONFIG_MTK_CLKMGR
 	if (idx == 0)
@@ -316,14 +317,14 @@ static int wdma_clock_off(DISP_MODULE_ENUM module, void *handle)
 		disable_clock(MT_CG_DISP0_DISP_WDMA1, "WDMA1");
 #else
 	if (idx == 0)
-		ddp_clk_disable(DISP0_DISP_WDMA0);
+		ret = ddp_clk_disable(DISP0_DISP_WDMA0);
 	else
-		ddp_clk_disable(DISP0_DISP_WDMA1);
+		ret = ddp_clk_disable(DISP0_DISP_WDMA1);
 #endif
-
 #endif
-*/
-	return 0;
+	DISPMSG("M6 DDP clk: wdma_%d off ret=%d CG=0x%x\n", idx, ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
+	return ret;
 }
 
 void wdma_dump_analysis(DISP_MODULE_ENUM module)

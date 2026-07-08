@@ -71,6 +71,7 @@ static u32 strobe_Res;
 static u32 strobe_Timeus;
 static BOOL g_strobe_On;
 static BOOL ktd2685_use = 0;
+static BOOL leds_AW3643_present = 0;
 static int g_timeOutTimeMs;
 
 static struct work_struct workTimeOut;
@@ -265,8 +266,12 @@ static int leds_AW3643_i2c_probe(struct i2c_client *client, const struct i2c_dev
 	int err = 0;
 	
 	printk("%s enter\n", __func__);
+	pr_err("[M6_FLASH] aw3643_i2c_probe enter addr=0x%02x adapter=%d\n",
+		client->addr, client->adapter ? client->adapter->nr : -1);
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
+		pr_err("[M6_FLASH] aw3643_i2c_probe no_i2c_functionality addr=0x%02x\n",
+			client->addr);
 		err = -ENODEV;
 		goto exit_check_functionality_failed;
 	}
@@ -280,35 +285,50 @@ static int leds_AW3643_i2c_probe(struct i2c_client *client, const struct i2c_dev
 		reg_chipid = I2C_read_reg(0x00);
 		reg_devid = I2C_read_reg(0x0C);
 		printk("leds_AW3643 i2c read chipid=0x%2x, deveice id=0x%02x\n", reg_chipid, reg_devid);
+		pr_err("[M6_FLASH] aw3643_i2c_probe read try=%u chipid=0x%02x devid=0x%02x addr=0x%02x\n",
+			4 - cnt, reg_chipid, reg_devid, client->addr);
 		if((reg_chipid == 0x36) && ((reg_devid&0x18) == 0x00))
 		{
 			break;
 		}
 		else
 		{
-			printk("leds_AW3643 i2c read fail\n");
+			if (cnt == 3)
+				pr_warn("leds_AW3643 not detected at 0x%02x, disabling torch path\n",
+					client->addr);
 		}
 		cnt --;
 		msleep(10);
 	}
-	if(!cnt)
-	{
-            ktd2685_use = 1;
-		//err = -ENODEV;
-		//leds_AW3643_hwen_off();
-		//goto exit_create_singlethread;
-	}
+	/*
+	 * M6 (M711H) stock parity: the real AW3643 on this unit does NOT return
+	 * chipid 0x36 (the 0x36/devid gate above was copied verbatim from a Doogee
+	 * AW3644 reference board). Stock Flyme AW3643_probe @0xffffffc000611d5c does
+	 * NO chipid/ID i2c read and accepts the device unconditionally. The old gate
+	 * forced leds_AW3643_present=0 -> every setDuty_/flashEnable_/init_ returned
+	 * -ENODEV (lines ~477/497/517/535/553/591/615) -> torch i2c writes blocked ->
+	 * dark torch. Keep the reads above as debug only; mark present like stock.
+	 * FACT: reverse of stock vmlinux, /srv/forge/work/m6-reverse/ FLASHLIGHT spec.
+	 */
+	ktd2685_use = 0;
+	leds_AW3643_present = 1;
+	pr_err("[M6_FLASH] aw3643_i2c_probe FORCED present=1 (stock parity, chipid ignored) addr=0x%02x chipid=0x%02x devid=0x%02x\n",
+		client->addr, reg_chipid, reg_devid);
 
 	leds_AW3643_create_sysfs(client);	
 
 	leds_AW3643_hwen_off();
+	pr_err("[M6_FLASH] aw3643_i2c_probe exit present=%d ktd2685_use=%d\n",
+		leds_AW3643_present, ktd2685_use);
 	
 	return 0;
 
 //exit_create_singlethread:
 	leds_AW3643_flashlight_client = NULL;
 exit_check_functionality_failed:
-	return err;	
+	pr_err("[M6_FLASH] aw3643_i2c_probe exit_error err=%d present=%d\n",
+		err, leds_AW3643_present);
+	return err;
 }
 
 static int leds_AW3643_i2c_remove(struct i2c_client *client)
@@ -454,6 +474,11 @@ int flashEnable_leds_AW3643_2(void)
 	int ret;
 	unsigned char buf[2];
 
+	if (!leds_AW3643_present) {
+		pr_err("[M6_FLASH] aw3643_enable2 absent duty=%d\n", g_duty2);
+		return -ENODEV;
+	}
+
 	buf[0] = 0x01; /* Enable Register */
 	if (g_IsTorch[g_duty2] == 1) /* LED1 in torch mode */
 		g_EnableReg |= (0x09);
@@ -468,6 +493,11 @@ int flashEnable_leds_AW3643_1(void)
 {
 	int ret;
 	unsigned char buf[2];
+
+	if (!leds_AW3643_present) {
+		pr_err("[M6_FLASH] aw3643_enable1 absent duty=%d\n", g_duty1);
+		return -ENODEV;
+	}
 
 	buf[0] = 0x01; /* Enable Register */
 	if (g_IsTorch[g_duty1] == 1) /* LED2 in torch mode */
@@ -484,6 +514,9 @@ int flashDisable_leds_AW3643_2(void)
 	int ret;
 	unsigned char buf[2];
 
+	if (!leds_AW3643_present)
+		return 0;
+
 	buf[0] = 0x01; /* Enable Register */
 	if ((g_EnableReg&0x02) == 0x02) /* LED2 enabled */
 		g_EnableReg &= (~0x01);
@@ -499,6 +532,9 @@ int flashDisable_leds_AW3643_1(void)
 	int ret;
 	unsigned char buf[2];
 
+	if (!leds_AW3643_present)
+		return 0;
+
 	buf[0] = 0x01; /* Enable Register */
 	if ((g_EnableReg&0x01) == 0x01) /* LED1 enabled */
 		g_EnableReg &= (~0x02);
@@ -513,6 +549,9 @@ int setDuty_leds_AW3643_2(int duty)
 {
 	int ret;
 	unsigned char buf[2];
+
+	if (!leds_AW3643_present)
+		return -ENODEV;
 
 	if (duty < 0)
 		duty = 0;
@@ -549,6 +588,9 @@ int setDuty_leds_AW3643_1(int duty)
 	int ret;
 	unsigned char buf[2];
 
+	if (!leds_AW3643_present)
+		return -ENODEV;
+
 	if (duty < 0)
 		duty = 0;
 	else if (duty >= e_DutyNum)
@@ -569,6 +611,9 @@ int init_leds_AW3643(void)
 {
 	int ret;
 	char buf[2];
+
+	if (!leds_AW3643_present)
+		return -ENODEV;
 
 	leds_AW3643_hwen_on();
 	
@@ -709,6 +754,8 @@ static int constant_flashlight_ioctl(unsigned int cmd, unsigned long arg)
 
 	case FLASH_IOC_SET_DUTY:
 		PK_DBG("FLASHLIGHT_DUTY: %d\n", (int)arg);
+		pr_err("[M6_FLASH] aw3643_ioctl SET_DUTY duty=%lu present=%d\n",
+			arg, leds_AW3643_present);
 		leds_AW3643_FL_dim_duty(arg);
 		break;
 
@@ -720,6 +767,8 @@ static int constant_flashlight_ioctl(unsigned int cmd, unsigned long arg)
 
 	case FLASH_IOC_SET_ONOFF:
 		PK_DBG("FLASHLIGHT_ONOFF: %d\n", (int)arg);
+		pr_err("[M6_FLASH] aw3643_ioctl SET_ONOFF on=%lu timeout=%u duty1=%d duty2=%d present=%d\n",
+			arg, g_timeOutTimeMs, g_duty1, g_duty2, leds_AW3643_present);
 		if (arg == 1) {
 
 			int s;

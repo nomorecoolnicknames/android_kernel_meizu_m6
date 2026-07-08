@@ -62,11 +62,32 @@ static DEFINE_MUTEX(g_gamma_global_lock);
 #endif
 
 static DISP_GAMMA_LUT_T *g_disp_gamma_lut[DISP_GAMMA_TOTAL] = { NULL };
+static DISP_GAMMA_LUT_T g_disp_gamma_identity_lut;
+static int g_disp_gamma_identity_lut_ready;
 
 static ddp_module_notify g_gamma_ddp_notify;
 
 
 static int disp_gamma_write_lut_reg(cmdqRecHandle cmdq, disp_gamma_id_t id, int lock);
+
+static DISP_GAMMA_LUT_T *disp_gamma_get_identity_lut(disp_gamma_id_t id)
+{
+	int i;
+
+	if (!g_disp_gamma_identity_lut_ready) {
+		g_disp_gamma_identity_lut.hw_id = id;
+		for (i = 0; i < DISP_GAMMA_LUT_SIZE; i++) {
+			unsigned int v = i << 1;
+
+			if (v > 0x3ff)
+				v = 0x3ff;
+			g_disp_gamma_identity_lut.lut[i] = GAMMA_ENTRY(v, v, v);
+		}
+		g_disp_gamma_identity_lut_ready = 1;
+	}
+
+	return &g_disp_gamma_identity_lut;
+}
 
 static int disp_gamma_start(DISP_MODULE_ENUM module, void *cmdq)
 {
@@ -131,19 +152,12 @@ static int disp_gamma_write_lut_reg(cmdqRecHandle cmdq, disp_gamma_id_t id, int 
 
 	gamma_lut = g_disp_gamma_lut[id];
 	if (gamma_lut == NULL) {
-		GAMMA_ERR(
-		       "disp_gamma_write_lut_reg: gamma table [%d] not initialized, bypass\n", id);
-		if (id == DISP_GAMMA0) {
-			/*
-			 * Early boot may start the display path before userspace
-			 * provides a calibration LUT.  Relay gamma instead of
-			 * failing path start; userspace can still program LUT later.
-			 */
-			DISP_REG_MASK(cmdq, DISP_REG_GAMMA_CFG, 0x1, 0x1);
-			ret = 0;
-		} else
+		if (id == DISP_GAMMA0)
+			gamma_lut = disp_gamma_get_identity_lut(id);
+		else
 			ret = -EFAULT;
-		goto gamma_write_lut_unlock;
+		if (ret)
+			goto gamma_write_lut_unlock;
 	}
 
 	if (id == DISP_GAMMA0) {
@@ -281,38 +295,38 @@ static int disp_gamma_bypass(DISP_MODULE_ENUM module, int bypass)
 
 static int disp_gamma_power_on(DISP_MODULE_ENUM module, void *handle)
 {
-#if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_ELBRUS) || defined(CONFIG_ARCH_MT6757)
-	/* gamma is DCM , do nothing */
-#else
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 	if (module == DISP_MODULE_GAMMA) {
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_GAMMA, "GAMMA");
+		ret = enable_clock(MT_CG_DISP0_DISP_GAMMA, "GAMMA");
 #else
-		ddp_clk_enable(DISP0_DISP_GAMMA);
+		ret = ddp_clk_enable(DISP0_DISP_GAMMA);
 #endif
 	}
+	pr_notice("M6 DDP clk: gamma on ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-#endif
-	return 0;
+	return ret;
 }
 
 static int disp_gamma_power_off(DISP_MODULE_ENUM module, void *handle)
 {
-#if defined(CONFIG_ARCH_MT6755) || defined(CONFIG_ARCH_ELBRUS) || defined(CONFIG_ARCH_MT6757)
-	/* gamma is DCM , do nothing */
-#else
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 	if (module == DISP_MODULE_GAMMA) {
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_GAMMA, "GAMMA");
 #else
-		ddp_clk_disable(DISP0_DISP_GAMMA);
+		ret = ddp_clk_disable(DISP0_DISP_GAMMA);
 #endif
 	}
+	pr_notice("M6 DDP clk: gamma off ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-#endif
-	return 0;
+	return ret;
 }
 
 
@@ -797,4 +811,3 @@ void set_color_temp_interface(unsigned int ccorr_coef_ref[3][3], void *handle)
     disp_ccorr_trigger_refresh(DISP_CCORR0);
 }
 EXPORT_SYMBOL(set_color_temp_interface);
-

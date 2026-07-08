@@ -69,11 +69,10 @@
 #define MAX_NL_MSG_LEN 16
 
 #ifndef GF_INPUT_HOME_KEY
-/* on MTK EVB board, home key has been redefine to KEY_HOMEPAGE! */
-/* double check the define on customer board!!! */
-#define GF_INPUT_HOME_KEY KEY_HOMEPAGE /* KEY_HOME */
+/* M6/Flyme Goodix HAL sends GF_KEY_HOME for an mBack tap. Stock maps it to Back. */
+#define GF_INPUT_HOME_KEY KEY_BACK
 
-#define GF_INPUT_MENU_KEY  KEY_MENU
+#define GF_INPUT_MENU_KEY  KEY_MENU /* mapped to APP_SWITCH by gf-keys.kl */
 #define GF_INPUT_BACK_KEY  KEY_BACK
 
 #define GF_INPUT_FF_KEY  KEY_POWER
@@ -88,6 +87,24 @@
 #define GF_NAV_RIGHT_KEY  KEY_RIGHT
 
 /*************************************************************/
+
+static void gf_input_report_tap(struct input_dev *input, unsigned int key)
+{
+	input_report_key(input, key, 1);
+	input_sync(input);
+	input_report_key(input, key, 0);
+	input_sync(input);
+}
+
+static void gf_input_report_value(struct input_dev *input, unsigned int key, int value)
+{
+	if (value == 1)
+		gf_input_report_tap(input, key);
+	else {
+		input_report_key(input, key, value);
+		input_sync(input);
+	}
+}
 
 /* debug log setting */
 u8 g_debug_level = ERR_LOG;
@@ -655,6 +672,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	struct gf_device *gf_dev = NULL;
 	struct gf_key gf_key;
 	uint32_t key_event;
+	u32 nav_event;
 #ifdef SUPPORT_REE_SPI
 	struct gf_ioc_transfer ioc;
 	u8 *transfer_buf = NULL;
@@ -688,8 +706,9 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return -EINVAL;
 	}
 
-	switch (cmd) {
-	case GF_IOC_INIT:
+	pr_err("[M6_FP_IOC] nr=%u dir=%u sz=%u\n", _IOC_NR(cmd), _IOC_DIR(cmd), _IOC_SIZE(cmd));
+	switch (_IOC_NR(cmd)) { /* M6: dispatch by cmd number to tolerate HAL/driver GF_IOC dir/size ABI skew */
+	case _IOC_NR(GF_IOC_INIT):
 		gf_debug(INFO_LOG, "%s: GF_IOC_INIT gf init======\n", __func__);
 		gf_debug(INFO_LOG, "%s: Linux Version %s\n", __func__, GF_LINUX_VERSION);
 
@@ -731,7 +750,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		gf_debug(INFO_LOG, "%s: gf init finished======\n", __func__);
 		break;
 
-	case GF_IOC_CHIP_INFO:
+	case _IOC_NR(GF_IOC_CHIP_INFO):
 		if (copy_from_user(&info, (struct gf_ioc_chip_info *)arg, sizeof(struct gf_ioc_chip_info))) {
 			retval = -EFAULT;
 			break;
@@ -743,7 +762,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		gf_debug(INFO_LOG, "%s: operation 0x%x\n", __func__, info.operation);
 		break;
 
-	case GF_IOC_EXIT:
+	case _IOC_NR(GF_IOC_EXIT):
 		gf_debug(INFO_LOG, "%s: GF_IOC_EXIT ======\n", __func__);
 		gf_disable_irq(gf_dev);
 		if (gf_dev->irq) {
@@ -763,54 +782,77 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		gf_debug(INFO_LOG, "%s: gf exit finished ======\n", __func__);
 		break;
 
-	case GF_IOC_RESET:
+	case _IOC_NR(GF_IOC_RESET):
 		gf_debug(INFO_LOG, "%s: chip reset command\n", __func__);
 		gf_hw_reset(gf_dev, 60);
 		break;
 
-	case GF_IOC_ENABLE_IRQ:
+	case _IOC_NR(GF_IOC_ENABLE_IRQ):
 		gf_debug(INFO_LOG, "%s: GF_IOC_ENABLE_IRQ ======\n", __func__);
 		gf_enable_irq(gf_dev);
 		break;
 
-	case GF_IOC_DISABLE_IRQ:
+	case _IOC_NR(GF_IOC_DISABLE_IRQ):
 		gf_debug(INFO_LOG, "%s: GF_IOC_DISABLE_IRQ ======\n", __func__);
 		gf_disable_irq(gf_dev);
 		break;
 
-	case GF_IOC_ENABLE_SPI_CLK:
+	case _IOC_NR(GF_IOC_ENABLE_SPI_CLK):
 		gf_debug(INFO_LOG, "%s: GF_IOC_ENABLE_SPI_CLK ======\n", __func__);
 		gf_spi_clk_enable(gf_dev, 1);
 		break;
 
-	case GF_IOC_DISABLE_SPI_CLK:
+	case _IOC_NR(GF_IOC_DISABLE_SPI_CLK):
 		gf_debug(INFO_LOG, "%s: GF_IOC_DISABLE_SPI_CLK ======\n", __func__);
 		gf_spi_clk_enable(gf_dev, 0);
 		break;
 
-	case GF_IOC_ENABLE_POWER:
+	case _IOC_NR(GF_IOC_ENABLE_POWER):
 		gf_debug(INFO_LOG, "%s: GF_IOC_ENABLE_POWER ======\n", __func__);
 		gf_hw_power_enable(1);
 		break;
 
-	case GF_IOC_DISABLE_POWER:
+	case _IOC_NR(GF_IOC_DISABLE_POWER):
 		gf_debug(INFO_LOG, "%s: GF_IOC_DISABLE_POWER ======\n", __func__);
 		gf_hw_power_enable(0);
 		break;
 
-	case GF_IOC_INPUT_KEY_EVENT:
+	case _IOC_NR(GF_IOC_INPUT_KEY_EVENT):
 		if (copy_from_user(&gf_key, (struct gf_key *)arg, sizeof(struct gf_key))) {
 			gf_debug(ERR_LOG, "Failed to copy input key event from user to kernel\n");
 			retval = -EFAULT;
 			break;
 		}
 
+		/*
+		 * M6 mBack ground-truth probe: log every (key,value) the FP HAL sends
+		 * per physical gesture (tap / press / long-press / swipe) so the
+		 * Back + Recents mapping is set from evidence, not guessed (avoids
+		 * regressing the already-working HOME). Remove once mapping is locked.
+		 */
+		pr_err("[M6_FP] KEY_EVENT key=%d value=%d\n", gf_key.key, gf_key.value);
+
 		if (GF_KEY_HOME == gf_key.key) {
 			key_event = GF_INPUT_HOME_KEY;
+		} else if ((GF_KEY_MENU == gf_key.key) || (GF_KEY_UP == gf_key.key)) {
+			/*
+			 * Ghidra-confirmed Goodix HAL mBack long-press path calls
+			 * gf_hal_send_key_event(6, 1/0). In this kernel enum 6 is
+			 * GF_KEY_UP, but the ROM keylayout maps KEY_MENU to APP_SWITCH.
+			 */
+			key_event = GF_INPUT_MENU_KEY;
+		} else if (GF_KEY_BACK == gf_key.key) {
+			key_event = GF_INPUT_BACK_KEY;
 		} else if (GF_KEY_POWER == gf_key.key) {
 			key_event = GF_INPUT_FF_KEY;
 		} else if (GF_KEY_CAPTURE == gf_key.key) {
 			key_event = GF_INPUT_CAMERA_KEY;
+		} else if (GF_KEY_DOWN == gf_key.key) {
+			key_event = GF_NAV_DOWN_KEY;
+		} else if (GF_KEY_RIGHT == gf_key.key) {
+			key_event = GF_NAV_RIGHT_KEY;
+		} else if (GF_KEY_LEFT == gf_key.key) {
+			key_event = GF_NAV_LEFT_KEY;
 		} else {
 			/* add special key define */
 			key_event = GF_INPUT_OTHER_KEY;
@@ -818,42 +860,14 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		gf_debug(INFO_LOG, "%s: received key event[%d], key=%d, value=%d\n",
 				__func__, key_event, gf_key.key, gf_key.value);
 
-		if ((GF_KEY_POWER == gf_key.key || GF_KEY_CAPTURE == gf_key.key) && (gf_key.value == 1)) {
-			input_report_key(gf_dev->input, key_event, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, key_event, 0);
-			input_sync(gf_dev->input);
-		} else if (GF_KEY_UP == gf_key.key) {
-			input_report_key(gf_dev->input, GF_NAV_UP_KEY, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, GF_NAV_UP_KEY, 0);
-			input_sync(gf_dev->input);
-		} else if (GF_KEY_DOWN == gf_key.key) {
-			input_report_key(gf_dev->input, GF_NAV_DOWN_KEY, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, GF_NAV_DOWN_KEY, 0);
-			input_sync(gf_dev->input);
-		} else if (GF_KEY_RIGHT == gf_key.key) {
-			input_report_key(gf_dev->input, GF_NAV_RIGHT_KEY, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, GF_NAV_RIGHT_KEY, 0);
-			input_sync(gf_dev->input);
-		} else if (GF_KEY_LEFT == gf_key.key) {
-			input_report_key(gf_dev->input, GF_NAV_LEFT_KEY, 1);
-			input_sync(gf_dev->input);
-			input_report_key(gf_dev->input, GF_NAV_LEFT_KEY, 0);
-			input_sync(gf_dev->input);
-		} else if ((GF_KEY_POWER != gf_key.key) && (GF_KEY_CAPTURE != gf_key.key)) {
-			input_report_key(gf_dev->input, key_event, gf_key.value);
-			input_sync(gf_dev->input);
-		}
+		gf_input_report_value(gf_dev->input, key_event, gf_key.value);
 		break;
 
-	case GF_IOC_ENTER_SLEEP_MODE:
+	case _IOC_NR(GF_IOC_ENTER_SLEEP_MODE):
 		gf_debug(INFO_LOG, "%s: GF_IOC_ENTER_SLEEP_MODE ======\n", __func__);
 		break;
 
-	case GF_IOC_GET_FW_INFO:
+	case _IOC_NR(GF_IOC_GET_FW_INFO):
 		gf_debug(INFO_LOG, "%s: GF_IOC_GET_FW_INFO ======\n", __func__);
 		buf = gf_dev->need_update;
 
@@ -864,7 +878,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 
 		break;
-	case GF_IOC_REMOVE:
+	case _IOC_NR(GF_IOC_REMOVE):
 		gf_debug(INFO_LOG, "%s: GF_IOC_REMOVE ======\n", __func__);
 
 		gf_netlink_destroy(gf_dev);
@@ -889,7 +903,45 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		mutex_destroy(&gf_dev->buf_lock);
 
 		break;
-	case GF_IOC_FTM:
+	case _IOC_NR(GF_IOC_FTM):
+			if ((_IOC_DIR(cmd) & _IOC_WRITE) && (_IOC_SIZE(cmd) == sizeof(nav_event))) {
+				if (copy_from_user(&nav_event, (void __user *)arg, sizeof(nav_event))) {
+					gf_debug(ERR_LOG, "Failed to copy nav event from user to kernel\n");
+					retval = -EFAULT;
+					break;
+				}
+
+				pr_err("[M6_FP] NAV_EVENT nav=%u cmd=0x%x\n", nav_event, (unsigned int)cmd);
+				switch (nav_event) {
+				case GF_NAV_UP:
+					key_event = GF_NAV_UP_KEY;
+					break;
+				case GF_NAV_DOWN:
+					key_event = GF_NAV_DOWN_KEY;
+					break;
+				case GF_NAV_LEFT:
+					key_event = GF_NAV_LEFT_KEY;
+					break;
+				case GF_NAV_RIGHT:
+					key_event = GF_NAV_RIGHT_KEY;
+					break;
+				case GF_NAV_LONG_PRESS:
+					key_event = GF_INPUT_MENU_KEY;
+					break;
+				case GF_NAV_CLICK:
+					key_event = GF_INPUT_HOME_KEY;
+					break;
+				default:
+					key_event = 0;
+					gf_debug(INFO_LOG, "%s: ignore nav event=%u\n", __func__, nav_event);
+					break;
+				}
+
+				if (key_event)
+					gf_input_report_tap(gf_dev->input, key_event);
+				break;
+			}
+
 			data = (void __user *) arg;
 			if (copy_to_user(data, id_buf, 7)) {
 				retval = -EFAULT;
@@ -900,7 +952,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 #ifdef SUPPORT_REE_SPI
 
-	case GF_IOC_TRANSFER_CMD:
+	case _IOC_NR(GF_IOC_TRANSFER_CMD):
 		if (copy_from_user(&ioc, (struct gf_ioc_transfer *)arg, sizeof(struct gf_ioc_transfer))) {
 			gf_debug(ERR_LOG, "%s: Failed to copy gf_ioc_transfer from user to kernel\n", __func__);
 			retval = -EFAULT;
@@ -942,6 +994,7 @@ static long gf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 #endif /* SUPPORT_REE_SPI */
 	default:
+		pr_err("[M6_FP_IOC] UNHANDLED nr=%u cmd=0x%x\n", _IOC_NR(cmd), cmd);
 		gf_debug(ERR_LOG, "gf doesn't support this command(%x)\n", cmd);
 		break;
 	}

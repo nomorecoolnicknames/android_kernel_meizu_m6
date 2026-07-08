@@ -374,7 +374,7 @@ extern DDP_MODULE_DRIVER ddp_driver_ccorr;
 /* pwm */
 extern DDP_MODULE_DRIVER ddp_driver_pwm;
 /* ufoe */
-/* extern DDP_MODULE_DRIVER ddp_driver_ufoe; */
+extern DDP_MODULE_DRIVER ddp_driver_ufoe;
 
 extern DDP_MODULE_DRIVER *ddp_modules_driver[DISP_MODULE_NUM];
 

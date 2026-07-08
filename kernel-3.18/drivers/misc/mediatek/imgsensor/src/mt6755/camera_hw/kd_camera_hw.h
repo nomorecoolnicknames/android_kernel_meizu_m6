@@ -16,6 +16,7 @@
 
 #include <linux/types.h>
 #include "kd_camera_typedef.h"
+#include "kd_imgsensor_define.h"
 
 #ifdef CONFIG_MTK_LEGACY
 #include <mach/mt_gpio.h>
@@ -182,8 +183,10 @@ typedef struct {
 	PowerInformation PowerInfo[12];
 } PowerSequence;
 
+#define MAX_NUM_OF_POWER_SEQUENCE 32
+
 typedef struct {
-	PowerSequence PowerSeq[16];
+	PowerSequence PowerSeq[MAX_NUM_OF_POWER_SEQUENCE];
 } PowerUp;
 
 typedef struct {

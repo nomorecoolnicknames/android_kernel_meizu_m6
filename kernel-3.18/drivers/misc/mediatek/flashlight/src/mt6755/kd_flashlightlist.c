@@ -93,9 +93,9 @@ static DEFINE_MUTEX(g_mutex);
 /* Pinctrl */
 /* ============================== */
 static struct pinctrl *flashlight_pinctrl;
-/*jiin.wang remove not use pinctrl*/
-//static struct pinctrl_state *flashlight_hwen_high;
-//static struct pinctrl_state *flashlight_hwen_low;
+/* M6: AW3643 needs HWEN pin driven (un-commented) */
+static struct pinctrl_state *flashlight_hwen_high;
+static struct pinctrl_state *flashlight_hwen_low;
 static struct pinctrl_state *flashlight_torch_high;
 static struct pinctrl_state *flashlight_torch_low;
 static struct pinctrl_state *flashlight_flash_high;
@@ -113,8 +113,7 @@ int flashlight_gpio_init(struct platform_device *pdev)
 		logI("Cannot find flashlight pinctrl!");
 		ret = PTR_ERR(flashlight_pinctrl);
 	}
-#if 0
-	/* Flashlight HWEN pin initialization */
+	/* Flashlight HWEN pin initialization (M6: AW3643 EN on GPIO99) */
 	flashlight_hwen_high = pinctrl_lookup_state(flashlight_pinctrl, "hwen_high");
 	if (IS_ERR(flashlight_hwen_high)) {
 		ret = PTR_ERR(flashlight_hwen_high);
@@ -126,7 +125,6 @@ int flashlight_gpio_init(struct platform_device *pdev)
 		ret = PTR_ERR(flashlight_hwen_low);
 		logI("%s : init err, flashlight_hwen_low\n", __func__);
 	}
-#endif
 	/* Flashlight TORCH pin initialization */
 	flashlight_torch_high = pinctrl_lookup_state(flashlight_pinctrl, "torch_high");
 	if (IS_ERR(flashlight_torch_high)) {
@@ -153,6 +151,10 @@ int flashlight_gpio_init(struct platform_device *pdev)
 		logI("%s : init err, flashlight_flash_low\n", __func__);
 	}
 
+	pr_err("[M6_FLASH] gpio_init ret=%d pinctrl=%d torch=%d/%d flash=%d/%d\n",
+		ret, !IS_ERR(flashlight_pinctrl),
+		!IS_ERR(flashlight_torch_low), !IS_ERR(flashlight_torch_high),
+		!IS_ERR(flashlight_flash_low), !IS_ERR(flashlight_flash_high));
 	return ret;
 }
 
@@ -166,8 +168,7 @@ int flashlight_gpio_set(int pin , int state)
 	}
 
 	switch (pin) {
-	/*jiin.wang remove not use pinctrl init*/
-#if 0
+	/* M6: AW3643 HWEN drive enabled */
 	case FLASHLIGHT_PIN_HWEN:
 		if (state == STATE_LOW && !IS_ERR(flashlight_hwen_low))
 			pinctrl_select_state(flashlight_pinctrl, flashlight_hwen_low);
@@ -176,7 +177,6 @@ int flashlight_gpio_set(int pin , int state)
 		else
 			logI("%s : set err, pin(%d) state(%d)\n", __func__, pin, state);
 		break;
-#endif
 	case FLASHLIGHT_PIN_TORCH:
         if (state == STATE_LOW && !IS_ERR(flashlight_torch_low)){
             wake_unlock(&flashlight_control_lock);
@@ -210,10 +210,15 @@ int flashlight_gpio_set(int pin , int state)
 #endif
 		     }
 		break;
-	default:
-			logI("%s : set err, pin(%d) state(%d)\n", __func__, pin, state);
-		break;
-	}
+		default:
+				logI("%s : set err, pin(%d) state(%d)\n", __func__, pin, state);
+			break;
+		}
+	pr_err("[M6_FLASH] gpio_set pin=%d state=%d ret=%d torch=%d/%d flash=%d/%d wakelock=%d\n",
+		pin, state, ret,
+		!IS_ERR(flashlight_torch_low), !IS_ERR(flashlight_torch_high),
+		!IS_ERR(flashlight_flash_low), !IS_ERR(flashlight_flash_high),
+		wakelockcount);
 	logI("%s : pin(%d) state(%d)\n", __func__, pin, state);
 	return ret;
 }
@@ -540,19 +545,31 @@ static long flashlight_ioctl_core(struct file *file, unsigned int cmd, unsigned 
 
 	copyRet = copy_from_user(&kdArg, (void *)arg, sizeof(kdStrobeDrvArg));
     if (copyRet) {
+        pr_err("[M6_FLASH] ioctl copy_from_user fail cmd=0x%x copyRet=%lu\n",
+            cmd, copyRet);
         logI("ioctl copy from user failed ~");
         return -1;
     }
 	logI("flashlight_ioctl cmd=0x%x(nr=%d), senorDev=0x%x ledId=0x%x arg=0x%lx", cmd,
 	     _IOC_NR(cmd), kdArg.sensorDev, kdArg.strobeId, (unsigned long)kdArg.arg);
+	pr_err("[M6_FLASH] ioctl entry cmd=0x%x nr=%d sensorDev=0x%x strobeId=0x%x arg=0x%lx\n",
+	     cmd, _IOC_NR(cmd), kdArg.sensorDev, kdArg.strobeId, (unsigned long)kdArg.arg);
 	sensorDevIndex = getSensorDevIndex(kdArg.sensorDev);
 	strobeIndex = getStrobeIndex(kdArg.strobeId);
-	if (sensorDevIndex < 0 || strobeIndex < 0)
+	if (sensorDevIndex < 0 || strobeIndex < 0) {
+		pr_err("[M6_FLASH] ioctl bad index sensorDevIndex=%d strobeIndex=%d\n",
+			sensorDevIndex, strobeIndex);
 		return -1;
+	}
 	partId = g_strobePartId[sensorDevIndex][strobeIndex];
 	partIndex = getPartIndex(partId);
-	if (partIndex < 0)
+	if (partIndex < 0) {
+		pr_err("[M6_FLASH] ioctl bad part sensorDevIndex=%d strobeIndex=%d partId=%d\n",
+			sensorDevIndex, strobeIndex, partId);
 		return -1;
+	}
+	pr_err("[M6_FLASH] ioctl resolved sensorDevIndex=%d strobeIndex=%d partId=%d partIndex=%d\n",
+	     sensorDevIndex, strobeIndex, partId, partIndex);
 
 
 
@@ -648,6 +665,8 @@ static long flashlight_ioctl_core(struct file *file, unsigned int cmd, unsigned 
 		}
 		break;
 	}
+	pr_err("[M6_FLASH] ioctl exit cmd=0x%x ret=%d sensorDevIndex=%d strobeIndex=%d partId=%d partIndex=%d\n",
+	     cmd, i4RetValue, sensorDevIndex, strobeIndex, partId, partIndex);
 	return i4RetValue;
 }
 
@@ -889,14 +908,18 @@ static int flashlight_probe(struct platform_device *dev)
 	int ret = 0, err = 0;
 
 	logI("[flashlight_probe] start ~");
+	pr_err("[M6_FLASH] core probe enter dev=%s\n", dev_name(&dev->dev));
 
 #ifdef ALLOC_DEVNO
 	ret = alloc_chrdev_region(&flashlight_devno, 0, 1, FLASHLIGHT_DEVNAME);
 	if (ret) {
+		pr_err("[M6_FLASH] core probe alloc_chrdev_region fail ret=%d\n", ret);
 		logI("[flashlight_probe] alloc_chrdev_region fail: %d ~", ret);
 		goto flashlight_probe_error;
 	} else {
 		logI("[flashlight_probe] major: %d, minor: %d ~", MAJOR(flashlight_devno),
+		     MINOR(flashlight_devno));
+		pr_err("[M6_FLASH] core probe devno major=%d minor=%d\n", MAJOR(flashlight_devno),
 		     MINOR(flashlight_devno));
 	}
 	/* Allocate driver */
@@ -912,6 +935,7 @@ static int flashlight_probe(struct platform_device *dev)
 	g_pFlash_CharDrv->owner = THIS_MODULE;
 	err = cdev_add(g_pFlash_CharDrv, flashlight_devno, 1);
 	if (err) {
+		pr_err("[M6_FLASH] core probe cdev_add fail err=%d\n", err);
 		logI("[flashlight_probe] cdev_add fail: %d ~", err);
 		goto flashlight_probe_error;
 	}
@@ -929,6 +953,8 @@ static int flashlight_probe(struct platform_device *dev)
 
 	flashlight_class = class_create(THIS_MODULE, "flashlightdrv");
 	if (IS_ERR(flashlight_class)) {
+		pr_err("[M6_FLASH] core probe class_create fail err=%d\n",
+		     (int)PTR_ERR(flashlight_class));
 		logI("[flashlight_probe] Unable to create class, err = %d ~",
 		     (int)PTR_ERR(flashlight_class));
 		goto flashlight_probe_error;
@@ -937,6 +963,7 @@ static int flashlight_probe(struct platform_device *dev)
 	flashlight_device =
 	    device_create(flashlight_class, NULL, flashlight_devno, NULL, FLASHLIGHT_DEVNAME);
 	if (NULL == flashlight_device) {
+		pr_err("[M6_FLASH] core probe device_create fail\n");
 		logI("[flashlight_probe] device_create fail ~");
 		goto flashlight_probe_error;
 	}
@@ -948,16 +975,19 @@ static int flashlight_probe(struct platform_device *dev)
 	sema_init(&flashlight_private.sem, 1);
 
 	/* GPIO pinctrl initial */
-	flashlight_gpio_init(dev);
+	ret = flashlight_gpio_init(dev);
+	pr_err("[M6_FLASH] core probe gpio_init ret=%d\n", ret);
 
 	proc_create("driver/flash_lightness", 0666, NULL, &flashlight_proc_fops);
 	proc_create("driver/flash_lightness_f", 0666, NULL, &sub_flashlight_proc_fops);
 	memset(&flashInfo, 0, sizeof(FLASHLIGHT_INFO_STRUCT));
-    wake_lock_init(&flashlight_control_lock, WAKE_LOCK_SUSPEND, "flashlight control wakelock");
+	wake_lock_init(&flashlight_control_lock, WAKE_LOCK_SUSPEND, "flashlight control wakelock");
 	logI("[flashlight_probe] Done ~");
+	pr_err("[M6_FLASH] core probe done\n");
 	return 0;
 
 flashlight_probe_error:
+	pr_err("[M6_FLASH] core probe error ret=%d err=%d\n", ret, err);
 #ifdef ALLOC_DEVNO
 	if (err == 0)
 		cdev_del(g_pFlash_CharDrv);

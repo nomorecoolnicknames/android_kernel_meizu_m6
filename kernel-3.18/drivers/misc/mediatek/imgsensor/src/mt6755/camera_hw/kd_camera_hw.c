@@ -133,6 +133,56 @@ PowerCust PowerCustList = {
 PowerUp PowerOnList = {
 	{
 		/*jijin .wang add 1st main camera power seq start*/
+		{SENSOR_DRVNAME_IMX278_TRULY_MIPI_RAW,
+			{
+				{SensorMCLK, Vol_High, 0},
+				{PDN, Vol_Low, 0},
+				{RST, Vol_Low, 0},
+				{DOVDD, Vol_1800, 1},
+				{AVDD, Vol_2800, 1},
+				{DVDD, Vol_1200, 5},
+				{AFVDD, Vol_2800, 1},
+				{PDN, Vol_High, 1},
+				{RST, Vol_High, 2},
+			},
+		},
+		{SENSOR_DRVNAME_IMX278_MIPI_RAW,
+			{
+				{SensorMCLK, Vol_High, 0},
+				{PDN, Vol_Low, 0},
+				{RST, Vol_Low, 0},
+				{DOVDD, Vol_1800, 1},
+				{AVDD, Vol_2800, 1},
+				{DVDD, Vol_1200, 5},
+				{AFVDD, Vol_2800, 1},
+				{PDN, Vol_High, 1},
+				{RST, Vol_High, 2},
+			},
+		},
+		{SENSOR_DRVNAME_OV8856_MIPI_RAW,
+			{
+				{SensorMCLK, Vol_High, 0},
+				{PDN, Vol_Low, 0},
+				{RST, Vol_Low, 0},
+				{DOVDD, Vol_1800, 1},
+				{AVDD, Vol_2800, 1},
+				{DVDD, Vol_1200, 5},
+				{PDN, Vol_High, 1},
+				{RST, Vol_High, 2},
+			},
+		},
+		{SENSOR_DRVNAME_OV8856JSL_MIPI_RAW,
+			{
+				{SensorMCLK, Vol_High, 0},
+				{PDN, Vol_Low, 0},
+				{RST, Vol_Low, 0},
+				{DOVDD, Vol_1800, 1},
+				{AVDD, Vol_2800, 1},
+				{DVDD, Vol_1200, 5},
+				{PDN, Vol_High, 1},
+				{RST, Vol_High, 2},
+			},
+		},
 		{SENSOR_DRVNAME_OV13855_MIPI_RAW,
 			{
 				{SensorMCLK, Vol_High, 0},
@@ -351,6 +401,8 @@ struct pinctrl_state *cam_mipi_switch_sel_h = NULL;/* for mipi switch select */
 struct pinctrl_state *cam_mipi_switch_sel_l = NULL;
 int has_mipi_switch = 0;
 
+#define M6_CAM_STATE_OK(_s) (!IS_ERR(_s))
+
 int mtkcam_gpio_init(struct platform_device *pdev)
 {
 	int ret = 0;
@@ -539,15 +591,64 @@ int mtkcam_gpio_init(struct platform_device *pdev)
 		ret = PTR_ERR(cam_mipi_switch_sel_l);
 		PK_DBG("%s : pinctrl err, cam_mipi_switch_sel_l\n", __func__);
 	}
+	PK_ERR("[M6_CAM] gpio_init ret=%d has_mipi=%d camctrl=%d cam0_pnd=%d/%d cam0_rst=%d/%d cam1_pnd=%d/%d cam1_rst=%d/%d cam2_pnd=%d/%d cam2_rst=%d/%d vcama=%d/%d vcamd=%d/%d vcamio=%d/%d vcamaf=%d/%d sub_vcamd=%d/%d main2_vcamd=%d/%d mipi_en=%d/%d mipi_sel=%d/%d\n",
+		ret, has_mipi_switch, M6_CAM_STATE_OK(camctrl),
+		M6_CAM_STATE_OK(cam0_pnd_l), M6_CAM_STATE_OK(cam0_pnd_h),
+		M6_CAM_STATE_OK(cam0_rst_l), M6_CAM_STATE_OK(cam0_rst_h),
+		M6_CAM_STATE_OK(cam1_pnd_l), M6_CAM_STATE_OK(cam1_pnd_h),
+		M6_CAM_STATE_OK(cam1_rst_l), M6_CAM_STATE_OK(cam1_rst_h),
+		M6_CAM_STATE_OK(cam2_pnd_l), M6_CAM_STATE_OK(cam2_pnd_h),
+		M6_CAM_STATE_OK(cam2_rst_l), M6_CAM_STATE_OK(cam2_rst_h),
+		M6_CAM_STATE_OK(cam_ldo_vcama_l), M6_CAM_STATE_OK(cam_ldo_vcama_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamd_l), M6_CAM_STATE_OK(cam_ldo_vcamd_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamio_l), M6_CAM_STATE_OK(cam_ldo_vcamio_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamaf_l), M6_CAM_STATE_OK(cam_ldo_vcamaf_h),
+		M6_CAM_STATE_OK(cam_ldo_sub_vcamd_l), M6_CAM_STATE_OK(cam_ldo_sub_vcamd_h),
+		M6_CAM_STATE_OK(cam_ldo_main2_vcamd_l), M6_CAM_STATE_OK(cam_ldo_main2_vcamd_h),
+		M6_CAM_STATE_OK(cam_mipi_switch_en_l), M6_CAM_STATE_OK(cam_mipi_switch_en_h),
+		M6_CAM_STATE_OK(cam_mipi_switch_sel_l), M6_CAM_STATE_OK(cam_mipi_switch_sel_h));
 	return ret;
 }
 
 int mtkcam_gpio_set(int PinIdx, int PwrType, int Val)
 {
 	int ret = 0;
+	struct pinctrl_state *rst_l;
+	struct pinctrl_state *rst_h;
+	struct pinctrl_state *pnd_l;
+	struct pinctrl_state *pnd_h;
+
 	if (IS_ERR(camctrl)) {
+		PK_ERR("[M6_CAM] gpio_set fail camctrl unavailable pinIdx=%d pwr=%d val=%d\n",
+			PinIdx, PwrType, Val);
 		return -1;
 	}
+	if (PinIdx == 0) {
+		rst_l = cam0_rst_l;
+		rst_h = cam0_rst_h;
+		pnd_l = cam0_pnd_l;
+		pnd_h = cam0_pnd_h;
+	} else if (PinIdx == 1) {
+		rst_l = cam1_rst_l;
+		rst_h = cam1_rst_h;
+		pnd_l = cam1_pnd_l;
+		pnd_h = cam1_pnd_h;
+	} else {
+		rst_l = cam2_rst_l;
+		rst_h = cam2_rst_h;
+		pnd_l = cam2_pnd_l;
+		pnd_h = cam2_pnd_h;
+	}
+	PK_ERR("[M6_CAM] gpio_set req pinIdx=%d pwr=%d val=%d rst=%d/%d pnd=%d/%d vcama=%d/%d vcamd=%d/%d vcamio=%d/%d vcamaf=%d/%d sub_vcamd=%d/%d main2_vcamd=%d/%d\n",
+		PinIdx, PwrType, Val,
+		M6_CAM_STATE_OK(rst_l), M6_CAM_STATE_OK(rst_h),
+		M6_CAM_STATE_OK(pnd_l), M6_CAM_STATE_OK(pnd_h),
+		M6_CAM_STATE_OK(cam_ldo_vcama_l), M6_CAM_STATE_OK(cam_ldo_vcama_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamd_l), M6_CAM_STATE_OK(cam_ldo_vcamd_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamio_l), M6_CAM_STATE_OK(cam_ldo_vcamio_h),
+		M6_CAM_STATE_OK(cam_ldo_vcamaf_l), M6_CAM_STATE_OK(cam_ldo_vcamaf_h),
+		M6_CAM_STATE_OK(cam_ldo_sub_vcamd_l), M6_CAM_STATE_OK(cam_ldo_sub_vcamd_h),
+		M6_CAM_STATE_OK(cam_ldo_main2_vcamd_l), M6_CAM_STATE_OK(cam_ldo_main2_vcamd_h));
 	switch (PwrType) {
 	case RST:
 		if (PinIdx == 0) {
@@ -646,20 +747,15 @@ int mtkcam_gpio_set(int PinIdx, int PwrType, int Val)
 BOOL hwpoweron(PowerInformation pwInfo, char *mode_name)
 {
 	if (pwInfo.PowerType == AVDD) {
-		if(pinSetIdx == 0){/*jijin.wang fix powerOn seq for main camera*/
-				if (mtkcam_gpio_set(pinSetIdx, pwInfo.PowerType,1-PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
-					PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");
-				}
-		}else{
-				if (PowerCustList.PowerCustInfo[CUST_AVDD].Gpio_Pin == GPIO_UNSUPPORTED) {
-					if (TRUE != _hwPowerOn(pwInfo.PowerType, pwInfo.Voltage)) {
-					PK_ERR("[CAMERA SENSOR] Fail to enable analog power\n");
-					return FALSE;
-					}
-				} else {
-					if (mtkcam_gpio_set(pinSetIdx, pwInfo.PowerType, PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
-					PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");
-				}
+		if (PowerCustList.PowerCustInfo[CUST_AVDD].Gpio_Pin == GPIO_UNSUPPORTED) {
+			if (TRUE != _hwPowerOn(pwInfo.PowerType, pwInfo.Voltage)) {
+				PK_ERR("[CAMERA SENSOR] Fail to enable analog power\n");
+				return FALSE;
+			}
+		} else {
+			if (mtkcam_gpio_set(pinSetIdx, pwInfo.PowerType,
+					    PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
+				PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");
 			}
 		}
 	} else if (pwInfo.PowerType == DVDD) {
@@ -773,6 +869,9 @@ BOOL hwpoweron(PowerInformation pwInfo, char *mode_name)
 	}
 	if (pwInfo.Delay > 0)
 		mdelay(pwInfo.Delay);
+	PK_ERR("[M6_CAM] hwpoweron ok pinSetIdx=%u type=%d volt=%d delay=%d mode=%s\n",
+		pinSetIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay,
+		mode_name ? mode_name : "null");
 	return TRUE;
 }
 
@@ -781,21 +880,15 @@ BOOL hwpoweron(PowerInformation pwInfo, char *mode_name)
 BOOL hwpowerdown(PowerInformation pwInfo, char *mode_name)
 {
 	if (pwInfo.PowerType == AVDD) {
-		if(pinSetIdx == 0){/*jijin.wang add fix powerOff seq for main camera*/
-				if (mtkcam_gpio_set(pinSetIdx, AVDD, PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
-						PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");/* 1-voltage for reverse*/
-				}
-
-		}else{
-			if (PowerCustList.PowerCustInfo[CUST_AVDD].Gpio_Pin == GPIO_UNSUPPORTED) {
-				if (TRUE != _hwPowerDown(pwInfo.PowerType)) {
-					PK_ERR("[CAMERA SENSOR] Fail to disable analog power\n");
-					return FALSE;
-				}
-			} else {
-				if (mtkcam_gpio_set(pinSetIdx, AVDD, 1-PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
-						PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");/* 1-voltage for reverse*/
-				}
+		if (PowerCustList.PowerCustInfo[CUST_AVDD].Gpio_Pin == GPIO_UNSUPPORTED) {
+			if (TRUE != _hwPowerDown(pwInfo.PowerType)) {
+				PK_ERR("[CAMERA SENSOR] Fail to disable analog power\n");
+				return FALSE;
+			}
+		} else {
+			if (mtkcam_gpio_set(pinSetIdx, AVDD,
+					    1 - PowerCustList.PowerCustInfo[CUST_AVDD].Voltage)) {
+				PK_ERR("[CAMERA CUST_AVDD] set gpio failed!!\n");
 			}
 		}
 	} else if (pwInfo.PowerType == DVDD) {
@@ -893,6 +986,9 @@ BOOL hwpowerdown(PowerInformation pwInfo, char *mode_name)
 		}
 	} else {
 	}
+	PK_ERR("[M6_CAM] hwpowerdown ok pinSetIdx=%u type=%d volt=%d delay=%d mode=%s\n",
+		pinSetIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay,
+		mode_name ? mode_name : "null");
 	return TRUE;
 }
 
@@ -905,6 +1001,7 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 
 	int pwListIdx, pwIdx;
 	BOOL sensorInPowerList = KAL_FALSE;
+	PowerInformation pwInfo;
 
 	if (DUAL_CAMERA_MAIN_SENSOR == SensorIdx) {
 		pinSetIdx = 0;
@@ -916,6 +1013,9 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 	/* power ON */
 	if (On) {
 		PK_DBG("kdCISModulePowerOn -on:currSensorName=%s pinSetIdx=%d\n", currSensorName, pinSetIdx);
+		PK_ERR("[M6_CAM] power on sensorIdx=%d name=%s pinSetIdx=%d has_mipi_switch=%d mode=%s\n",
+			SensorIdx, currSensorName ? currSensorName : "null", pinSetIdx,
+			has_mipi_switch, mode_name ? mode_name : "null");
 
 
     /* MIPI SWITCH */
@@ -938,14 +1038,20 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				//PK_DBG("sensorIdx:%d\n", SensorIdx);
 
 				sensorInPowerList = KAL_TRUE;
+				PK_ERR("[M6_CAM] power on match pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName);
 
 				for (pwIdx = 0; pwIdx < 10; pwIdx++) {
 					if (PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx].
 					    PowerType != VDD_None) {
-						if (hwpoweron
-						    (PowerOnList.PowerSeq[pwListIdx].
-						     PowerInfo[pwIdx], mode_name) == FALSE)
+						pwInfo = PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx];
+						PK_ERR("[M6_CAM] power on step idx=%d type=%d volt=%d delay=%d\n",
+							pwIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay);
+						if (hwpoweron(pwInfo, mode_name) == FALSE) {
+							PK_ERR("[M6_CAM] power on fail idx=%d type=%d volt=%d\n",
+								pwIdx, pwInfo.PowerType, pwInfo.Voltage);
 							goto _kdCISModulePowerOn_exit_;
+						}
 					} else {
 						/* PK_DBG("pwIdx=%d\n", pwIdx); */
 						break;
@@ -953,6 +1059,8 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				}
 				break;
 			} else if (PowerOnList.PowerSeq[pwListIdx].SensorName == NULL) {
+				PK_ERR("[M6_CAM] power on no match before null pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName ? currSensorName : "null");
 				break;
 			} else {
 			}
@@ -1169,16 +1277,22 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				strcmp(PowerOnList.PowerSeq[pwListIdx].SensorName,
 				       currSensorName))) {
 				PK_DBG("kdCISModulePowerOn -off:currSensorName=%s pinSetIdx=%d\n", currSensorName, pinSetIdx);
+				PK_ERR("[M6_CAM] power off match pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName);
 
 				sensorInPowerList = KAL_TRUE;
 
 				for (pwIdx = 9; pwIdx >= 0; pwIdx--) {
 					if (PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx].
 					    PowerType != VDD_None) {
-						if (hwpowerdown
-						    (PowerOnList.PowerSeq[pwListIdx].
-						     PowerInfo[pwIdx], mode_name) == FALSE)
+						pwInfo = PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx];
+						PK_ERR("[M6_CAM] power off step idx=%d type=%d volt=%d delay=%d\n",
+							pwIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay);
+						if (hwpowerdown(pwInfo, mode_name) == FALSE) {
+							PK_ERR("[M6_CAM] power off fail idx=%d type=%d volt=%d\n",
+								pwIdx, pwInfo.PowerType, pwInfo.Voltage);
 							goto _kdCISModulePowerOn_exit_;
+						}
 						if (pwIdx > 0) {
 							if (PowerOnList.PowerSeq[pwListIdx].
 							    PowerInfo[pwIdx - 1].Delay > 0)
@@ -1191,6 +1305,8 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 					}
 				}
 			} else if (PowerOnList.PowerSeq[pwListIdx].SensorName == NULL) {
+				PK_ERR("[M6_CAM] power off no match before null pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName ? currSensorName : "null");
 				break;
 			} else {
 			}
@@ -1319,9 +1435,15 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 #endif
 	}			/*  */
 
+	PK_ERR("[M6_CAM] power exit ok on=%d sensorIdx=%d name=%s in_list=%d pinSetIdx=%d\n",
+		On, SensorIdx, currSensorName ? currSensorName : "null",
+		sensorInPowerList, pinSetIdx);
 	return 0;
 
 _kdCISModulePowerOn_exit_:
+	PK_ERR("[M6_CAM] power exit fail on=%d sensorIdx=%d name=%s in_list=%d pinSetIdx=%d\n",
+		On, SensorIdx, currSensorName ? currSensorName : "null",
+		sensorInPowerList, pinSetIdx);
 	return -EIO;
 }
 
@@ -1805,6 +1927,7 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 
 	int pwListIdx, pwIdx;
 	BOOL sensorInPowerList = KAL_FALSE;
+	PowerInformation pwInfo;
 
 	if (DUAL_CAMERA_MAIN_SENSOR == SensorIdx) {
 		pinSetIdx = 0;
@@ -1816,6 +1939,9 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 	/* power ON */
 	if (On) {
 		PK_DBG("kdCISModulePowerOn -on:currSensorName=%s pinSetIdx=%d\n", currSensorName, pinSetIdx);
+		PK_ERR("[M6_CAM] power on sensorIdx=%d name=%s pinSetIdx=%d mode=%s\n",
+			SensorIdx, currSensorName ? currSensorName : "null", pinSetIdx,
+			mode_name ? mode_name : "null");
 
 		for (pwListIdx = 0; pwListIdx < 16; pwListIdx++) {
 			if (currSensorName && (PowerOnList.PowerSeq[pwListIdx].SensorName != NULL)
@@ -1825,14 +1951,20 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				//PK_DBG("sensorIdx:%d\n", SensorIdx);
 
 				sensorInPowerList = KAL_TRUE;
+				PK_ERR("[M6_CAM] power on match pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName);
 
 				for (pwIdx = 0; pwIdx < 10; pwIdx++) {
 					if (PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx].
 					    PowerType != VDD_None) {
-						if (hwpoweron
-						    (PowerOnList.PowerSeq[pwListIdx].
-						     PowerInfo[pwIdx], mode_name) == FALSE)
+						pwInfo = PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx];
+						PK_ERR("[M6_CAM] power on step idx=%d type=%d volt=%d delay=%d\n",
+							pwIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay);
+						if (hwpoweron(pwInfo, mode_name) == FALSE) {
+							PK_ERR("[M6_CAM] power on fail idx=%d type=%d volt=%d\n",
+								pwIdx, pwInfo.PowerType, pwInfo.Voltage);
 							goto _kdCISModulePowerOn_exit_;
+						}
 					} else {
 						/* PK_DBG("pwIdx=%d\n", pwIdx); */
 						break;
@@ -1840,6 +1972,8 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				}
 				break;
 			} else if (PowerOnList.PowerSeq[pwListIdx].SensorName == NULL) {
+				PK_ERR("[M6_CAM] power on no match before null pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName ? currSensorName : "null");
 				break;
 			} else {
 			}
@@ -2050,16 +2184,22 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 				strcmp(PowerOnList.PowerSeq[pwListIdx].SensorName,
 				       currSensorName))) {
 				PK_DBG("kdCISModulePowerOn -off:currSensorName=%s pinSetIdx=%d\n", currSensorName, pinSetIdx);
+				PK_ERR("[M6_CAM] power off match pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName);
 
 				sensorInPowerList = KAL_TRUE;
 
 				for (pwIdx = 9; pwIdx >= 0; pwIdx--) {
 					if (PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx].
 					    PowerType != VDD_None) {
-						if (hwpowerdown
-						    (PowerOnList.PowerSeq[pwListIdx].
-						     PowerInfo[pwIdx], mode_name) == FALSE)
+						pwInfo = PowerOnList.PowerSeq[pwListIdx].PowerInfo[pwIdx];
+						PK_ERR("[M6_CAM] power off step idx=%d type=%d volt=%d delay=%d\n",
+							pwIdx, pwInfo.PowerType, pwInfo.Voltage, pwInfo.Delay);
+						if (hwpowerdown(pwInfo, mode_name) == FALSE) {
+							PK_ERR("[M6_CAM] power off fail idx=%d type=%d volt=%d\n",
+								pwIdx, pwInfo.PowerType, pwInfo.Voltage);
 							goto _kdCISModulePowerOn_exit_;
+						}
 						if (pwIdx > 0) {
 							if (PowerOnList.PowerSeq[pwListIdx].
 							    PowerInfo[pwIdx - 1].Delay > 0)
@@ -2072,6 +2212,8 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 					}
 				}
 			} else if (PowerOnList.PowerSeq[pwListIdx].SensorName == NULL) {
+				PK_ERR("[M6_CAM] power off no match before null pwListIdx=%d name=%s\n",
+					pwListIdx, currSensorName ? currSensorName : "null");
 				break;
 			} else {
 			}
@@ -2199,9 +2341,15 @@ int kdCISModulePowerOn(CAMERA_DUAL_CAMERA_SENSOR_ENUM SensorIdx, char *currSenso
 		}
 	}			/*  */
 
+	PK_ERR("[M6_CAM] power exit ok on=%d sensorIdx=%d name=%s in_list=%d pinSetIdx=%d\n",
+		On, SensorIdx, currSensorName ? currSensorName : "null",
+		sensorInPowerList, pinSetIdx);
 	return 0;
 
 _kdCISModulePowerOn_exit_:
+	PK_ERR("[M6_CAM] power exit fail on=%d sensorIdx=%d name=%s in_list=%d pinSetIdx=%d\n",
+		On, SensorIdx, currSensorName ? currSensorName : "null",
+		sensorInPowerList, pinSetIdx);
 	return -EIO;
 }
 #endif

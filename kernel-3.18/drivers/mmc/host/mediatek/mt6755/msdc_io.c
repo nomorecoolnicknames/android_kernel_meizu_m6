@@ -19,6 +19,7 @@
 
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/err.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -102,6 +103,66 @@ void msdc_ldo_power(u32 on, struct regulator *reg, int voltage_mv, u32 *status)
 			pr_err("msdc not power on\n");
 		}
 	}
+}
+
+static int m6_msdc2_ldo_power(u32 on, const char *name,
+	struct regulator *reg, int voltage_mv, u32 *status)
+{
+	int voltage_uv = voltage_mv * 1000;
+	int before_en = -EINVAL;
+	int before_uv = -EINVAL;
+	int after_en = -EINVAL;
+	int after_uv = -EINVAL;
+	int set_ret = 0;
+	int en_ret = 0;
+	int dis_ret = 0;
+
+	if (IS_ERR_OR_NULL(reg)) {
+		pr_warn_ratelimited("M6 MSDC2 rail %s on=%u missing reg=%p status=%u\n",
+			name, on, reg, *status);
+		return -ENODEV;
+	}
+
+	before_en = regulator_is_enabled(reg);
+	before_uv = regulator_get_voltage(reg);
+
+	if (on) {
+		if (*status == 0) {
+			set_ret = regulator_set_voltage(reg, voltage_uv, voltage_uv);
+			if (!set_ret)
+				en_ret = regulator_enable(reg);
+			if (!set_ret && !en_ret)
+				*status = voltage_uv;
+		} else if (*status != voltage_uv) {
+			dis_ret = regulator_disable(reg);
+			if (!dis_ret) {
+				set_ret = regulator_set_voltage(reg, voltage_uv,
+					voltage_uv);
+				if (!set_ret)
+					en_ret = regulator_enable(reg);
+				if (!set_ret && !en_ret)
+					*status = voltage_uv;
+			}
+		}
+	} else {
+		if (*status != 0) {
+			dis_ret = regulator_disable(reg);
+			if (!dis_ret)
+				*status = 0;
+		}
+	}
+
+	after_en = regulator_is_enabled(reg);
+	after_uv = regulator_get_voltage(reg);
+	pr_warn_ratelimited("M6 MSDC2 rail %s on=%u target_uv=%d before_en=%d before_uv=%d set_ret=%d en_ret=%d dis_ret=%d after_en=%d after_uv=%d status=%u\n",
+		name, on, voltage_uv, before_en, before_uv, set_ret, en_ret,
+		dis_ret, after_en, after_uv, *status);
+
+	if (set_ret)
+		return set_ret;
+	if (en_ret)
+		return en_ret;
+	return dis_ret;
 }
 
 void msdc_dump_ldo_sts(struct msdc_host *host)
@@ -269,7 +330,30 @@ void msdc_sdio_power(struct msdc_host *host, u32 on)
 	switch (host->id) {
 #if defined(CFG_DEV_MSDC2)
 	case 2:
-		g_msdc2_flash = g_msdc2_io;
+		pr_warn_ratelimited("M6 MSDC2 sdio_power on=%u vmmc=%p vqmmc=%p g_io=%u g_flash=%u\n",
+			on, host->mmc->supply.vmmc, host->mmc->supply.vqmmc,
+			g_msdc2_io, g_msdc2_flash);
+		if (on) {
+			m6_msdc2_ldo_power(on, "vmmc/vcn33_wifi",
+				host->mmc->supply.vmmc, VOL_3300,
+				&g_msdc2_flash);
+			m6_msdc2_ldo_power(on, "vqmmc/vcn18",
+				host->mmc->supply.vqmmc, VOL_1800,
+				&g_msdc2_io);
+			msdc_set_tdsel(host, MSDC_TDRDSEL_1V8, 0);
+			msdc_set_rdsel(host, MSDC_TDRDSEL_1V8, 0);
+			msdc_set_driving(host, host->hw, 1);
+			pr_warn_ratelimited("M6 MSDC2 pad dump before CMD5 window power=%u\n",
+				on);
+			msdc_dump_padctl_by_id(host->id);
+		} else {
+			m6_msdc2_ldo_power(on, "vqmmc/vcn18",
+				host->mmc->supply.vqmmc, VOL_1800,
+				&g_msdc2_io);
+			m6_msdc2_ldo_power(on, "vmmc/vcn33_wifi",
+				host->mmc->supply.vmmc, VOL_3300,
+				&g_msdc2_flash);
+		}
 		break;
 #endif
 
@@ -1249,6 +1333,12 @@ int msdc_of_parse(struct mmc_host *mmc)
 	struct msdc_host *host = mmc_priv(mmc);
 	int len;
 	int ret;
+	bool m6_is_msdc2;
+#if defined(CFG_DEV_MSDC2)
+	const unsigned int m6_cfg_dev_msdc2 = 1;
+#else
+	const unsigned int m6_cfg_dev_msdc2 = 0;
+#endif
 
 	ret = mmc_of_parse(mmc);
 	if (ret) {
@@ -1257,6 +1347,11 @@ int msdc_of_parse(struct mmc_host *mmc)
 	}
 
 	np = mmc->parent->of_node; /* mmcx node in projectdts */
+	m6_is_msdc2 = np && !strcmp(np->name, "msdc2");
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 of_parse enter node=%s available=%d cfg_dev_msdc2=%u\n",
+			np->name, of_device_is_available(np),
+			m6_cfg_dev_msdc2);
 
 	host->mmc = mmc;  /* msdc_check_init_done() need */
 	host->hw = kzalloc(sizeof(struct msdc_hw), GFP_KERNEL);
@@ -1293,6 +1388,10 @@ int msdc_of_parse(struct mmc_host *mmc)
 	if (of_property_read_u8(np, "host_function", &host->hw->host_function))
 		pr_err("[msdc%d] host_function isn't found in device tree\n",
 			host->id);
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 of_parse host_function=%u flags=0x%lx irq=%d base=%p\n",
+			host->hw->host_function, host->hw->flags, host->irq,
+			host->base);
 
 	if (of_find_property(np, "bootable", &len))
 		host->hw->boot = 1;
@@ -1311,6 +1410,9 @@ int msdc_of_parse(struct mmc_host *mmc)
 
 	mmc->supply.vmmc = regulator_get(mmc_dev(mmc), "vmmc");
 	mmc->supply.vqmmc = regulator_get(mmc_dev(mmc), "vqmmc");
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 of_parse supplies vmmc=%p vqmmc=%p\n",
+			mmc->supply.vmmc, mmc->supply.vqmmc);
 
 	#else
 	msdc_fpga_pwr_init();
@@ -1323,8 +1425,19 @@ int msdc_of_parse(struct mmc_host *mmc)
 		host->hw->enable_sdio_eirq = mt_sdio_ops[2].sdio_enable_eirq;
 		host->hw->disable_sdio_eirq = mt_sdio_ops[2].sdio_disable_eirq;
 		host->hw->register_pm = mt_sdio_ops[2].sdio_register_pm;
+		pr_warn("M6 MSDC2 SDIO callbacks mmc_index=%d request=%p enable=%p disable=%p register_pm=%p\n",
+			mmc->index, host->hw->request_sdio_eirq,
+			host->hw->enable_sdio_eirq,
+			host->hw->disable_sdio_eirq, host->hw->register_pm);
 	}
 #endif
+	if (m6_is_msdc2)
+		pr_warn("M6 MSDC2 of_parse exit host_function=%u flags=0x%lx request=%p enable=%p disable=%p register_pm=%p\n",
+			host->hw->host_function, host->hw->flags,
+			host->hw->request_sdio_eirq,
+			host->hw->enable_sdio_eirq,
+			host->hw->disable_sdio_eirq,
+			host->hw->register_pm);
 
 	return 0;
 }
@@ -1350,6 +1463,11 @@ int msdc_dt_init(struct platform_device *pdev, struct mmc_host *mmc)
 			break;
 		}
 	}
+	if (id == 2)
+		pr_warn("M6 MSDC2 dt_init enter node=%s available=%d pdev_id=%d\n",
+			pdev->dev.of_node->name,
+			of_device_is_available(pdev->dev.of_node),
+			pdev->id);
 
 	if (id == HOST_MAX_NUM) {
 		pr_err("%s: Can not find msdc host\n", __func__);
@@ -1358,12 +1476,20 @@ int msdc_dt_init(struct platform_device *pdev, struct mmc_host *mmc)
 
 	ret = msdc_of_parse(mmc);
 	if (ret) {
+		if (id == 2)
+			pr_warn("M6 MSDC2 dt_init of_parse ret=%d\n", ret);
 		pr_err("msdc%d of parse fail!!: %d\n", id, ret);
 		return ret;
 	}
 
 	host = mmc_priv(mmc);
 	host->id = id;
+	if (id == 2)
+		pr_warn("M6 MSDC2 dt parsed caps=0x%x caps2=0x%x pm_caps=0x%x f_min=%u f_max=%u ocr=0x%x supplies vmmc=%p vqmmc=%p host_function=%u flags=0x%lx\n",
+			mmc->caps, mmc->caps2, mmc->pm_caps, mmc->f_min,
+			mmc->f_max, mmc->ocr_avail, mmc->supply.vmmc,
+			mmc->supply.vqmmc, host->hw->host_function,
+			host->hw->flags);
 
 	if (gpio_base == NULL) {
 		np = of_find_compatible_node(NULL, NULL, "mediatek,GPIO");
@@ -1412,4 +1538,3 @@ int msdc_dt_init(struct platform_device *pdev, struct mmc_host *mmc)
 
 	return 0;
 }
-

@@ -296,17 +296,20 @@ INT32 wmt_func_bt_on(P_WMT_IC_OPS pOps, P_WMT_GEN_CONF pConf)
 	ULONG ctrlPa1;
 	ULONG ctrlPa2;
 
+	WMT_ERR_FUNC("M6BT: wmt_func_bt_on ENTER chip_type=%d\n", wmt_detect_get_chip_type());
 	if (wmt_detect_get_chip_type() == WMT_CHIP_TYPE_COMBO)
 		return wmt_core_func_ctrl_cmd(WMTDRV_TYPE_BT, MTK_WCN_BOOL_TRUE);
 
 	ctrlPa1 = BT_PALDO;
 	ctrlPa2 = PALDO_ON;
 	iRet = wmt_core_ctrl(WMT_CTRL_SOC_PALDO_CTRL, &ctrlPa1, &ctrlPa2);
+	WMT_ERR_FUNC("M6BT: SOC PALDO_ON ret=%d\n", iRet);
 	if (iRet) {
 		WMT_ERR_FUNC("wmt-func: wmt_ctrl_soc_paldo_ctrl failed(%d)(%d)(%d)\n", iRet, ctrlPa1, ctrlPa2);
 		return -1;
 	}
 	iRet = wmt_core_func_ctrl_cmd(WMTDRV_TYPE_BT, MTK_WCN_BOOL_TRUE);
+	WMT_ERR_FUNC("M6BT: wmt_core_func_ctrl_cmd(BT,ON) ret=%d\n", iRet);
 	if (iRet) {
 		WMT_ERR_FUNC("wmt-func: wmt_core_func_ctrl_cmd(bt_on) failed(%d)\n", iRet);
 		ctrlPa1 = BT_PALDO;
@@ -327,6 +330,7 @@ INT32 wmt_func_bt_on(P_WMT_IC_OPS pOps, P_WMT_GEN_CONF pConf)
 		ctrlPa2 = 0;
 		wmt_core_ctrl(WMT_CTRL_BGW_DESENSE_CTRL, &ctrlPa1, &ctrlPa2);
 	}
+	WMT_ERR_FUNC("M6BT: wmt_func_bt_on RETURN 0 (WMT_BT_ON bit set)\n");
 	return 0;
 }
 

@@ -12,6 +12,8 @@
 * If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <linux/err.h>
+
 #include "wmt_gpio.h"
 
 /*******************************************************************************
@@ -235,6 +237,38 @@ GPIO_CTRL_INFO gpio_ctrl_info;
 *                              F U N C T I O N S
 ********************************************************************************
 */
+static void m6_wmt_gpio_dump_pin(const char *stage, UINT32 id)
+{
+	INT32 num;
+	int val = -EINVAL;
+
+	if (id >= GPIO_PIN_ID_MAX)
+		return;
+
+	num = gpio_ctrl_info.gpio_ctrl_state[id].gpio_num;
+	if (num != DEFAULT_PIN_ID && gpio_is_valid(num))
+		val = gpio_get_value(num);
+
+	pr_warn("M6 WMT GPIO %s id=%u name=%s num=%d valid=%d val=%d pull_dis=%p in_pd=%p in_pu=%p out_lo=%p out_hi=%p\n",
+		stage, id, gpio_pin_name[id], num,
+		num != DEFAULT_PIN_ID && gpio_is_valid(num), val,
+		gpio_ctrl_info.gpio_ctrl_state[id].gpio_state[GPIO_PULL_DIS],
+		gpio_ctrl_info.gpio_ctrl_state[id].gpio_state[GPIO_IN_PULLDOWN],
+		gpio_ctrl_info.gpio_ctrl_state[id].gpio_state[GPIO_IN_PULLUP],
+		gpio_ctrl_info.gpio_ctrl_state[id].gpio_state[GPIO_OUT_LOW],
+		gpio_ctrl_info.gpio_ctrl_state[id].gpio_state[GPIO_OUT_HIGH]);
+}
+
+static void m6_wmt_gpio_dump_key_pins(const char *stage)
+{
+	m6_wmt_gpio_dump_pin(stage, GPIO_COMBO_LDO_EN_PIN);
+	m6_wmt_gpio_dump_pin(stage, GPIO_COMBO_PMUV28_EN_PIN);
+	m6_wmt_gpio_dump_pin(stage, GPIO_COMBO_PMU_EN_PIN);
+	m6_wmt_gpio_dump_pin(stage, GPIO_COMBO_RST_PIN);
+	m6_wmt_gpio_dump_pin(stage, GPIO_COMBO_BGF_EINT_PIN);
+	m6_wmt_gpio_dump_pin(stage, GPIO_WIFI_EINT_PIN);
+}
+
 INT32 wmt_gpio_init(struct platform_device *pdev)
 {
 	INT32 iret = 0;
@@ -242,16 +276,23 @@ INT32 wmt_gpio_init(struct platform_device *pdev)
 	struct device_node *node;
 
 	node = of_find_compatible_node(NULL, NULL, "mediatek,connectivity-combo");
+	pr_warn("M6 WMT GPIO init pdev=%p dev_node=%p combo_node=%p\n",
+		pdev, pdev ? pdev->dev.of_node : NULL, node);
 	if (!node) {
 		for (i = 0; i < GPIO_PIN_ID_MAX; i++)
 			gpio_ctrl_info.gpio_ctrl_state[i].gpio_num = DEFAULT_PIN_ID;
 		pr_err("wmt_gpio:can't find device tree node!\n");
+		m6_wmt_gpio_dump_key_pins("missing-node");
 		iret = -1;
 		goto err;
 	}
 
 	gpio_ctrl_info.pinctrl_info = devm_pinctrl_get(&pdev->dev);
-	if (gpio_ctrl_info.pinctrl_info) {
+	pr_warn("M6 WMT GPIO pinctrl=%p err=%ld\n",
+		gpio_ctrl_info.pinctrl_info,
+		IS_ERR(gpio_ctrl_info.pinctrl_info) ?
+			PTR_ERR(gpio_ctrl_info.pinctrl_info) : 0L);
+	if (!IS_ERR_OR_NULL(gpio_ctrl_info.pinctrl_info)) {
 		for (i = 0; i < GPIO_PIN_ID_MAX; i++) {
 			gpio_ctrl_info.gpio_ctrl_state[i].gpio_num = of_get_named_gpio(node,
 					gpio_pin_name[i], 0);
@@ -269,6 +310,7 @@ INT32 wmt_gpio_init(struct platform_device *pdev)
 			}
 		}
 
+		m6_wmt_gpio_dump_key_pins("after-of-parse");
 		pr_err("wmt_gpio: gpio init start!\n");
 
 		if (gpio_ctrl_info.gpio_ctrl_state[GPIO_COMBO_PMU_EN_PIN].gpio_state[GPIO_PULL_DIS]) {
@@ -339,6 +381,7 @@ INT32 wmt_gpio_init(struct platform_device *pdev)
 			pr_err("wmt_gpio:set GPIO_PCM_DAISYNC_PIN to GPIO_PULL_DIS fail, is NULL!\n");
 
 		pr_err("wmt_gpio: gpio init done!\n");
+		m6_wmt_gpio_dump_key_pins("after-init");
 	} else {
 		pr_err("wmt_gpio:can't find pinctrl dev!\n");
 		iret = -1;

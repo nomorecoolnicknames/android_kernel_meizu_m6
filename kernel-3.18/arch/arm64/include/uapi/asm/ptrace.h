@@ -23,6 +23,17 @@
 
 #include <asm/hwcap.h>
 
+#ifndef __ASM_ARM64_UAPI_FPSIMD_VREG_T
+#define __ASM_ARM64_UAPI_FPSIMD_VREG_T
+#ifdef __KERNEL__
+#define __arm64_fpsimd_vreg_t __uint128_t
+#else
+typedef struct {
+	__u64 val[2];
+} __attribute__((__aligned__(16))) __arm64_fpsimd_vreg_t;
+#endif
+#endif
+
 
 /*
  * PSR bits
@@ -110,7 +121,7 @@ struct user_pt_regs {
 };
 
 struct user_fpsimd_state {
-	__uint128_t	vregs[32];
+	__arm64_fpsimd_vreg_t	vregs[32];
 	__u32		fpsr;
 	__u32		fpcr;
 };

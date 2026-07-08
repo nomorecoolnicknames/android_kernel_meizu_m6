@@ -299,7 +299,7 @@ static struct snd_pcm_hardware mtk_i2s0_hardware = {
 	SNDRV_PCM_INFO_INTERLEAVED |
 	SNDRV_PCM_INFO_RESUME |
 	SNDRV_PCM_INFO_MMAP_VALID),
-	.formats =      Dl1_MAX_BUFFER_SIZE,
+	.formats =      SND_SOC_ADV_MT_FMTS,
 	.rates =        SOC_HIGH_USE_RATE,
 	.rate_min =     SOC_HIGH_USE_RATE_MIN,
 	.rate_max =     SOC_HIGH_USE_RATE_MAX,

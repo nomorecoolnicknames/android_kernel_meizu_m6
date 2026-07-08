@@ -1998,13 +1998,15 @@ bool SetMemoryPathEnable(uint32 Aud_block, bool bEnable)
 			mAudioMEMIF[Aud_block]->mState = true;
 		mAudioMEMIF[Aud_block]->mUserCount++;
 	} else {
+		if (mAudioMEMIF[Aud_block]->mUserCount <= 0) {
+			mAudioMEMIF[Aud_block]->mUserCount = 0;
+			mAudioMEMIF[Aud_block]->mState = false;
+			pr_warn_once("SetMemoryPathEnable: unbalanced disable ignored\n");
+			return true;
+		}
 		mAudioMEMIF[Aud_block]->mUserCount--;
 		if (mAudioMEMIF[Aud_block]->mUserCount == 0)
 			mAudioMEMIF[Aud_block]->mState = false;
-		if (mAudioMEMIF[Aud_block]->mUserCount < 0) {
-			mAudioMEMIF[Aud_block]->mUserCount = 0;
-			pr_err("warning , user count <0\n");
-		}
 	}
 	PRINTK_AUDDRV("%s Aud_block = %d bEnable = %d mAudioMEMIF[Aud_block]->mUserCount = %d\n", __func__,
 		 Aud_block, bEnable, mAudioMEMIF[Aud_block]->mUserCount);

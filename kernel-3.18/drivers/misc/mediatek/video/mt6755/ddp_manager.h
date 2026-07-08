@@ -73,6 +73,7 @@ typedef void *disp_path_handle;
   * return 0 if ok or -1 if fail.
 */
 int dpmgr_init(void);
+void dpmgr_m6_dump_primary_video_truth(const char *tag);
 
 /* create disp path handle , it will assign mutex to this handle, and cache this handle
   *  to modules in scenario, and will assign default irq event to this handle.

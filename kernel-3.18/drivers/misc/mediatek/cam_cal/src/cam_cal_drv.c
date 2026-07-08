@@ -125,6 +125,63 @@ typedef struct {
 
 static stCAM_CAL_CMD_INFO_STRUCT g_camCalDrvInfo[CAM_CAL_I2C_MAX_SENSOR];
 
+static void m6_cam_cal_diag_cmd_probe(unsigned int sensorID,
+	int list_idx, int func_idx, cam_cal_cmd_type list_cmd,
+	cam_cal_cmd_type func_cmd, int check_ok, struct i2c_client *client)
+{
+	static unsigned int count;
+
+	if (count++ >= 96)
+		return;
+
+	pr_info("DIAGNOSTIC M6_CAM_CAL cmd_probe sensor=0x%x list=%d func=%d list_cmd=%d func_cmd=%d check=%d client=%p addr=0x%x bus=%u dev=%u\n",
+		sensorID, list_idx, func_idx, list_cmd, func_cmd, check_ok,
+		client, client ? client->addr : 0, g_busNum[g_curBusIdx],
+		g_curDevIdx);
+}
+
+static void m6_cam_cal_diag_read(const char *stage,
+	stCAM_CAL_INFO_STRUCT *info, stCAM_CAL_CMD_INFO_STRUCT *cmdInfo,
+	int ret, const u8 *buf)
+{
+	static unsigned int count;
+	unsigned int len = info ? info->u4Length : 0;
+
+	if (count++ >= 96)
+		return;
+
+	pr_info("DIAGNOSTIC M6_CAM_CAL %s sensor=0x%x device=0x%x off=0x%x len=%u ret=%d bus=%u dev=%u cmd=%p client=%p addr=0x%x data=%02x %02x %02x %02x %02x %02x %02x %02x\n",
+		stage, info ? info->sensorID : 0, info ? info->deviceID : 0,
+		info ? info->u4Offset : 0, info ? info->u4Length : 0, ret,
+		g_busNum[g_curBusIdx], g_curDevIdx,
+		cmdInfo ? cmdInfo->readCMDFunc : NULL,
+		cmdInfo ? cmdInfo->client : NULL,
+		(cmdInfo && cmdInfo->client) ? cmdInfo->client->addr : 0,
+		(buf && len > 0) ? buf[0] : 0,
+		(buf && len > 1) ? buf[1] : 0,
+		(buf && len > 2) ? buf[2] : 0,
+		(buf && len > 3) ? buf[3] : 0,
+		(buf && len > 4) ? buf[4] : 0,
+		(buf && len > 5) ? buf[5] : 0,
+		(buf && len > 6) ? buf[6] : 0,
+		(buf && len > 7) ? buf[7] : 0);
+}
+
+static int m6_cam_cal_buf_has_nonzero(const u8 *buf, unsigned int len)
+{
+	unsigned int i;
+
+	if (!buf)
+		return 0;
+
+	for (i = 0; i < len; i++) {
+		if (buf[i])
+			return 1;
+	}
+
+	return 0;
+}
+
 /*******************************************************************************
 *
 ********************************************************************************/
@@ -218,7 +275,7 @@ static int cam_cal_get_cmd_info(unsigned int sensorID, stCAM_CAL_CMD_INFO_STRUCT
 {
 	stCAM_CAL_LIST_STRUCT *pCamCalList = NULL;
 	stCAM_CAL_FUNC_STRUCT *pCamCalFunc = NULL;
-	int i = 0, j = 0;
+	int i = 0, j = 0, check_ok = 0;
 
 	cam_cal_get_sensor_list(&pCamCalList);
 	cam_cal_get_func_list(&pCamCalFunc);
@@ -239,8 +296,12 @@ static int cam_cal_get_cmd_info(unsigned int sensorID, stCAM_CAL_CMD_INFO_STRUCT
 				if (pCamCalFunc[j].cmdType == pCamCalList[i].cmdType
 						    || pCamCalList[i].cmdType == CMD_AUTO) {
 					if (pCamCalList[i].checkFunc != NULL) {
-					if (pCamCalList[i].checkFunc(cmdInfo->client,
-						pCamCalFunc[j].readCamCalData)) {
+					check_ok = pCamCalList[i].checkFunc(cmdInfo->client,
+						pCamCalFunc[j].readCamCalData);
+					m6_cam_cal_diag_cmd_probe(sensorID, i, j,
+						pCamCalList[i].cmdType, pCamCalFunc[j].cmdType,
+						check_ok, cmdInfo->client);
+					if (check_ok) {
 					CAM_CALDB("pCamCalList[%d].checkFunc ok!\n", i);
 					cmdInfo->readCMDFunc = pCamCalFunc[j].readCamCalData;
 					/*LukeHu--151101=Write Command Unverified*/
@@ -301,6 +362,9 @@ static stCAM_CAL_CMD_INFO_STRUCT *cam_cal_get_cmd_info_ex(unsigned int sensorID)
 				if (g_camCalDrvInfo[i].readCMDFunc != NULL) {
 					CAM_CALDB("SensorID=%x, BusID=%d\n", sensorID, g_busNum[g_curBusIdx]);
 					g_camCalDrvInfo[i].sensorID = sensorID;
+				} else {
+					m6_cam_cal_diag_read("cmd_info_no_reader", NULL,
+						&g_camCalDrvInfo[i], 0, NULL);
 				}
 				break;
 			}
@@ -552,14 +616,13 @@ static long cam_cal_drv_ioctl(
 		break;
 
 	case CAM_CALIOC_G_READ:
-        if(ptempbuf->u4Offset == 0 && ptempbuf->u4Length == 64){
-           printk("CAM_CALIOC_G_OTP start! offset=%d, length=%d\n", ptempbuf->u4Offset,
-               ptempbuf->u4Length);
-               mtk_eeprom_hw_otp_check_set("back",0);
-           break;
-        }
+		if (ptempbuf->u4Offset == 0 && ptempbuf->u4Length == 64) {
+			printk("CAM_CALIOC_G_OTP read-through offset=%d, length=%d\n",
+				ptempbuf->u4Offset, ptempbuf->u4Length);
+		}
 		CAM_CALDB("CAM_CALIOC_G_READ start! offset=%d, length=%d\n", ptempbuf->u4Offset,
 			  ptempbuf->u4Length);
+		m6_cam_cal_diag_read("read_entry", ptempbuf, NULL, 0, pu1Params);
 
 #ifdef CAM_CALGETDLT_DEBUG
 		do_gettimeofday(&ktv1);
@@ -573,12 +636,29 @@ static long cam_cal_drv_ioctl(
 		pcmdInf = cam_cal_get_cmd_info_ex(ptempbuf->sensorID);
 
 		if (pcmdInf != NULL) {
-			if (pcmdInf->readCMDFunc != NULL)
+			if (pcmdInf->readCMDFunc != NULL) {
 				i4RetValue = pcmdInf->readCMDFunc(pcmdInf->client,
 					ptempbuf->u4Offset, pu1Params, ptempbuf->u4Length);
-			else {
+				m6_cam_cal_diag_read("read_result", ptempbuf,
+					pcmdInf, i4RetValue, pu1Params);
+				if (ptempbuf->u4Offset == 0 && ptempbuf->u4Length == 64) {
+					int otp_ok = i4RetValue == ptempbuf->u4Length &&
+						m6_cam_cal_buf_has_nonzero(pu1Params,
+							ptempbuf->u4Length);
+
+					pr_info("DIAGNOSTIC M6_CAM_CAL otp_status ret=%d len=%u nonzero=%d status=%s\n",
+						i4RetValue, ptempbuf->u4Length, otp_ok,
+						otp_ok ? "back_ok" : "back_err");
+					mtk_eeprom_hw_otp_check_set("back", otp_ok ? 0 : 1);
+				}
+			} else {
 				CAM_CALDB("pcmdInf->readCMDFunc == NULL\n");
+				m6_cam_cal_diag_read("read_no_reader", ptempbuf,
+					pcmdInf, i4RetValue, pu1Params);
 			}
+		} else {
+			m6_cam_cal_diag_read("read_no_cmdinfo", ptempbuf,
+				NULL, i4RetValue, pu1Params);
 		}
 
 #ifdef CAM_CALGETDLT_DEBUG

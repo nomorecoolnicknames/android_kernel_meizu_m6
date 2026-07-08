@@ -58,6 +58,7 @@ extern int mt_mt65xx_blink_set(struct led_classdev* led_cdev,
                                unsigned long* fall_duration);
 
 extern struct cust_mt65xx_led *mt_get_cust_led_list(void);
+extern void m6_led_dump_backlight_truth(const char *tag);
 
 extern int mtkfb_set_backlight_level(unsigned int level);
 extern int flashlight_set_onoff(unsigned int onoff);

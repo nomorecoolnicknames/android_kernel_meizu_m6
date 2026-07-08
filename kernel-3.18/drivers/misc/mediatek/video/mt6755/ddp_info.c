@@ -275,7 +275,7 @@ DDP_MODULE_DRIVER *ddp_modules_driver[DISP_MODULE_NUM] = {
 	&ddp_driver_aal,	/* DISP_MODULE_AAL   , */
 	&ddp_driver_gamma,	/* DISP_MODULE_GAMMA , */
 	&ddp_driver_dither,	/* DISP_MODULE_DITHER, */
-	0,			/* DISP_MODULE_UFOE  , //10 */
+	&ddp_driver_ufoe,	/* DISP_MODULE_UFOE  , //10 */
 	&ddp_driver_pwm,	/* DISP_MODULE_PWM0   , */
 	&ddp_driver_wdma,	/* DISP_MODULE_WDMA1 , */
 	&ddp_driver_dsi0,	/* DISP_MODULE_DSI0  , */

@@ -57,9 +57,9 @@ static imgsensor_info_struct imgsensor_info = {
     //.checksum_value = 0xee2ea559,
     .checksum_value = 0x6b3a163d,
     .pre = {
-        .pclk = 244000000,              //record different mode's pclk
+        .pclk = 240000000,              //record different mode's pclk  [M6: match STOCK 240MHz=600Mbps/lane; donor had 244MHz=610]
         .linelength = 4976,             //record different mode's linelength
-        .framelength = 1620,            //record different mode's framelength
+        .framelength = 1608,            //record different mode's framelength  [M6: match STOCK 1608; donor had 1620]
         .startx = 0,                    //record different mode's startx of grabwindow
         .starty = 0,                    //record different mode's starty of grabwindow
 		.grabwindow_width = 2100,//2096,		//record different mode's width of grabwindow
@@ -144,7 +144,7 @@ static imgsensor_info_struct imgsensor_info = {
     .sensor_interface_type = SENSOR_INTERFACE_TYPE_MIPI,
     .mipi_sensor_type = MIPI_OPHY_NCSI2, //0,MIPI_OPHY_NCSI2;  1,MIPI_OPHY_CSI2 
     .mipi_settle_delay_mode = MIPI_SETTLEDELAY_AUTO,//0,MIPI_SETTLEDELAY_AUTO; 1,MIPI_SETTLEDELAY_MANNUAL
-    .sensor_output_dataformat = SENSOR_OUTPUT_FORMAT_RAW_R,
+    .sensor_output_dataformat = SENSOR_OUTPUT_FORMAT_RAW_B,/* M6: match STOCK (Ghidra: stock get_info +0x24=0=RAW_B; donor was RAW_R) — only transport-relevant stock-vs-donor diff */
     .mclk = 24,
     .mipi_lane_num = SENSOR_MIPI_4_LANE,
     .i2c_addr_table = {0x20, 0x40, 0xff},
@@ -153,7 +153,7 @@ static imgsensor_info_struct imgsensor_info = {
 
 
 static imgsensor_struct imgsensor = {
-    .mirror = IMAGE_NORMAL,             //mirrorflip information
+    .mirror = IMAGE_HV_MIRROR,          //mirrorflip information — sensor mounted 180°, H+V flip restores upright + correct Bayer (RAW_B matches HV-flipped BGGR)
     .sensor_mode = IMGSENSOR_MODE_INIT, //IMGSENSOR_MODE enum value,record current sensor mode,such as: INIT, Preview, Capture, Video,High Speed Video, Slim Video
     .shutter = 0x3D0,                   //current shutter   // Danbo ??
     .gain = 0x100,                      //current gain     // Danbo ??
@@ -968,7 +968,7 @@ static void preview_setting(void)   //PreviewSetting
     write_cmos_sensor(0x0303, 0x02);//   IVTSYCK_DIV
     write_cmos_sensor(0x0305, 0x0C);//   PREPLLCK_IVT_DIV
     write_cmos_sensor(0x0306, 0x01);//   PLL_IVT_MPY 
-    write_cmos_sensor(0x0307, 0x31);//   PLL_IVT_MPY
+    write_cmos_sensor(0x0307, 0x2C);//   PLL_IVT_MPY [M6: match STOCK 300; donor was 0x31=305]
     write_cmos_sensor(0x0309, 0x0A);//   IOPPXCK_DIV
     write_cmos_sensor(0x030B, 0x01);//   IOPSYCK_DIV
     write_cmos_sensor(0x030D, 0x0C);//   PREPLLCK_IOP_DIV
@@ -982,7 +982,7 @@ static void preview_setting(void)   //PreviewSetting
     write_cmos_sensor(0x0342, 0x13);//   
     write_cmos_sensor(0x0343, 0x70);//   
     write_cmos_sensor(0x0340, 0x06);//   
-    write_cmos_sensor(0x0341, 0x54);// 
+    write_cmos_sensor(0x0341, 0x48);// [M6: match STOCK framelength 1608; donor was 0x54=1620]
     //ROI setting
     write_cmos_sensor(0x0344, 0x00);// x_addr_start
     write_cmos_sensor(0x0345, 0x00);// x_addr_start
@@ -1045,8 +1045,14 @@ static void preview_setting(void)   //PreviewSetting
    write_cmos_sensor(0x020F, 0x00);
 
    write_cmos_sensor(0x0100,0x01);// STREAM START
+   /* [M6DIAG#208] REVERTED #206 forced test pattern (0x0600/0x0601) -> real preview
+      so live SENINF/clk diagnosis runs on actual sensor data, not synthetic bars. */
     //p2 = read_cmos_sensor_8(0x0100);
     //LOG_INF("preview setting 0x0100 = %d\n",p2);
+   LOG_INF("M6CAMDIAG STREAM 0x0100=0x%x 0x0202=0x%x 0x0203=0x%x 0x0204=0x%x 0x020E=0x%x 0x0601=0x%x\n",
+       read_cmos_sensor(0x0100), read_cmos_sensor(0x0202), read_cmos_sensor(0x0203),
+       read_cmos_sensor(0x0204), read_cmos_sensor(0x020E), read_cmos_sensor(0x0601));
+   set_mirror_flip(imgsensor.mirror); /* apply H+V flip: sensor mounted 180°, matches RAW_B Bayer */
    LOG_INF("Exit preview_setting\n");
 #endif
 }   /*  preview_setting  */
@@ -1148,9 +1154,9 @@ static void capture_setting(kal_uint16 currefps)  // IMX135MIPI_set_13M
    write_cmos_sensor(0x020E, 0x01);
    write_cmos_sensor(0x020F, 0x00);
    write_cmos_sensor(0x0100, 0x01);//STREAM START
-   
+   set_mirror_flip(imgsensor.mirror); /* apply H+V flip: sensor mounted 180°, matches RAW_B Bayer */
    LOG_INF("Exit capture_setting\n");
-        
+
 }
 
 static void normal_video_setting(kal_uint16 currefps)    // VideoFullSizeSetting
@@ -1346,6 +1352,7 @@ static void hs_video_setting()  // VideoHDSetting_120fps
    write_cmos_sensor(0x020E, 0x01);
    write_cmos_sensor(0x020F, 0x00);
    write_cmos_sensor(0x0100, 0x01);// STREAM START
+   set_mirror_flip(imgsensor.mirror); /* apply H+V flip: sensor mounted 180°, matches RAW_B Bayer */
 }
 
 static void slim_video_setting()  // VideoHDSetting
@@ -1442,6 +1449,7 @@ static void slim_video_setting()  // VideoHDSetting
    write_cmos_sensor(0x020E, 0x01);
    write_cmos_sensor(0x020F, 0x00);
     write_cmos_sensor(0x0100,0x01);// STREAM START
+    set_mirror_flip(imgsensor.mirror); /* apply H+V flip: sensor mounted 180°, matches RAW_B Bayer */
 }
 
 static kal_uint32 set_test_pattern_mode(kal_bool enable)
@@ -2255,6 +2263,13 @@ static kal_uint32 feature_control(MSDK_SENSOR_FEATURE_ENUM feature_id,
             LOG_INF("SENSOR_SET_SENSOR_IHDR LE=%d, SE=%d, Gain=%d\n",(UINT16)*feature_data,(UINT16)*(feature_data+1),(UINT16)*(feature_data+2));
             ihdr_write_shutter_gain((UINT16)*feature_data,(UINT16)*(feature_data+1),(UINT16)*(feature_data+2));
 			break;
+		case SENSOR_FEATURE_SET_MIRROR_FLIP:
+            LOG_INF("mirror flip: %d\n", (INT32)*feature_data);
+            spin_lock(&imgsensor_drv_lock);
+            imgsensor.mirror = (kal_uint8)*feature_data;
+            spin_unlock(&imgsensor_drv_lock);
+            set_mirror_flip(imgsensor.mirror);
+            break;
 		default:
 			break;
 	}

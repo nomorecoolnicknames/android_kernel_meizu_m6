@@ -327,6 +327,10 @@ int hw_charging_get_charger_type(void)
 	/* return STANDARD_CHARGER; //adaptor */
 #else
 	CHARGER_TYPE CHR_Type_num = CHARGER_UNKNOWN;
+	int dcd_result = -1;
+	int a1_result = -1;
+	int a2_result = -1;
+	int b2_result = -1;
 
 #ifdef CONFIG_MTK_USB2JTAG_SUPPORT
 	if (usb2jtag_mode()) {
@@ -339,9 +343,13 @@ int hw_charging_get_charger_type(void)
 	hw_bc11_init();
 
 	/********* Step DCD ***************/
-	if (1 == hw_bc11_DCD()) {
+	dcd_result = hw_bc11_DCD();
+	battery_log(BAT_LOG_CRTI, "[M6_CHG] bc11 DCD=%d\n", dcd_result);
+	if (1 == dcd_result) {
 		/********* Step A1 ***************/
-		if (1 == hw_bc11_stepA1()) {
+		a1_result = hw_bc11_stepA1();
+		battery_log(BAT_LOG_CRTI, "[M6_CHG] bc11 A1=%d\n", a1_result);
+		if (1 == a1_result) {
 			CHR_Type_num = APPLE_2_1A_CHARGER;
 			/*battery_log(1, "step A1 : Apple 2.1A CHARGER!\r\n");*/
 		} else {
@@ -350,9 +358,13 @@ int hw_charging_get_charger_type(void)
 		}
 	} else {
 	/********* Step A2 ***************/
-	if (1 == hw_bc11_stepA2()) {
+	a2_result = hw_bc11_stepA2();
+	battery_log(BAT_LOG_CRTI, "[M6_CHG] bc11 A2=%d\n", a2_result);
+	if (1 == a2_result) {
 		/********* Step B2 ***************/
-			if (1 == hw_bc11_stepB2()) {
+			b2_result = hw_bc11_stepB2();
+			battery_log(BAT_LOG_CRTI, "[M6_CHG] bc11 B2=%d\n", b2_result);
+			if (1 == b2_result) {
 				is_dcp_type = true;
 				CHR_Type_num = STANDARD_CHARGER;
 				/*battery_log(1, "step B2 : STANDARD CHARGER!\r\n");*/
@@ -369,6 +381,9 @@ int hw_charging_get_charger_type(void)
 
     /********* Finally setting *******************************/
 	hw_bc11_done();
+	battery_log(BAT_LOG_CRTI,
+		"[M6_CHG] bc11 done type=%d dcd=%d a1=%d a2=%d b2=%d is_dcp=%d\n",
+		CHR_Type_num, dcd_result, a1_result, a2_result, b2_result, is_dcp_type);
 
 	return CHR_Type_num;
 #endif

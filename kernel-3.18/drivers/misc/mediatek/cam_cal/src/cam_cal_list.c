@@ -71,9 +71,33 @@ stCAM_CAL_LIST_STRUCT g_camCalList[] = {
 	{S5K2P8_SENSOR_ID, 0xA2, CMD_AUTO, cam_cal_check_mtk_cid},
 	{OV8858_SENSOR_ID, 0xA2, CMD_AUTO, cam_cal_check_mtk_cid},
 
+	/*
+	 * M6 (M711H) sensors: rear IMX278, front OV8856/OV8856JSL. Stock Flyme reads
+	 * per-unit cal from a GT24C64A EEPROM @0x50 (slaveID 0xA0>>1) on each camera
+	 * bus (FACT: stock vmlinux CAM_CAL_DRV/CAM_CAL_DRV1 board_info addr 0x50).
+	 * Without these the common cam_cal driver finds no match -> no per-unit cal.
+	 * SPECULATIVE: auto-memory (2026-06-13) reports on-device /nvdata/media empty,
+	 * so this only does anything if i2cdetect ACKs 0x50 on i2c-1/i2c-2; additive,
+	 * cannot regress. cat24c16 reader already registered above.
+	 */
+	{IMX278_SENSOR_ID, 0xA0, CMD_AUTO, cam_cal_check_mtk_cid},
+	{OV8856_SENSOR_ID, 0xA0, CMD_AUTO, cam_cal_check_mtk_cid},
+	{OV8856JSL_SENSOR_ID, 0xA0, CMD_AUTO, cam_cal_check_mtk_cid},
+
 	/*  ADD before this line */
 	{0, 0, CMD_NONE, 0} /*end of list*/
 };
+
+static const char *m6_cam_cal_reader_name(cam_cal_cmd_func readCamCalData)
+{
+	if (readCamCalData == brcb032gwz_selective_read_region)
+		return "BRCB032GWZ";
+	if (readCamCalData == cat24c16_selective_read_region)
+		return "CAT24C16";
+	if (readCamCalData == gt24c32a_selective_read_region)
+		return "GT24C32A";
+	return "unknown";
+}
 
 unsigned int cam_cal_get_sensor_list(stCAM_CAL_LIST_STRUCT **ppCamcalList)
 
@@ -97,11 +121,12 @@ unsigned int cam_cal_get_func_list(stCAM_CAL_FUNC_STRUCT **ppCamcalFuncList)
 
 unsigned int cam_cal_check_mtk_cid(struct i2c_client *client, cam_cal_cmd_func readCamCalData)
 {
-	unsigned int calibrationID = 0, ret = 0;
+	unsigned int calibrationID = 0, ret = 0, read_ret = 0;
+	static unsigned int diag_count;
 	int j = 0;
 
 	if (readCamCalData != NULL) {
-		readCamCalData(client, 1, (unsigned char *)&calibrationID, 4);
+		read_ret = readCamCalData(client, 1, (unsigned char *)&calibrationID, 4);
 		CAM_CALDB("calibrationID = %x\n", calibrationID);
 	}
 
@@ -118,6 +143,10 @@ unsigned int cam_cal_check_mtk_cid(struct i2c_client *client, cam_cal_cmd_func r
 		}
 
 	CAM_CALDB("ret=%d\n", ret);
+	if (diag_count++ < 96)
+		pr_info("DIAGNOSTIC M6_CAM_CAL_CID reader=%s client=%p addr=0x%x read_ret=%u cid=0x%08x match=%u\n",
+			m6_cam_cal_reader_name(readCamCalData), client,
+			client ? client->addr : 0, read_ret, calibrationID, ret);
 	return ret;
 }
 
@@ -139,6 +168,5 @@ unsigned int cam_cal_check_double_eeprom(struct i2c_client *client, cam_cal_cmd_
 	CAM_CALDB("ret=%d\n", ret);
 	return ret;
 }
-
 
 

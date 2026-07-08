@@ -144,38 +144,38 @@ static int disp_dither_bypass(DISP_MODULE_ENUM module, int bypass)
 
 static int disp_dither_power_on(DISP_MODULE_ENUM module, void *handle)
 {
-#if defined(CONFIG_ARCH_MT6755)
-	/* dither is DCM , do nothing */
-#else
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 	if (module == DITHER0_MODULE_NAMING) {
 #ifdef CONFIG_MTK_CLKMGR
-		enable_clock(MT_CG_DISP0_DISP_DITHER, "DITHER");
+		ret = enable_clock(MT_CG_DISP0_DISP_DITHER, "DITHER");
 #else
-		ddp_clk_enable(DISP0_DISP_DITHER);
+		ret = ddp_clk_enable(DISP0_DISP_DITHER);
 #endif
 	}
+	pr_notice("M6 DDP clk: dither on ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-#endif
-	return 0;
+	return ret;
 }
 
 static int disp_dither_power_off(DISP_MODULE_ENUM module, void *handle)
 {
-#if defined(CONFIG_ARCH_MT6755)
-	/* dither is DCM , do nothing */
-#else
+	int ret = 0;
+
 #ifdef ENABLE_CLK_MGR
 	if (module == DITHER0_MODULE_NAMING) {
 #ifdef CONFIG_MTK_CLKMGR
 		disable_clock(MT_CG_DISP0_DISP_DITHER, "DITHER");
 #else
-		ddp_clk_disable(DISP0_DISP_DITHER);
+		ret = ddp_clk_disable(DISP0_DISP_DITHER);
 #endif
 	}
+	pr_notice("M6 DDP clk: dither off ret=%d CG=0x%x\n", ret,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0));
 #endif
-#endif
-	return 0;
+	return ret;
 }
 
 #ifdef DITHER_SUPPORT_PARTIAL_UPDATE

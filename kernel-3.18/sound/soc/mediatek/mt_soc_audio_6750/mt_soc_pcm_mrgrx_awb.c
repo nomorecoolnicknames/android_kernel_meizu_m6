@@ -61,6 +61,8 @@
 static AFE_MEM_CONTROL_T  *Mrgrx_AWB_Control_context;
 static struct snd_dma_buffer *Awb_Capture_dma_buf;
 static struct snd_dma_buffer *Mrgrx_Awb_Capture_dma_buf;
+static bool mAwbClockPrepared;
+static bool mAwbStarted;
 
 static DEFINE_SPINLOCK(auddrv_AWBInCtl_lock);
 
@@ -152,6 +154,11 @@ static int mtk_mrgrx_awb_pcm_prepare(struct snd_pcm_substream *substream)
 static int mtk_mrgrx_awb_alsa_stop(struct snd_pcm_substream *substream)
 {
 	pr_warn("mtk_mrgrx_awb_alsa_stop\n");
+	if (!mAwbStarted) {
+		pr_warn_once("mtk_mrgrx_awb_alsa_stop before start; skip hardware disable\n");
+		return 0;
+	}
+	mAwbStarted = false;
 	StopAudioAWBHardware(substream);
 	RemoveMemifSubStream(Soc_Aud_Digital_Block_MEM_AWB, substream);
 
@@ -287,11 +294,14 @@ static int mtk_mrgrx_awb_pcm_open(struct snd_pcm_substream *substream)
 
 	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
 		pr_warn("SNDRV_PCM_STREAM_CAPTURE\n");
-	else
-		return -1;
+	else {
+		pr_warn_once("mtk_mrgrx_awb_pcm_open non-capture stream; no-op\n");
+		return 0;
+	}
 	/* here open audio clocks */
 	AudDrv_Clk_On();
 	AudDrv_Emi_Clk_On();
+	mAwbClockPrepared = true;
 
 	if (ret < 0) {
 		pr_err("mtk_mrgrx_awb_pcm_close\n");
@@ -304,8 +314,13 @@ static int mtk_mrgrx_awb_pcm_open(struct snd_pcm_substream *substream)
 
 static int mtk_mrgrx_awb_pcm_close(struct snd_pcm_substream *substream)
 {
-	AudDrv_Emi_Clk_Off();
-	AudDrv_Clk_Off();
+	if (mAwbClockPrepared) {
+		AudDrv_Emi_Clk_Off();
+		AudDrv_Clk_Off();
+		mAwbClockPrepared = false;
+	} else {
+		pr_warn_once("mtk_mrgrx_awb_pcm_close before clock prepare; skip hardware disable\n");
+	}
 	return 0;
 }
 
@@ -314,6 +329,7 @@ static int mtk_mrgrx_awb_alsa_start(struct snd_pcm_substream *substream)
 	pr_warn("mtk_mrgrx_awb_alsa_start\n");
 	SetMemifSubStream(Soc_Aud_Digital_Block_MEM_AWB, substream);
 	StartAudioMrgrxAWBHardware(substream);
+	mAwbStarted = true;
 	return 0;
 }
 

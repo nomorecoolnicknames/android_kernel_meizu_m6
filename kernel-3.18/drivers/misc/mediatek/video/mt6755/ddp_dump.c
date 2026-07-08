@@ -710,6 +710,11 @@ static void pwm_dump_reg(DISP_MODULE_ENUM module)
 		reg_base = DISPSYS_PWM1_BASE;
 	}
 	DISPDMP("== START: DISP PWM%d REGS ==\n", index);
+	if (!reg_base) {
+		DISPDMP("DISP PWM%d base is NULL, skip register dump\n", index);
+		DISPDMP("-- END: DISP PWM%d REGS --\n", index);
+		return;
+	}
 	DISPDMP("(0x000)PWM_EN           =0x%x\n", DISP_REG_GET(reg_base + DISP_PWM_EN_OFF));
 	DISPDMP("(0x008)PWM_CON_0        =0x%x\n", DISP_REG_GET(reg_base + DISP_PWM_CON_0_OFF));
 	DISPDMP("(0x010)PWM_CON_1        =0x%x\n", DISP_REG_GET(reg_base + DISP_PWM_CON_1_OFF));
@@ -730,6 +735,10 @@ static void pwm_dump_analysis(DISP_MODULE_ENUM module)
 		reg_base = DISPSYS_PWM1_BASE;
 	}
 	DISPDMP("==DISP PWM%d ANALYSIS==\n", index);
+	if (!reg_base) {
+		DISPDMP("DISP PWM%d base is NULL, skip analysis\n", index);
+		return;
+	}
 	DISPDMP("pwm clock=%d\n", (DISP_REG_GET(DISP_REG_CLK_CFG_1_CLR) >> 7) & 0x1);
 
 }

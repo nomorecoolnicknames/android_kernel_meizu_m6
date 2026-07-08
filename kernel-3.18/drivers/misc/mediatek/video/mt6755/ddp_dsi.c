@@ -20,6 +20,10 @@
 #include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
+#include <linux/workqueue.h>
+#include <linux/jiffies.h>
+#include <linux/spinlock.h>
+#include <linux/io.h>
 #include <mach/irqs.h>
 #include <linux/types.h>
 #include "disp_log.h"
@@ -32,6 +36,7 @@
 #include "ddp_dsi.h"
 #include "ddp_mmp.h"
 #include "disp_helper.h"
+#include "disp_lowpower.h"
 #include "ddp_reg.h"
 #include "disp_debug.h"
 #include "mtkfb_debug.h"
@@ -41,6 +46,7 @@
 #include "disp_dts_gpio.h"
 #endif
 #include <mt-plat/sync_write.h>
+#include <mt-plat/aee.h>
 #ifndef CONFIG_MTK_CLKMGR
 #include "ddp_clkmgr.h"
 #endif
@@ -53,14 +59,30 @@
 #include "ddp_reg.h"
 #endif
 
-#define DSI_OUTREG32(cmdq, addr, val) DISP_REG_SET(cmdq, addr, val)
+static void dsi_m6_wrtrace_record(char op, unsigned long addr, unsigned int val,
+				  unsigned int mask, unsigned int old,
+				  unsigned int old_valid, void *cmdq);
+
+#define DSI_OUTREG32(cmdq, addr, val) \
+	do { \
+		unsigned int __m6_val = (unsigned int)(val); \
+		dsi_m6_wrtrace_record('W', (unsigned long)(addr), __m6_val, \
+				      0xffffffff, 0, 0, (void *)(cmdq)); \
+		DISP_REG_SET(cmdq, addr, __m6_val); \
+	} while (0)
 #define DSI_BACKUPREG32(cmdq, hSlot, idx, addr) DISP_REG_BACKUP(cmdq, hSlot, idx, addr)
 #define DSI_POLLREG32(cmdq, addr, mask, value) DISP_REG_CMDQ_POLLING(cmdq, addr, value, mask)
 #define DSI_INREG32(type, addr) INREG32(addr)
 #define DSI_READREG32(type, dst, src) mt_reg_sync_writel(INREG32(src), dst)
 
 static int dsi_reg_op_debug;
-#define DSI_MASKREG32(cmdq, REG, MASK, VALUE)	DISP_REG_MASK((cmdq), (REG), (VALUE), (MASK))
+#define DSI_MASKREG32(cmdq, REG, MASK, VALUE) \
+	do { \
+		dsi_m6_wrtrace_record('R', (unsigned long)(REG), \
+				      (unsigned int)(VALUE), (unsigned int)(MASK), \
+				      0, 0, (void *)(cmdq)); \
+		DISP_REG_MASK((cmdq), (REG), (VALUE), (MASK)); \
+	} while (0)
 
 #define DSI_OUTREGBIT(cmdq, TYPE, REG, bit, value)  \
 	{\
@@ -72,10 +94,17 @@ static int dsi_reg_op_debug;
 				r.bit = ~(r.bit);  \
 				*(unsigned int *)(&v) = ((unsigned int)0x00000000); \
 				v.bit = value; \
+				dsi_m6_wrtrace_record('M', (unsigned long)(&REG), \
+						      AS_UINT32(&v), AS_UINT32(&r), \
+						      0, 0, (void *)(cmdq)); \
 				DISP_REG_MASK(cmdq, &REG, AS_UINT32(&v), AS_UINT32(&r)); \
 			} else { \
-				mt_reg_sync_writel(INREG32(&REG), &r); \
+				unsigned int __m6_old = INREG32(&REG); \
+				mt_reg_sync_writel(__m6_old, &r); \
 				r.bit = (value); \
+				dsi_m6_wrtrace_record('B', (unsigned long)(&REG), \
+						      AS_UINT32(&r), 0xffffffff, \
+						      __m6_old, 1, (void *)(cmdq)); \
 				DISP_REG_SET(cmdq, &REG, INREG32(&r)); \
 			} \
 		} while (0);\
@@ -130,10 +159,13 @@ static int dsi_reg_op_debug;
 })
 
  #define MIPITX_OUTREG32(addr, val) {\
+		unsigned int __m6_val = (unsigned int)(val); \
+		dsi_m6_wrtrace_record('W', (unsigned long)(addr), __m6_val, \
+				      0xffffffff, 0, 0, NULL); \
 		if (dsi_reg_op_debug) \
-			DISPMSG("[mipitx/reg]%p=0x%08x\n", (void *)addr, val); \
+			DISPMSG("[mipitx/reg]%p=0x%08x\n", (void *)addr, __m6_val); \
 		if (0) \
-			mt_reg_sync_writel(val, addr); \
+			mt_reg_sync_writel(__m6_val, addr); \
 	}
 
 #define MIPITX_OUTREGBIT(TYPE, REG, bit, value) {\
@@ -159,10 +191,13 @@ static int dsi_reg_op_debug;
 #define MIPITX_OUTREG32(addr, val) \
 	{\
 		do {	\
+			unsigned int __m6_val = (unsigned int)(val); \
+			dsi_m6_wrtrace_record('W', (unsigned long)(addr), __m6_val, \
+					      0xffffffff, 0, 0, NULL); \
 			if (dsi_reg_op_debug) {	\
-				DISPMSG("[mipitx/reg]%p=0x%08x\n", (void *)addr, val);\
+				DISPMSG("[mipitx/reg]%p=0x%08x\n", (void *)addr, __m6_val);\
 			} \
-			mt_reg_sync_writel(val, addr);\
+			mt_reg_sync_writel(__m6_val, addr);\
 		} while (0);\
 	}
 
@@ -196,6 +231,42 @@ t_dsi_context _dsi_context[DSI_INTERFACE_NUM];
 #define DSI_MODULE_END(x)		0	/* (x == DISP_MODULE_DSIDUAL?1:DSI_MODULE_to_ID(x)) */
 #define DSI_MODULE_to_ID(x)		0	/* (x == DISP_MODULE_DSI0?0:1) */
 #define DIFF_CLK_LANE_LP (0x10)
+#define M6_MIPITX_RT_CAL_PHYS 0x10206190
+#define M6_LK_PHY_BG_SETTLE_MS 30
+#define M6_LK_PHY_PLL_EN_SETTLE_MS 20
+#define M6_LK_PHY_PCW_PAD_SETTLE_MS 200
+#define M6_LKGOLD_DSI_LAST 0x1b0
+#define M6_LKGOLD_DSI_WORDS ((M6_LKGOLD_DSI_LAST / 4) + 1)
+#define M6_LKGOLD_MIPITX_LAST 0x104
+#define M6_LKGOLD_MIPITX_WORDS ((M6_LKGOLD_MIPITX_LAST / 4) + 1)
+/* M6: was 15000 — a diagnostic msleep() that froze the DSI takeover path 15s
+ * on first DSI0 handoff. Caused user-visible UI lag/stutter on the live
+ * device. Set 0 to disable (dsi_m6_takeover_hold_once early-returns on 0). */
+#define M6_LK_HANDOFF_TAKEOVER_HOLD_MS 0
+/*
+ * PROPER-FIX: keep Linux-owned DSI config/start enabled. The old M6
+ * isolation skip leaves DSI in CMD mode after any stop/restart sequence.
+ */
+#define M6_LK_HANDOFF_SKIP_FIRST_DSI_CONFIG 0
+/*
+ * ISOLATION: #73 proves the first Linux takeover can skip the DSI timing/VM
+ * programming path when LK left MIPITX enabled. Replay it once, with markers.
+ *
+ * FIX 2026-06-11 (root cause of lit-black panel): set to 0. With this = 1, the
+ * first boot takeover (LK's MIPITX live, PMaster=0) calls DSI_PHY_clk_setting()
+ * in ddp_dsi_config() -> it POWER-CYCLES the MIPITX PLL/PHY (MPLL off->on, BG
+ * re-enable, PAD_TIE_LOW toggle, ~250ms settle) on LK's LIVE link, then
+ * reconfigures it. That transient breaks the panel's HS-video lock (LK logo OK
+ * -> image goes black ~3s into Linux boot; even DSI-internal BIST is invisible)
+ * while the FINAL registers still match the working LK reference (so every
+ * register dump looked fine). Stock/pristine ddp_dsi_config preserves the
+ * LK-initialized link here (goto done) instead of re-cycling the PHY. Resume is
+ * unaffected: after suspend MIPITX is off (else-branch reconfigures) or
+ * dsi_force_config=1, so a real resume still reconfigures.
+ */
+#define M6_FORCE_FIRST_DSI_CONFIG_ON_LK_MIPITX 0
+
+#define M6_BOOT_PLL_REPROG 1
 
 PDSI_REGS DSI_REG[2] = {0};
 PDSI_PHY_REGS DSI_PHY_REG[2] = {0};
@@ -215,6 +286,7 @@ static bool wait_sleep_out_done;
 static int s_isDsiPowerOn;
 static int dsi_currect_mode;
 static int dsi_force_config;
+static unsigned int m6_lk_handoff_takeover_hold_done;
 static int dsi0_te_enable = 1;
 static const LCM_UTIL_FUNCS lcm_utils_dsi0;
 unsigned int clock_lane = 0;/*MIPITX_DSI_CLOCK_LANE*/
@@ -222,6 +294,223 @@ unsigned int data_lane3 = 0;/*MIPITX_DSI_DATA_LANE3*/
 unsigned int data_lane2 = 0;/*MIPITX_DSI_DATA_LANE2*/
 unsigned int data_lane1 = 0;/*MIPITX_DSI_DATA_LANE1*/
 unsigned int data_lane0 = 0;/*MIPITX_DSI_DATA_LANE0*/
+
+#define M6_DSI_WRTRACE_MAX 2048
+
+struct m6_dsi_wrtrace_entry {
+	unsigned int seq;
+	unsigned int val;
+	unsigned int mask;
+	unsigned int old;
+	unsigned int old_valid;
+	unsigned int off;
+	unsigned long addr;
+	unsigned long jiffies;
+	unsigned long long ns;
+	void *cmdq;
+	char op;
+	char blk;
+	char comm[TASK_COMM_LEN];
+};
+
+static DEFINE_SPINLOCK(m6_dsi_wrtrace_lock);
+static struct m6_dsi_wrtrace_entry m6_dsi_wrtrace[M6_DSI_WRTRACE_MAX];
+static unsigned int m6_dsi_wrtrace_count;
+static unsigned int m6_dsi_wrtrace_dropped;
+static unsigned int m6_dsi_wrtrace_enabled = 1;
+
+static char dsi_m6_wrtrace_classify(unsigned long addr, unsigned int *off)
+{
+	unsigned long dsi_base = (unsigned long)DDP_REG_BASE_DSI0;
+	unsigned long mipitx_base = (unsigned long)MIPITX_BASE;
+
+	if (addr >= dsi_base && addr <= dsi_base + M6_LKGOLD_DSI_LAST) {
+		*off = (unsigned int)(addr - dsi_base);
+		return 'D';
+	}
+	if (addr >= mipitx_base && addr <= mipitx_base + M6_LKGOLD_MIPITX_LAST) {
+		*off = (unsigned int)(addr - mipitx_base);
+		return 'M';
+	}
+	return 0;
+}
+
+static void dsi_m6_wrtrace_record(char op, unsigned long addr, unsigned int val,
+				  unsigned int mask, unsigned int old,
+				  unsigned int old_valid, void *cmdq)
+{
+	struct m6_dsi_wrtrace_entry *e;
+	unsigned long flags;
+	unsigned int off = 0;
+	char blk;
+
+	if (!m6_dsi_wrtrace_enabled)
+		return;
+
+	blk = dsi_m6_wrtrace_classify(addr, &off);
+	if (!blk)
+		return;
+
+	spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+	if (m6_dsi_wrtrace_count >= M6_DSI_WRTRACE_MAX) {
+		m6_dsi_wrtrace_dropped++;
+		m6_dsi_wrtrace_enabled = 0;
+		spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+		return;
+	}
+
+	e = &m6_dsi_wrtrace[m6_dsi_wrtrace_count];
+	e->seq = m6_dsi_wrtrace_count++;
+	e->val = val;
+	e->mask = mask;
+	e->old = old;
+	e->old_valid = old_valid ? 1 : 0;
+	e->off = off;
+	e->addr = addr;
+	e->jiffies = jiffies;
+	e->ns = local_clock();
+	e->cmdq = cmdq;
+	e->op = op;
+	e->blk = blk;
+	strlcpy(e->comm, current->comm, sizeof(e->comm));
+	spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+}
+
+void dsi_m6_wrtrace_reset(unsigned int enable)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+	m6_dsi_wrtrace_count = 0;
+	m6_dsi_wrtrace_dropped = 0;
+	m6_dsi_wrtrace_enabled = enable ? 1 : 0;
+	spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+
+	DISPERR("M6 DSI wrtrace reset: enable=%u max=%u\n",
+		m6_dsi_wrtrace_enabled, M6_DSI_WRTRACE_MAX);
+}
+
+void dsi_m6_wrtrace_enable(unsigned int enable)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+	m6_dsi_wrtrace_enabled = enable ? 1 : 0;
+	spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+
+	DISPERR("M6 DSI wrtrace enable=%u count=%u dropped=%u max=%u\n",
+		m6_dsi_wrtrace_enabled, m6_dsi_wrtrace_count,
+		m6_dsi_wrtrace_dropped, M6_DSI_WRTRACE_MAX);
+}
+
+void dsi_m6_wrtrace_dump(unsigned int limit)
+{
+	struct m6_dsi_wrtrace_entry e;
+	unsigned long flags;
+	unsigned int count;
+	unsigned int dropped;
+	unsigned int enabled;
+	unsigned int i;
+
+	spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+	count = m6_dsi_wrtrace_count;
+	dropped = m6_dsi_wrtrace_dropped;
+	enabled = m6_dsi_wrtrace_enabled;
+	spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+
+	if (limit == 0 || limit > count)
+		limit = count;
+
+	DISPERR("M6 DSI wrtrace dump: enabled=%u count=%u dropped=%u limit=%u max=%u\n",
+		enabled, count, dropped, limit, M6_DSI_WRTRACE_MAX);
+
+	for (i = 0; i < limit; i++) {
+		spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
+		e = m6_dsi_wrtrace[i];
+		spin_unlock_irqrestore(&m6_dsi_wrtrace_lock, flags);
+
+		DISPERR("M6 DSI wrtrace[%04u]: blk=%c off=0x%03x op=%c cmdq=%p old_valid=%u old=0x%08x val=0x%08x mask=0x%08x j=%lu ns=%llu comm=%s addr=0x%lx\n",
+			e.seq, e.blk, e.off, e.op, e.cmdq, e.old_valid,
+			e.old, e.val, e.mask, e.jiffies, e.ns, e.comm, e.addr);
+	}
+}
+
+static void dsi_m6_dump_irq_decode(const char *tag, uint32_t start, uint32_t status,
+				   uint32_t inten, uint32_t intsta)
+{
+	DISPERR("M6 DSI irq_decode[%s]: START dsi/sleep/skew/vmcmd=%u/%u/%u/%u STA underrun/esc_entry/esc_sync/ctrl/content=%u/%u/%u/%u/%u INTEN rd/cmd/te/vm/frame/vmcmd/sleep/te_to/vbp/vact/vfp/skew=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u INTSTA rd/cmd/te/vm/frame/vmcmd/sleep/te_to/vbp/vact/vfp/skew/busy=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u raw=0x%x/0x%x/0x%x/0x%x\n",
+		tag,
+		(start & BIT(0)) ? 1 : 0, (start & BIT(2)) ? 1 : 0,
+		(start & BIT(4)) ? 1 : 0, (start & BIT(16)) ? 1 : 0,
+		(status & BIT(1)) ? 1 : 0, (status & BIT(4)) ? 1 : 0,
+		(status & BIT(5)) ? 1 : 0, (status & BIT(6)) ? 1 : 0,
+		(status & BIT(7)) ? 1 : 0,
+		(inten & BIT(0)) ? 1 : 0, (inten & BIT(1)) ? 1 : 0,
+		(inten & BIT(2)) ? 1 : 0, (inten & BIT(3)) ? 1 : 0,
+		(inten & BIT(4)) ? 1 : 0, (inten & BIT(5)) ? 1 : 0,
+		(inten & BIT(6)) ? 1 : 0, (inten & BIT(7)) ? 1 : 0,
+		(inten & BIT(8)) ? 1 : 0, (inten & BIT(9)) ? 1 : 0,
+		(inten & BIT(10)) ? 1 : 0, (inten & BIT(11)) ? 1 : 0,
+		(intsta & BIT(0)) ? 1 : 0, (intsta & BIT(1)) ? 1 : 0,
+		(intsta & BIT(2)) ? 1 : 0, (intsta & BIT(3)) ? 1 : 0,
+		(intsta & BIT(4)) ? 1 : 0, (intsta & BIT(5)) ? 1 : 0,
+		(intsta & BIT(6)) ? 1 : 0, (intsta & BIT(7)) ? 1 : 0,
+		(intsta & BIT(8)) ? 1 : 0, (intsta & BIT(9)) ? 1 : 0,
+		(intsta & BIT(10)) ? 1 : 0, (intsta & BIT(11)) ? 1 : 0,
+		(intsta & BIT(31)) ? 1 : 0, start, status, inten, intsta);
+}
+
+static void dsi_m6_clkstate_marker(const char *tag, DISP_MODULE_ENUM module)
+{
+	static unsigned int count;
+	unsigned int start = 0;
+	unsigned int intsta = 0;
+	unsigned int mode = 0;
+	unsigned int txrx = 0;
+	unsigned int ps = 0;
+	unsigned int dsi_e = 0xffffffff;
+	unsigned int dsi_p = 0xffffffff;
+	unsigned int dig_e = 0xffffffff;
+	unsigned int dig_p = 0xffffffff;
+	unsigned int mtcmos_e = 0xffffffff;
+	unsigned int mtcmos_p = 0xffffffff;
+
+	if (count >= 192)
+		return;
+
+	count++;
+
+	if ((module == DISP_MODULE_DSI0 || module == DISP_MODULE_DSIDUAL) && DSI_REG[0]) {
+		start = AS_UINT32(&DSI_REG[0]->DSI_START);
+		intsta = AS_UINT32(&DSI_REG[0]->DSI_INTSTA);
+		mode = AS_UINT32(&DSI_REG[0]->DSI_MODE_CTRL);
+		txrx = AS_UINT32(&DSI_REG[0]->DSI_TXRX_CTRL);
+		ps = AS_UINT32(&DSI_REG[0]->DSI_PSCTRL);
+	}
+
+#ifndef CONFIG_MTK_CLKMGR
+	dsi_e = ddp_clk_get_enable_count(DISP1_DSI_ENGINE);
+	dsi_p = ddp_clk_get_prepare_count(DISP1_DSI_ENGINE);
+	dig_e = ddp_clk_get_enable_count(DISP1_DSI_DIGITAL);
+	dig_p = ddp_clk_get_prepare_count(DISP1_DSI_DIGITAL);
+	mtcmos_e = ddp_clk_get_enable_count(DISP_MTCMOS_CLK);
+	mtcmos_p = ddp_clk_get_prepare_count(DISP_MTCMOS_CLK);
+#endif
+	DISPERR("M6 DSI clkstate[%s] #%u module=%d power=%d ulps=%u dsi_e/p=%u/%u dig_e/p=%u/%u mtcmos_e/p=%u/%u start=0x%x intsta=0x%x mode=0x%x txrx=0x%x ps=0x%x cg=0x%x/0x%x swrst=0x%x/%x lcm_rst=0x%x route=0x%x/%x mutex0=0x%x/%x/%x\n",
+		tag, count, module, s_isDsiPowerOn, is_mipi_enterulps(),
+		dsi_e, dsi_p, dig_e, dig_p, mtcmos_e, mtcmos_p,
+		start, intsta, mode, txrx, ps,
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON0),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_CG_CON1),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_SW0_RST_B),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_SW1_RST_B),
+		DISP_REG_GET(DISP_REG_CONFIG_MMSYS_LCM_RST_B),
+		DISP_REG_GET(DISP_REG_CONFIG_DSI0_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_RDMA0_SOUT_SEL_IN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF));
+}
 
 atomic_t PMaster_enable = ATOMIC_INIT(0);
 
@@ -373,8 +662,30 @@ static void _DSI_INTERNAL_IRQ_Handler(DISP_MODULE_ENUM module, unsigned int para
 	int i = 0;
 	DSI_INT_STATUS_REG status = {0};
 	DSI_TXRX_CTRL_REG txrx_ctrl = {0};
+	static unsigned int m6_irq_dump_count;
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
+		if (module == DISP_MODULE_DSI0 && DSI_REG[i] && m6_irq_dump_count < 96) {
+			uint32_t start = INREG32(&DSI_REG[i]->DSI_START);
+			uint32_t sta = INREG32(&DSI_REG[i]->DSI_STA);
+			uint32_t inten = INREG32(&DSI_REG[i]->DSI_INTEN);
+			uint32_t live_intsta = INREG32(&DSI_REG[i]->DSI_INTSTA);
+			uint32_t mode = INREG32(&DSI_REG[i]->DSI_MODE_CTRL);
+			uint32_t state7 = INREG32(DDP_REG_BASE_DSI0 + 0x164);
+			uint32_t state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+			uint32_t state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+
+			m6_irq_dump_count++;
+			DISPERR("M6 DSI irq[internal] #%u module=%d param=0x%x live_intsta=0x%x inten=0x%x start=0x%x mode=0x%x state7=0x%x/%s state8=0x%x state9=0x%x waits rd/vmcmd/sleep=%u/%u/%u\n",
+				m6_irq_dump_count, module, param, live_intsta, inten,
+				start, mode, state7,
+				_dsi_vdo_mode_parse_state(state7 & 0xff),
+				state8, state9, waitRDDone, wait_vm_cmd_done,
+				wait_sleep_out_done);
+			dsi_m6_dump_irq_decode("internal-param", start, sta, inten, param);
+			dsi_m6_dump_irq_decode("internal-live", start, sta, inten,
+					       live_intsta);
+		}
 		status = *(PDSI_INT_STATUS_REG) & param;
 		if (status.RD_RDY) {
 			/* /write clear RD_RDY interrupt */
@@ -787,18 +1098,29 @@ DSI_STATUS DSI_RestoreRegisters(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 	return DSI_STATUS_OK;
 }
 
+static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void *cmdq);
+static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM module,
+					 void *cmdq, unsigned int *count,
+					 unsigned int limit);
+static void dsi_m6_sram_snapshot(const char *tag, DISP_MODULE_ENUM module);
+
 DSI_STATUS DSI_BIST_Pattern_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bool enable,
 				 unsigned int color)
 {
 	int i = 0;
+	static unsigned int m6_bist_dump_count;
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
 		if (enable) {
+			dsi_m6_dump_snapshot_limited("bist-pre-enable", module, cmdq,
+						     &m6_bist_dump_count, 16);
 			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_PATTERN, color);
 			/* DSI_OUTREG32(&DSI_REG->DSI_BIST_CON, AS_UINT32(&temp_reg)); */
 			/* DSI_OUTREGBIT(DSI_BIST_CON_REG, DSI_REG->DSI_BIST_CON, SELF_PAT_MODE, 1); */
 			DSI_OUTREGBIT(cmdq, DSI_BIST_CON_REG, DSI_REG[i]->DSI_BIST_CON,
 				      SELF_PAT_MODE, 1);
+			dsi_m6_dump_snapshot_limited("bist-post-enable", module, cmdq,
+						     &m6_bist_dump_count, 16);
 
 			if (!_dsi_is_video_mode(module)) {
 				DSI_T0_INS t0;
@@ -821,10 +1143,173 @@ DSI_STATUS DSI_BIST_Pattern_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bo
 			/* so we just disable pattern bit, do not start dsi here */
 			/* DSI_WaitForNotBusy(module,cmdq); */
 			/* DSI_OUTREGBIT(cmdq, DSI_BIST_CON_REG, DSI_REG[i]->DSI_BIST_CON, SELF_PAT_MODE, 0); */
+			dsi_m6_dump_snapshot_limited("bist-pre-disable", module, cmdq,
+						     &m6_bist_dump_count, 16);
 			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_CON, 0x00);
+			dsi_m6_dump_snapshot_limited("bist-post-disable", module, cmdq,
+						     &m6_bist_dump_count, 16);
 		}
 
 	}
+	return DSI_STATUS_OK;
+}
+
+DSI_STATUS DSI_M6_BIST_Full_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, bool enable,
+				 unsigned int color)
+{
+	int i = 0;
+	static unsigned int m6_bist_full_dump_count;
+	DSI_BIST_CON_REG bist_con = {0};
+
+	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
+		if (enable) {
+			dsi_m6_dump_snapshot_limited("bist-full-pre", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+			bist_con.BIST_ENABLE = 1;
+			bist_con.BIST_FIX_PATTERN = 1;
+			bist_con.SELF_PAT_MODE = 1;
+			bist_con.BIST_LANE_NUM = 4;
+			bist_con.BIST_TIMING = 0x20;
+			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_PATTERN, color);
+			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_CON, AS_UINT32(&bist_con));
+			dsi_m6_dump_snapshot_limited("bist-full-post", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+			msleep(500);
+			dsi_m6_dump_snapshot_limited("bist-full-after-500ms", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+		} else {
+			dsi_m6_dump_snapshot_limited("bist-full-pre-disable", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_CON, 0x00);
+			dsi_m6_dump_snapshot_limited("bist-full-post-disable", module, cmdq,
+						     &m6_bist_full_dump_count, 32);
+		}
+	}
+
+	return DSI_STATUS_OK;
+}
+
+static const char *dsi_m6_bist_profile_name(unsigned int profile)
+{
+	switch (profile) {
+	case 0:
+		return "full-current";
+	case 1:
+		return "full-mode";
+	case 2:
+		return "full-hs-free";
+	case 3:
+		return "full-mode-hs-free";
+	case 4:
+		return "selfpat-legacy";
+	case 5:
+		return "engine-mode-hs-free";
+	default:
+		return "full-current";
+	}
+}
+
+static uint32_t dsi_m6_bist_profile_raw(unsigned int profile)
+{
+	DSI_BIST_CON_REG bist_con = {0};
+
+	bist_con.BIST_TIMING = 0x20;
+	bist_con.BIST_LANE_NUM = 4;
+
+	switch (profile) {
+	case 1:
+		bist_con.BIST_MODE = 1;
+		/* fall through */
+	case 0:
+		bist_con.BIST_ENABLE = 1;
+		bist_con.BIST_FIX_PATTERN = 1;
+		bist_con.SELF_PAT_MODE = 1;
+		break;
+	case 2:
+		bist_con.BIST_HS_FREE = 1;
+		bist_con.BIST_ENABLE = 1;
+		bist_con.BIST_FIX_PATTERN = 1;
+		bist_con.SELF_PAT_MODE = 1;
+		break;
+	case 3:
+		bist_con.BIST_MODE = 1;
+		bist_con.BIST_HS_FREE = 1;
+		bist_con.BIST_ENABLE = 1;
+		bist_con.BIST_FIX_PATTERN = 1;
+		bist_con.SELF_PAT_MODE = 1;
+		break;
+	case 4:
+		bist_con.BIST_LANE_NUM = 0;
+		bist_con.SELF_PAT_MODE = 1;
+		break;
+	case 5:
+		bist_con.BIST_MODE = 1;
+		bist_con.BIST_HS_FREE = 1;
+		bist_con.BIST_ENABLE = 1;
+		bist_con.BIST_FIX_PATTERN = 1;
+		break;
+	default:
+		bist_con.BIST_ENABLE = 1;
+		bist_con.BIST_FIX_PATTERN = 1;
+		bist_con.SELF_PAT_MODE = 1;
+		break;
+	}
+
+	return AS_UINT32(&bist_con);
+}
+
+DSI_STATUS DSI_M6_BIST_Profile_Test(DISP_MODULE_ENUM module, cmdqRecHandle cmdq,
+				    unsigned int profile, unsigned int color,
+				    unsigned int hold_ms)
+{
+	int i = 0;
+	uint32_t bist_con;
+	unsigned int bounded_hold = hold_ms;
+	unsigned int elapsed = 0;
+
+	if (profile > 5)
+		profile = 0;
+	if (bounded_hold == 0)
+		bounded_hold = 3000;
+	if (bounded_hold > 10000)
+		bounded_hold = 10000;
+
+	bist_con = dsi_m6_bist_profile_raw(profile);
+
+	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
+		DISPERR("M6 DSI bist_profile: begin profile=%u/%s color=0x%08x hold_ms=%u raw_con=0x%x\n",
+			profile, dsi_m6_bist_profile_name(profile), color,
+			bounded_hold, bist_con);
+		dsi_m6_dump_snapshot("bist-profile-pre", module, cmdq);
+		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_PATTERN, color);
+		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_CON, bist_con);
+		dsi_m6_dump_snapshot("bist-profile-post", module, cmdq);
+
+		if (bounded_hold > 50) {
+			msleep(50);
+			elapsed = 50;
+			dsi_m6_dump_snapshot("bist-profile-after-50ms", module, cmdq);
+		}
+		if (bounded_hold > 250) {
+			msleep(200);
+			elapsed = 250;
+			dsi_m6_dump_snapshot("bist-profile-after-250ms", module, cmdq);
+		}
+		if (bounded_hold > 1000) {
+			msleep(750);
+			elapsed = 1000;
+			dsi_m6_dump_snapshot("bist-profile-after-1000ms", module, cmdq);
+		}
+		if (bounded_hold > elapsed)
+			msleep(bounded_hold - elapsed);
+
+		dsi_m6_dump_snapshot("bist-profile-hold-end", module, cmdq);
+		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BIST_CON, 0x00);
+		dsi_m6_dump_snapshot("bist-profile-post-disable", module, cmdq);
+		DISPERR("M6 DSI bist_profile: end profile=%u/%s\n",
+			profile, dsi_m6_bist_profile_name(profile));
+	}
+
 	return DSI_STATUS_OK;
 }
 
@@ -921,6 +1406,25 @@ void DSI_Config_VDO_Timing(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_
 		    (dsi_params->horizontal_frontporch * dsiTmpBufBpp - 12);
 		horizontal_bllp_byte = (dsi_params->horizontal_bllp * dsiTmpBufBpp);
 
+		DISPERR("M6 DSI timing_calc[before-enqueue]: cmdq=%p mode=%u switch=%u bpp=%u h=%u/%u/%u/%u raw=0x%x/0x%x/0x%x/0x%x aligned=0x%x/0x%x/0x%x/0x%x live=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+			cmdq, dsi_params->mode, dsi_params->switch_mode,
+			dsiTmpBufBpp, dsi_params->horizontal_sync_active,
+			dsi_params->horizontal_backporch,
+			dsi_params->horizontal_frontporch,
+			dsi_params->horizontal_active_pixel,
+			horizontal_sync_active_byte, horizontal_backporch_byte,
+			horizontal_frontporch_byte, horizontal_bllp_byte,
+			ALIGN_TO(horizontal_sync_active_byte, 4),
+			ALIGN_TO(horizontal_backporch_byte, 4),
+			ALIGN_TO(horizontal_frontporch_byte, 4),
+			ALIGN_TO(horizontal_bllp_byte, 4),
+			INREG32(DDP_REG_BASE_DSI0 + 0x050),
+			INREG32(DDP_REG_BASE_DSI0 + 0x054),
+			INREG32(DDP_REG_BASE_DSI0 + 0x058),
+			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x064));
+		dsi_m6_sram_snapshot("timing-before-enqueue", module);
+
 		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_HSA_WC,
 			     ALIGN_TO((horizontal_sync_active_byte), 4));
 		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_HBP_WC,
@@ -928,6 +1432,14 @@ void DSI_Config_VDO_Timing(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_
 		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_HFP_WC,
 			     ALIGN_TO((horizontal_frontporch_byte), 4));
 		DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_BLLP_WC, ALIGN_TO((horizontal_bllp_byte), 4));
+
+		DISPERR("M6 DSI timing_calc[after-enqueue]: cmdq=%p live=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+			cmdq, INREG32(DDP_REG_BASE_DSI0 + 0x050),
+			INREG32(DDP_REG_BASE_DSI0 + 0x054),
+			INREG32(DDP_REG_BASE_DSI0 + 0x058),
+			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x064));
+		dsi_m6_sram_snapshot("timing-after-enqueue", module);
 	}
 }
 
@@ -1111,6 +1623,2677 @@ int MIPITX_IsEnabled(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 
 	DISPDBG("MIPITX for %s is %s\n", ddp_get_module_name(module), ret ? "on" : "off");
 	return ret;
+}
+
+#ifndef CONFIG_FPGA_EARLY_PORTING
+static unsigned int dsi_m6_field(uint32_t value, unsigned int shift, unsigned int width)
+{
+	return (value >> shift) & ((1U << width) - 1);
+}
+
+static unsigned int dsi_m6_lk_rt_code(uint32_t raw, unsigned int shift)
+{
+	unsigned int code = dsi_m6_field(raw, shift, 4);
+
+	return code ? code : 8;
+}
+
+static void dsi_m6_dump_rt_cal(const char *tag)
+{
+	static unsigned int count;
+	static void __iomem *rt_cal_base;
+	static bool rt_cal_iomap_tried;
+	uint32_t raw = 0;
+	uint32_t raw_valid = 0;
+	uint32_t live_c;
+	uint32_t live_d3;
+	uint32_t live_d2;
+	uint32_t live_d1;
+	uint32_t live_d0;
+
+	if (count >= 96)
+		return;
+
+	count++;
+	if (!rt_cal_iomap_tried) {
+		rt_cal_base = ioremap_nocache(M6_MIPITX_RT_CAL_PHYS, 4);
+		rt_cal_iomap_tried = true;
+	}
+	if (rt_cal_base) {
+		raw = readl(rt_cal_base);
+		raw_valid = 1;
+	}
+	live_c = INREG32(MIPITX_BASE + 0x004);
+	live_d3 = INREG32(MIPITX_BASE + 0x014);
+	live_d2 = INREG32(MIPITX_BASE + 0x010);
+	live_d1 = INREG32(MIPITX_BASE + 0x00c);
+	live_d0 = INREG32(MIPITX_BASE + 0x008);
+
+	DISPERR("M6 DSI rtcal[%s]: phys10206190 raw_valid=%u raw=0x%x lk_eff c/d3/d2/d1/d0=0x%x/0x%x/0x%x/0x%x/0x%x live_rt=0x%x/0x%x/0x%x/0x%x/0x%x saved_rt=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, raw_valid, raw, dsi_m6_lk_rt_code(raw, 16),
+		dsi_m6_lk_rt_code(raw, 8), dsi_m6_lk_rt_code(raw, 12),
+		dsi_m6_lk_rt_code(raw, 20), dsi_m6_lk_rt_code(raw, 24),
+		dsi_m6_field(live_c, 8, 4), dsi_m6_field(live_d3, 8, 4),
+		dsi_m6_field(live_d2, 8, 4), dsi_m6_field(live_d1, 8, 4),
+		dsi_m6_field(live_d0, 8, 4), dsi_m6_field(clock_lane, 8, 4),
+		dsi_m6_field(data_lane3, 8, 4), dsi_m6_field(data_lane2, 8, 4),
+		dsi_m6_field(data_lane1, 8, 4), dsi_m6_field(data_lane0, 8, 4));
+}
+
+static void dsi_m6_dump_mipitx_decode(const char *tag)
+{
+	uint32_t txrx = INREG32(DDP_REG_BASE_DSI0 + 0x018);
+	uint32_t clock_lane = INREG32(MIPITX_BASE + 0x004);
+	uint32_t lane0 = INREG32(MIPITX_BASE + 0x008);
+	uint32_t lane1 = INREG32(MIPITX_BASE + 0x00c);
+	uint32_t lane2 = INREG32(MIPITX_BASE + 0x010);
+	uint32_t lane3 = INREG32(MIPITX_BASE + 0x014);
+	uint32_t top = INREG32(MIPITX_BASE + 0x040);
+	uint32_t pll0 = INREG32(MIPITX_BASE + 0x050);
+	uint32_t pll2 = INREG32(MIPITX_BASE + 0x058);
+	uint32_t pll_top = INREG32(MIPITX_BASE + 0x064);
+	uint32_t pll_pwr = INREG32(MIPITX_BASE + 0x068);
+	uint32_t gpi_en = INREG32(MIPITX_BASE + 0x074);
+	uint32_t gpi_pull = INREG32(MIPITX_BASE + 0x078);
+	uint32_t phy_sel = INREG32(MIPITX_BASE + 0x07c);
+	uint32_t sw_ctrl = INREG32(MIPITX_BASE + 0x080);
+	uint32_t sw0 = INREG32(MIPITX_BASE + 0x084);
+	uint32_t sw1 = INREG32(MIPITX_BASE + 0x088);
+	uint32_t dbg = INREG32(MIPITX_BASE + 0x090);
+	uint32_t apb = INREG32(MIPITX_BASE + 0x094);
+
+	DISPERR("M6 DSI phydecode[%s]: txrx_lane_mask=0x%x hstx_cklp=%u dis_eot=%u bllp=%u max_rtn=0x%x mode=0x%x ps=0x%x\n",
+		tag, dsi_m6_field(txrx, 2, 4), dsi_m6_field(txrx, 16, 1),
+		dsi_m6_field(txrx, 6, 1), dsi_m6_field(txrx, 7, 1),
+		dsi_m6_field(txrx, 12, 4),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c));
+	DISPERR("M6 DSI phydecode[%s]: lane_ldo c/d0/d1/d2/d3=%u/%u/%u/%u/%u lane_b1=%u/%u/%u/%u/%u rt=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, dsi_m6_field(clock_lane, 0, 1), dsi_m6_field(lane0, 0, 1),
+		dsi_m6_field(lane1, 0, 1), dsi_m6_field(lane2, 0, 1),
+		dsi_m6_field(lane3, 0, 1), dsi_m6_field(clock_lane, 1, 1),
+		dsi_m6_field(lane0, 1, 1), dsi_m6_field(lane1, 1, 1),
+		dsi_m6_field(lane2, 1, 1), dsi_m6_field(lane3, 1, 1),
+		dsi_m6_field(clock_lane, 8, 4), dsi_m6_field(lane0, 8, 4),
+		dsi_m6_field(lane1, 8, 4), dsi_m6_field(lane2, 8, 4),
+		dsi_m6_field(lane3, 8, 4));
+	DISPERR("M6 DSI phydecode[%s]: lptx c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x lpcd=0x%x/0x%x/0x%x/0x%x/0x%x phy_map d0/d1/d2/d3/c/lprx=%u/%u/%u/%u/%u/%u\n",
+		tag, dsi_m6_field(clock_lane, 2, 3), dsi_m6_field(lane0, 2, 3),
+		dsi_m6_field(lane1, 2, 3), dsi_m6_field(lane2, 2, 3),
+		dsi_m6_field(lane3, 2, 3), dsi_m6_field(clock_lane, 5, 2),
+		dsi_m6_field(lane0, 5, 2), dsi_m6_field(lane1, 5, 2),
+		dsi_m6_field(lane2, 5, 2), dsi_m6_field(lane3, 5, 2),
+		dsi_m6_field(phy_sel, 0, 3), dsi_m6_field(phy_sel, 4, 3),
+		dsi_m6_field(phy_sel, 8, 3), dsi_m6_field(phy_sel, 12, 3),
+		dsi_m6_field(phy_sel, 16, 3), dsi_m6_field(phy_sel, 20, 3));
+	DISPERR("M6 DSI phydecode[%s]: top hs_bias=%u imp_en=%u imp=0x%x aio=0x%x pad_low=%u pll en=%u pre=%u txdiv=%u/%u pos=%u pcw=0x%x pll_top=0x%x preserve7=0x%x preserve8=0x%x pwr_on=%u iso=%u ack=%u gpi=0x%x pull=0x%x sw=%u/0x%x/0x%x dbg=0x%x apb=0x%x\n",
+		tag, dsi_m6_field(top, 1, 1), dsi_m6_field(top, 2, 1),
+		dsi_m6_field(top, 4, 4), dsi_m6_field(top, 8, 3),
+		dsi_m6_field(top, 11, 1), dsi_m6_field(pll0, 0, 1),
+		dsi_m6_field(pll0, 1, 2), dsi_m6_field(pll0, 3, 2),
+		dsi_m6_field(pll0, 5, 2), dsi_m6_field(pll0, 7, 3),
+		dsi_m6_field(pll2, 0, 31), pll_top,
+		dsi_m6_field(pll_top, 7, 5), dsi_m6_field(pll_top, 8, 8),
+		dsi_m6_field(pll_pwr, 0, 1),
+		dsi_m6_field(pll_pwr, 1, 1), dsi_m6_field(pll_pwr, 8, 1),
+		gpi_en, gpi_pull, dsi_m6_field(sw_ctrl, 0, 1), sw0, sw1, dbg, apb);
+	DISPERR("M6 DISPLAY truth[%s][mipitx]: raw c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x lane_map d0/d1/d2/d3/c/lprx=%u/%u/%u/%u/%u/%u lptx=0x%x/0x%x/0x%x/0x%x/0x%x lpcd=0x%x/0x%x/0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x pll_top=0x%x preserve7=0x%x preserve8=0x%x pwr=0x%x sw=0x%x/0x%x/0x%x dbg=0x%x apb=0x%x\n",
+		tag, clock_lane, lane0, lane1, lane2, lane3,
+		dsi_m6_field(phy_sel, 0, 3), dsi_m6_field(phy_sel, 4, 3),
+		dsi_m6_field(phy_sel, 8, 3), dsi_m6_field(phy_sel, 12, 3),
+		dsi_m6_field(phy_sel, 16, 3), dsi_m6_field(phy_sel, 20, 3),
+		dsi_m6_field(clock_lane, 2, 3), dsi_m6_field(lane0, 2, 3),
+		dsi_m6_field(lane1, 2, 3), dsi_m6_field(lane2, 2, 3),
+		dsi_m6_field(lane3, 2, 3), dsi_m6_field(clock_lane, 5, 2),
+		dsi_m6_field(lane0, 5, 2), dsi_m6_field(lane1, 5, 2),
+		dsi_m6_field(lane2, 5, 2), dsi_m6_field(lane3, 5, 2),
+		pll0, pll2, pll_pwr, pll_top,
+		dsi_m6_field(pll_top, 7, 5), dsi_m6_field(pll_top, 8, 8),
+		INREG32(MIPITX_BASE + 0x06c),
+		sw_ctrl, sw0, sw1, dbg, apb);
+	DISPERR("M6 DSI phydecode[%s]: dbg_out=0x%x apb_async=0x%x\n",
+		tag, INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098));
+}
+
+static void dsi_m6_dump_mipitx_block(const char *tag)
+{
+	static unsigned int count;
+	const char *safe_tag = tag ? tag : "unknown";
+
+	if (count >= 80)
+		return;
+
+	count++;
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 000=0x%x 004=0x%x 008=0x%x 00c=0x%x 010=0x%x 014=0x%x 018=0x%x 01c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x000),
+		INREG32(MIPITX_BASE + 0x004), INREG32(MIPITX_BASE + 0x008),
+		INREG32(MIPITX_BASE + 0x00c), INREG32(MIPITX_BASE + 0x010),
+		INREG32(MIPITX_BASE + 0x014), INREG32(MIPITX_BASE + 0x018),
+		INREG32(MIPITX_BASE + 0x01c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 020=0x%x 024=0x%x 028=0x%x 02c=0x%x 030=0x%x 034=0x%x 038=0x%x 03c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x020),
+		INREG32(MIPITX_BASE + 0x024), INREG32(MIPITX_BASE + 0x028),
+		INREG32(MIPITX_BASE + 0x02c), INREG32(MIPITX_BASE + 0x030),
+		INREG32(MIPITX_BASE + 0x034), INREG32(MIPITX_BASE + 0x038),
+		INREG32(MIPITX_BASE + 0x03c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 040=0x%x 044=0x%x 048=0x%x 04c=0x%x 050=0x%x 054=0x%x 058=0x%x 05c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x040),
+		INREG32(MIPITX_BASE + 0x044), INREG32(MIPITX_BASE + 0x048),
+		INREG32(MIPITX_BASE + 0x04c), INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x054), INREG32(MIPITX_BASE + 0x058),
+		INREG32(MIPITX_BASE + 0x05c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 060=0x%x 064=0x%x 068=0x%x 06c=0x%x 070=0x%x 074=0x%x 078=0x%x 07c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x060),
+		INREG32(MIPITX_BASE + 0x064), INREG32(MIPITX_BASE + 0x068),
+		INREG32(MIPITX_BASE + 0x06c), INREG32(MIPITX_BASE + 0x070),
+		INREG32(MIPITX_BASE + 0x074), INREG32(MIPITX_BASE + 0x078),
+		INREG32(MIPITX_BASE + 0x07c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 080=0x%x 084=0x%x 088=0x%x 08c=0x%x 090=0x%x 094=0x%x 098=0x%x 09c=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x080),
+		INREG32(MIPITX_BASE + 0x084), INREG32(MIPITX_BASE + 0x088),
+		INREG32(MIPITX_BASE + 0x08c), INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098),
+		INREG32(MIPITX_BASE + 0x09c));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 0a0=0x%x 0a4=0x%x 0a8=0x%x 0ac=0x%x 0b0=0x%x 0b4=0x%x 0b8=0x%x 0bc=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x0a0),
+		INREG32(MIPITX_BASE + 0x0a4), INREG32(MIPITX_BASE + 0x0a8),
+		INREG32(MIPITX_BASE + 0x0ac), INREG32(MIPITX_BASE + 0x0b0),
+		INREG32(MIPITX_BASE + 0x0b4), INREG32(MIPITX_BASE + 0x0b8),
+		INREG32(MIPITX_BASE + 0x0bc));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 0c0=0x%x 0c4=0x%x 0c8=0x%x 0cc=0x%x 0d0=0x%x 0d4=0x%x 0d8=0x%x 0dc=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x0c0),
+		INREG32(MIPITX_BASE + 0x0c4), INREG32(MIPITX_BASE + 0x0c8),
+		INREG32(MIPITX_BASE + 0x0cc), INREG32(MIPITX_BASE + 0x0d0),
+		INREG32(MIPITX_BASE + 0x0d4), INREG32(MIPITX_BASE + 0x0d8),
+		INREG32(MIPITX_BASE + 0x0dc));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 0e0=0x%x 0e4=0x%x 0e8=0x%x 0ec=0x%x 0f0=0x%x 0f4=0x%x 0f8=0x%x 0fc=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x0e0),
+		INREG32(MIPITX_BASE + 0x0e4), INREG32(MIPITX_BASE + 0x0e8),
+		INREG32(MIPITX_BASE + 0x0ec), INREG32(MIPITX_BASE + 0x0f0),
+		INREG32(MIPITX_BASE + 0x0f4), INREG32(MIPITX_BASE + 0x0f8),
+		INREG32(MIPITX_BASE + 0x0fc));
+	DISPERR("M6 DSI mipitx_block[%s]#%u: 100=0x%x 104=0x%x\n",
+		safe_tag, count, INREG32(MIPITX_BASE + 0x100),
+		INREG32(MIPITX_BASE + 0x104));
+}
+
+static void dsi_m6_dump_dsi_block(const char *tag)
+{
+	static unsigned int count;
+	const char *safe_tag = tag ? tag : "unknown";
+	unsigned int off;
+
+	if (count >= 40)
+		return;
+
+	count++;
+
+	for (off = 0; off <= M6_LKGOLD_DSI_LAST; off += 0x20) {
+		if (off + 0x1c <= M6_LKGOLD_DSI_LAST) {
+			DISPERR("M6 DSI raw_block[%s]#%u: %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x %03x=0x%x\n",
+				safe_tag, count, off,
+				INREG32(DDP_REG_BASE_DSI0 + off),
+				off + 0x04,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x04),
+				off + 0x08,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x08),
+				off + 0x0c,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x0c),
+				off + 0x10,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x10),
+				off + 0x14,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x14),
+				off + 0x18,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x18),
+				off + 0x1c,
+				INREG32(DDP_REG_BASE_DSI0 + off + 0x1c));
+		} else {
+			unsigned int tail;
+
+			for (tail = off; tail <= M6_LKGOLD_DSI_LAST; tail += 4)
+				DISPERR("M6 DSI raw_block[%s]#%u: %03x=0x%x\n",
+					safe_tag, count, tail,
+					INREG32(DDP_REG_BASE_DSI0 + tail));
+		}
+	}
+}
+
+struct m6_lkgold_snapshot {
+	bool valid;
+	uint32_t dsi[M6_LKGOLD_DSI_WORDS];
+	uint32_t mipitx[M6_LKGOLD_MIPITX_WORDS];
+	uint32_t mmsys[6];
+};
+
+static const unsigned short m6_lkgold_mmsys_offsets[] = {
+	0x06c, 0x070, 0x074, 0x07c, 0x100, 0x110,
+};
+
+static struct m6_lkgold_snapshot m6_lkgold_pre_snapshot;
+static bool m6_lkgold_dumped_pre;
+static bool m6_lkgold_dumped_post_config;
+static bool m6_lkgold_dumped_post_start;
+
+static void dsi_m6_dump_mipitx_debug_mux_stats_direct(const char *tag,
+						      unsigned int sweep_id,
+						      unsigned int samples,
+						      unsigned int delay_us);
+
+#define M6_LKGOLD_MUX_TAGS 3
+#define M6_LKGOLD_MUX_SELS 16
+
+struct m6_lkgold_mipitx_mux_cache {
+	bool valid;
+	char tag[24];
+	unsigned int sweep_id;
+	unsigned int sel;
+	unsigned int samples;
+	unsigned int delay_us;
+	uint32_t orig;
+	uint32_t now;
+	uint32_t out_first;
+	uint32_t out_last;
+	uint32_t out_min;
+	uint32_t out_max;
+	uint32_t out_or;
+	uint32_t out_and;
+	uint32_t out_xor;
+	unsigned int out_changes;
+	uint32_t apb_first;
+	uint32_t apb_last;
+	uint32_t apb_or;
+	uint32_t apb_and;
+	uint32_t apb_xor;
+	unsigned int apb_changes;
+	unsigned int word_first;
+	unsigned int word_last;
+	unsigned int line_first;
+	unsigned int line_last;
+	uint32_t lanes[5];
+	uint32_t pll[3];
+};
+
+static struct m6_lkgold_mipitx_mux_cache
+	m6_lkgold_mipitx_mux_cache[M6_LKGOLD_MUX_TAGS][M6_LKGOLD_MUX_SELS];
+
+static int dsi_m6_lkgold_mux_cache_slot(const char *tag)
+{
+	if (!tag)
+		return -1;
+	if (!strncmp(tag, "lkgold-pre-init", sizeof("lkgold-pre-init") - 1))
+		return 0;
+	if (!strncmp(tag, "lkgold-post-config", sizeof("lkgold-post-config") - 1))
+		return 1;
+	if (!strncmp(tag, "lkgold-post-start", sizeof("lkgold-post-start") - 1))
+		return 2;
+	return -1;
+}
+
+static void dsi_m6_lkgold_capture(struct m6_lkgold_snapshot *snap)
+{
+	unsigned int idx;
+
+	memset(snap, 0, sizeof(*snap));
+	if (DSI_REG[0] == NULL)
+		return;
+
+	snap->valid = true;
+	for (idx = 0; idx < ARRAY_SIZE(snap->dsi); idx++)
+		snap->dsi[idx] = INREG32(DDP_REG_BASE_DSI0 + (idx * 4));
+
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	for (idx = 0; idx < ARRAY_SIZE(snap->mipitx); idx++)
+		snap->mipitx[idx] = INREG32(MIPITX_BASE + (idx * 4));
+#endif
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->mmsys); idx++)
+		snap->mmsys[idx] =
+			INREG32(DDP_REG_BASE_MMSYS_CONFIG +
+				m6_lkgold_mmsys_offsets[idx]);
+}
+
+static void dsi_m6_lkgold_dump_raw(const char *tag,
+				   const struct m6_lkgold_snapshot *snap)
+{
+	unsigned int idx;
+
+	if (!snap->valid)
+		return;
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->dsi); idx++)
+		DISPERR("M6 lkgold[%s] blk=dsi off=0x%03x val=0x%08x\n",
+			tag, idx * 4, snap->dsi[idx]);
+
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	for (idx = 0; idx < ARRAY_SIZE(snap->mipitx); idx++)
+		DISPERR("M6 lkgold[%s] blk=mipitx off=0x%03x val=0x%08x\n",
+			tag, idx * 4, snap->mipitx[idx]);
+#endif
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->mmsys); idx++)
+		DISPERR("M6 lkgold[%s] blk=mmsys off=0x%03x val=0x%08x\n",
+			tag, m6_lkgold_mmsys_offsets[idx], snap->mmsys[idx]);
+}
+
+static void dsi_m6_lkgold_dump_diff(const char *stage,
+				    const struct m6_lkgold_snapshot *snap)
+{
+	unsigned int idx;
+
+	if (!m6_lkgold_pre_snapshot.valid || !snap->valid)
+		return;
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->dsi); idx++) {
+		if (m6_lkgold_pre_snapshot.dsi[idx] == snap->dsi[idx])
+			continue;
+		DISPERR("M6 lkgold[diff] stage=%s blk=dsi off=0x%03x lk=0x%08x lin=0x%08x\n",
+			stage, idx * 4, m6_lkgold_pre_snapshot.dsi[idx],
+			snap->dsi[idx]);
+	}
+
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	for (idx = 0; idx < ARRAY_SIZE(snap->mipitx); idx++) {
+		if (m6_lkgold_pre_snapshot.mipitx[idx] == snap->mipitx[idx])
+			continue;
+		DISPERR("M6 lkgold[diff] stage=%s blk=mipitx off=0x%03x lk=0x%08x lin=0x%08x\n",
+			stage, idx * 4, m6_lkgold_pre_snapshot.mipitx[idx],
+			snap->mipitx[idx]);
+	}
+#endif
+
+	for (idx = 0; idx < ARRAY_SIZE(snap->mmsys); idx++) {
+		if (m6_lkgold_pre_snapshot.mmsys[idx] == snap->mmsys[idx])
+			continue;
+		DISPERR("M6 lkgold[diff] stage=%s blk=mmsys off=0x%03x lk=0x%08x lin=0x%08x\n",
+			stage, m6_lkgold_mmsys_offsets[idx],
+			m6_lkgold_pre_snapshot.mmsys[idx], snap->mmsys[idx]);
+	}
+}
+
+static void dsi_m6_lkgold_muxstats(const char *tag)
+{
+	char mux_tag[32];
+	static unsigned int sweep_count;
+
+	if (!tag || DSI_REG[0] == NULL)
+		return;
+
+	snprintf(mux_tag, sizeof(mux_tag), "lkgold-%s", tag);
+	DISPERR("M6 lkgold_muxstats[%s]#%u: begin dbg=0x%x out=0x%x apb=0x%x start=0x%x mode=0x%x txrx=0x%x lccon=0x%x\n",
+		tag, sweep_count + 1, INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	dsi_m6_dump_mipitx_debug_mux_stats_direct(mux_tag, ++sweep_count, 4, 1000);
+	DISPERR("M6 lkgold_muxstats[%s]#%u: end dbg=0x%x out=0x%x apb=0x%x start=0x%x mode=0x%x txrx=0x%x lccon=0x%x\n",
+		tag, sweep_count, INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+}
+
+static void dsi_m6_lkgold_snapshot_once(const char *tag)
+{
+	struct m6_lkgold_snapshot snap;
+	bool *done;
+
+	if (!tag)
+		return;
+	if (!strcmp(tag, "pre-init"))
+		done = &m6_lkgold_dumped_pre;
+	else if (!strcmp(tag, "post-config"))
+		done = &m6_lkgold_dumped_post_config;
+	else if (!strcmp(tag, "post-start"))
+		done = &m6_lkgold_dumped_post_start;
+	else
+		return;
+
+	if (*done)
+		return;
+
+	*done = true;
+	dsi_m6_lkgold_capture(&snap);
+	if (!snap.valid) {
+		DISPERR("M6 lkgold[%s] invalid: DSI_REG0 is null\n", tag);
+		return;
+	}
+
+	if (!strcmp(tag, "pre-init"))
+		m6_lkgold_pre_snapshot = snap;
+
+	dsi_m6_lkgold_dump_raw(tag, &snap);
+	if (strcmp(tag, "pre-init"))
+		dsi_m6_lkgold_dump_diff(tag, &snap);
+	dsi_m6_lkgold_muxstats(tag);
+}
+
+static void dsi_m6_phy_lk_delay(const char *tag, unsigned int delay_ms)
+{
+	DISPERR("M6 DSI physeq[%s]: lk-delay begin ms=%u top=0x%x bg=0x%x pll0=0x%x pll_chg=0x%x pll_top=0x%x pwr=0x%x lanes=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, delay_ms, INREG32(MIPITX_BASE + 0x040),
+		INREG32(MIPITX_BASE + 0x044), INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x060), INREG32(MIPITX_BASE + 0x064),
+		INREG32(MIPITX_BASE + 0x068), INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008), INREG32(MIPITX_BASE + 0x00c),
+		INREG32(MIPITX_BASE + 0x010), INREG32(MIPITX_BASE + 0x014));
+	mdelay(delay_ms);
+	DISPERR("M6 DSI physeq[%s]: lk-delay end ms=%u top=0x%x bg=0x%x pll0=0x%x pll_chg=0x%x pll_top=0x%x pwr=0x%x lanes=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, delay_ms, INREG32(MIPITX_BASE + 0x040),
+		INREG32(MIPITX_BASE + 0x044), INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x060), INREG32(MIPITX_BASE + 0x064),
+		INREG32(MIPITX_BASE + 0x068), INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008), INREG32(MIPITX_BASE + 0x00c),
+		INREG32(MIPITX_BASE + 0x010), INREG32(MIPITX_BASE + 0x014));
+	dsi_m6_dump_mipitx_decode(tag);
+}
+
+static void dsi_m6_dump_state_decode(const char *tag)
+{
+	uint32_t dbg0 = INREG32(DDP_REG_BASE_DSI0 + 0x148);
+	uint32_t dbg1 = INREG32(DDP_REG_BASE_DSI0 + 0x14c);
+	uint32_t dbg2 = INREG32(DDP_REG_BASE_DSI0 + 0x150);
+	uint32_t dbg3 = INREG32(DDP_REG_BASE_DSI0 + 0x154);
+	uint32_t dbg4 = INREG32(DDP_REG_BASE_DSI0 + 0x158);
+	uint32_t dbg5 = INREG32(DDP_REG_BASE_DSI0 + 0x15c);
+	uint32_t state6 = INREG32(DDP_REG_BASE_DSI0 + 0x160);
+	uint32_t state7 = INREG32(DDP_REG_BASE_DSI0 + 0x164);
+	uint32_t state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+	uint32_t state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+
+	DISPERR("M6 DSI state_decode[%s]: dbg0-5=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x ctl_c=0x%x hs_c=0x%x ctl0=0x%x hs0=0x%x esc0=0x%x ctl1=0x%x hs1=0x%x ctl2=0x%x hs2=0x%x ctl3=0x%x hs3=0x%x\n",
+		tag, dbg0, dbg1, dbg2, dbg3, dbg4, dbg5,
+		dsi_m6_field(dbg0, 0, 9), dsi_m6_field(dbg0, 16, 5),
+		dsi_m6_field(dbg1, 0, 15), dsi_m6_field(dbg1, 16, 5),
+		dsi_m6_field(dbg1, 24, 8), dsi_m6_field(dbg3, 0, 5),
+		dsi_m6_field(dbg3, 8, 5), dsi_m6_field(dbg3, 16, 5),
+		dsi_m6_field(dbg3, 24, 5), dsi_m6_field(dbg4, 0, 5),
+		dsi_m6_field(dbg4, 8, 5));
+	DISPERR("M6 DSI state_decode[%s]: rx_esc=0x%x ta_t2r=0x%x ta_r2t=0x%x timer=0x%x busy=%u wake=0x%x cm=0x%x cmdq=0x%x vm=0x%x periods vfp/vact/vbp/vsa=%u/%u/%u/%u word=%u line=%u\n",
+		tag, dsi_m6_field(dbg2, 0, 10), dsi_m6_field(dbg2, 16, 5),
+		dsi_m6_field(dbg2, 24, 5), dsi_m6_field(dbg5, 0, 16),
+		dsi_m6_field(dbg5, 16, 1), dsi_m6_field(dbg5, 28, 4),
+		dsi_m6_field(state6, 0, 14), dsi_m6_field(state6, 16, 8),
+		dsi_m6_field(state7, 0, 11), dsi_m6_field(state7, 12, 1),
+		dsi_m6_field(state7, 13, 1), dsi_m6_field(state7, 14, 1),
+		dsi_m6_field(state7, 15, 1), dsi_m6_field(state8, 0, 14),
+		dsi_m6_field(state9, 0, 22));
+}
+#endif
+
+static void dsi_m6_sram_snapshot(const char *tag, DISP_MODULE_ENUM module)
+{
+	static unsigned int count;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL || count >= 20)
+		return;
+
+	count++;
+	aee_sram_printk("M6D%02u %s S=%x M=%x I=%x H=%x/%x V=%x B=%x L=%x/%x\n",
+		count, tag, INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x17c),
+		INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008));
+	DISPERR("M6D%02u %s S=%x M=%x I=%x H=%x/%x V=%x B=%x L=%x/%x\n",
+		count, tag, INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x17c),
+		INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008));
+}
+
+static void dsi_m6_sram_video_snapshot(const char *tag, DISP_MODULE_ENUM module)
+{
+	static unsigned int count;
+	const char *safe_tag = tag ? tag : "null";
+	unsigned int n;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL || count >= 24)
+		return;
+
+	n = ++count;
+	aee_sram_printk("M6V%02u %s S=%x/%x I=%x M=%x T=%x P=%x H=%x/%x/%x VM=%x/%x/%x ST=%x/%x/%x/%x\n",
+		n, safe_tag,
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x004),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x134),
+		INREG32(DDP_REG_BASE_DSI0 + 0x138),
+		INREG32(DDP_REG_BASE_DSI0 + 0x160),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x168),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c));
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	aee_sram_printk("M6W%02u %s L=%x/%x/%x/%x/%x T=%x/%x PLL=%x/%x/%x P=%x S=%x/%x D=%x/%x\n",
+		n, safe_tag,
+		INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008),
+		INREG32(MIPITX_BASE + 0x00c),
+		INREG32(MIPITX_BASE + 0x010),
+		INREG32(MIPITX_BASE + 0x014),
+		INREG32(MIPITX_BASE + 0x040),
+		INREG32(MIPITX_BASE + 0x044),
+		INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x058),
+		INREG32(MIPITX_BASE + 0x068),
+		INREG32(MIPITX_BASE + 0x07c),
+		INREG32(MIPITX_BASE + 0x084),
+		INREG32(MIPITX_BASE + 0x088),
+		INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094));
+#endif
+}
+
+static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void *cmdq)
+{
+	uint32_t start;
+	uint32_t status;
+	uint32_t inten;
+	uint32_t intsta;
+	uint32_t state6;
+	uint32_t state7;
+	uint32_t state8;
+	uint32_t state9;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL)
+		return;
+
+	start = INREG32(DDP_REG_BASE_DSI0 + 0x000);
+	status = INREG32(DDP_REG_BASE_DSI0 + 0x004);
+	inten = INREG32(DDP_REG_BASE_DSI0 + 0x008);
+	intsta = INREG32(DDP_REG_BASE_DSI0 + 0x00c);
+	state6 = INREG32(DDP_REG_BASE_DSI0 + 0x160);
+	state7 = INREG32(DDP_REG_BASE_DSI0 + 0x164);
+	state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+	state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+
+	DISPERR("M6 DSI snapshot[%s]: cmdq=%p START=0x%x STA=0x%x INTEN=0x%x INTSTA=0x%x MODE=0x%x TXRX=0x%x PS=0x%x\n",
+		tag, cmdq, start, status, inten, intsta,
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c));
+	dsi_m6_dump_irq_decode(tag, start, status, inten, intsta);
+	DISPERR("M6 DSI snapshot[%s]: VSA/VBP/VFP/VACT=0x%x/0x%x/0x%x/0x%x HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, INREG32(DDP_REG_BASE_DSI0 + 0x020),
+		INREG32(DDP_REG_BASE_DSI0 + 0x024),
+		INREG32(DDP_REG_BASE_DSI0 + 0x028),
+		INREG32(DDP_REG_BASE_DSI0 + 0x02c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x064));
+	DISPERR("M6 DSI snapshot[%s]: PHY_LCCON=0x%x PHY_LD0CON=0x%x PHY_SYNCON=0x%x TIM=0x%x/0x%x/0x%x/0x%x VM_CMD=0x%x\n",
+		tag, INREG32(DDP_REG_BASE_DSI0 + 0x104),
+		INREG32(DDP_REG_BASE_DSI0 + 0x108),
+		INREG32(DDP_REG_BASE_DSI0 + 0x10c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x110),
+		INREG32(DDP_REG_BASE_DSI0 + 0x114),
+		INREG32(DDP_REG_BASE_DSI0 + 0x118),
+		INREG32(DDP_REG_BASE_DSI0 + 0x11c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130));
+	DISPERR("M6 DSI snapshot[%s]: VM_PAYLOAD=0x%x/0x%x/0x%x/0x%x ext=0x%x/0x%x/0x%x/0x%x\n",
+		tag, INREG32(DDP_REG_BASE_DSI0 + 0x134),
+		INREG32(DDP_REG_BASE_DSI0 + 0x138),
+		INREG32(DDP_REG_BASE_DSI0 + 0x13c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x140),
+		INREG32(DDP_REG_BASE_DSI0 + 0x180),
+		INREG32(DDP_REG_BASE_DSI0 + 0x184),
+		INREG32(DDP_REG_BASE_DSI0 + 0x188),
+		INREG32(DDP_REG_BASE_DSI0 + 0x18c));
+	DISPERR("M6 DSI snapshot[%s]: BIST_PATTERN=0x%x BIST_CON=0x%x self_pat=%u bist_en=%u bist_mode=%u fix=%u lane=%u timing=0x%x CKSM=0x%x DEBUG_SEL=0x%x\n",
+		tag, INREG32(DDP_REG_BASE_DSI0 + 0x178),
+		INREG32(DDP_REG_BASE_DSI0 + 0x17c),
+		DSI_REG[0]->DSI_BIST_CON.SELF_PAT_MODE,
+		DSI_REG[0]->DSI_BIST_CON.BIST_ENABLE,
+		DSI_REG[0]->DSI_BIST_CON.BIST_MODE,
+		DSI_REG[0]->DSI_BIST_CON.BIST_FIX_PATTERN,
+		DSI_REG[0]->DSI_BIST_CON.BIST_LANE_NUM,
+		DSI_REG[0]->DSI_BIST_CON.BIST_TIMING,
+		INREG32(DDP_REG_BASE_DSI0 + 0x144),
+		INREG32(DDP_REG_BASE_DSI0 + 0x170));
+	DISPERR("M6 DSI snapshot[%s]: STATE6=0x%x/%s STATE7=0x%x/%s STATE8=0x%x STATE9=0x%x DBG0-3=0x%x/0x%x/0x%x/0x%x\n",
+		tag, state6, _dsi_cmd_mode_parse_state(state6 & 0xffff),
+		state7, _dsi_vdo_mode_parse_state(state7 & 0xff),
+		state8, state9, INREG32(DDP_REG_BASE_DSI0 + 0x148),
+		INREG32(DDP_REG_BASE_DSI0 + 0x14c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x150),
+		INREG32(DDP_REG_BASE_DSI0 + 0x154));
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	dsi_m6_dump_state_decode(tag);
+	DISPERR("M6 DSI snapshot[%s]: MIPITX lanes=0x%x/0x%x/0x%x/0x%x/0x%x top/bg=0x%x/0x%x pll=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008),
+		INREG32(MIPITX_BASE + 0x00c),
+		INREG32(MIPITX_BASE + 0x010),
+		INREG32(MIPITX_BASE + 0x014),
+		INREG32(MIPITX_BASE + 0x040),
+		INREG32(MIPITX_BASE + 0x044),
+		INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x054),
+		INREG32(MIPITX_BASE + 0x058),
+		INREG32(MIPITX_BASE + 0x05c),
+		INREG32(MIPITX_BASE + 0x060),
+		INREG32(MIPITX_BASE + 0x064),
+		INREG32(MIPITX_BASE + 0x068));
+	DISPERR("M6 DSI snapshot[%s]: MIPITX rgs/gpi/sel/sw/dbg=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		tag, INREG32(MIPITX_BASE + 0x070),
+		INREG32(MIPITX_BASE + 0x074),
+		INREG32(MIPITX_BASE + 0x078),
+		INREG32(MIPITX_BASE + 0x07c),
+		INREG32(MIPITX_BASE + 0x080),
+		INREG32(MIPITX_BASE + 0x084),
+			INREG32(MIPITX_BASE + 0x088),
+			INREG32(MIPITX_BASE + 0x08c),
+			INREG32(MIPITX_BASE + 0x090),
+			INREG32(MIPITX_BASE + 0x094));
+		dsi_m6_dump_rt_cal(tag);
+		dsi_m6_dump_mipitx_decode(tag);
+#endif
+}
+
+bool dsi_m6_capture_live_snapshot(struct m6_dsi_live_snapshot *snap)
+{
+	if (!snap)
+		return false;
+
+	memset(snap, 0, sizeof(*snap));
+	if (!DSI_REG[0])
+		return false;
+
+	snap->valid = true;
+	snap->start = INREG32(DDP_REG_BASE_DSI0 + 0x000);
+	snap->status = INREG32(DDP_REG_BASE_DSI0 + 0x004);
+	snap->inten = INREG32(DDP_REG_BASE_DSI0 + 0x008);
+	snap->intsta = INREG32(DDP_REG_BASE_DSI0 + 0x00c);
+	snap->mode = INREG32(DDP_REG_BASE_DSI0 + 0x014);
+	snap->txrx = INREG32(DDP_REG_BASE_DSI0 + 0x018);
+	snap->psctrl = INREG32(DDP_REG_BASE_DSI0 + 0x01c);
+	snap->vsa = INREG32(DDP_REG_BASE_DSI0 + 0x020);
+	snap->vbp = INREG32(DDP_REG_BASE_DSI0 + 0x024);
+	snap->vfp = INREG32(DDP_REG_BASE_DSI0 + 0x028);
+	snap->vact = INREG32(DDP_REG_BASE_DSI0 + 0x02c);
+	snap->hsa = INREG32(DDP_REG_BASE_DSI0 + 0x050);
+	snap->hbp = INREG32(DDP_REG_BASE_DSI0 + 0x054);
+	snap->hfp = INREG32(DDP_REG_BASE_DSI0 + 0x058);
+	snap->bllp = INREG32(DDP_REG_BASE_DSI0 + 0x05c);
+	snap->hstx_ckl = INREG32(DDP_REG_BASE_DSI0 + 0x064);
+	snap->phy_lccon = INREG32(DDP_REG_BASE_DSI0 + 0x104);
+	snap->phy_ld0con = INREG32(DDP_REG_BASE_DSI0 + 0x108);
+	snap->phy_syncon = INREG32(DDP_REG_BASE_DSI0 + 0x10c);
+	snap->phy_timecon0 = INREG32(DDP_REG_BASE_DSI0 + 0x110);
+	snap->phy_timecon1 = INREG32(DDP_REG_BASE_DSI0 + 0x114);
+	snap->phy_timecon2 = INREG32(DDP_REG_BASE_DSI0 + 0x118);
+	snap->phy_timecon3 = INREG32(DDP_REG_BASE_DSI0 + 0x11c);
+	snap->vm_cmd = INREG32(DDP_REG_BASE_DSI0 + 0x130);
+	snap->vm_payload[0] = INREG32(DDP_REG_BASE_DSI0 + 0x134);
+	snap->vm_payload[1] = INREG32(DDP_REG_BASE_DSI0 + 0x138);
+	snap->vm_payload[2] = INREG32(DDP_REG_BASE_DSI0 + 0x13c);
+	snap->vm_payload[3] = INREG32(DDP_REG_BASE_DSI0 + 0x140);
+	snap->vm_payload[4] = INREG32(DDP_REG_BASE_DSI0 + 0x180);
+	snap->vm_payload[5] = INREG32(DDP_REG_BASE_DSI0 + 0x184);
+	snap->vm_payload[6] = INREG32(DDP_REG_BASE_DSI0 + 0x188);
+	snap->vm_payload[7] = INREG32(DDP_REG_BASE_DSI0 + 0x18c);
+	snap->bist_pattern = INREG32(DDP_REG_BASE_DSI0 + 0x178);
+	snap->bist_con = INREG32(DDP_REG_BASE_DSI0 + 0x17c);
+	snap->debug_sel = INREG32(DDP_REG_BASE_DSI0 + 0x170);
+	snap->state_dbg[0] = INREG32(DDP_REG_BASE_DSI0 + 0x148);
+	snap->state_dbg[1] = INREG32(DDP_REG_BASE_DSI0 + 0x14c);
+	snap->state_dbg[2] = INREG32(DDP_REG_BASE_DSI0 + 0x150);
+	snap->state_dbg[3] = INREG32(DDP_REG_BASE_DSI0 + 0x154);
+	snap->state_dbg[4] = INREG32(DDP_REG_BASE_DSI0 + 0x158);
+	snap->state_dbg[5] = INREG32(DDP_REG_BASE_DSI0 + 0x15c);
+	snap->state_dbg[6] = INREG32(DDP_REG_BASE_DSI0 + 0x160);
+	snap->state_dbg[7] = INREG32(DDP_REG_BASE_DSI0 + 0x164);
+	snap->state_dbg[8] = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+	snap->state_dbg[9] = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	snap->mipitx_lane_c = INREG32(MIPITX_BASE + 0x004);
+	snap->mipitx_lane0 = INREG32(MIPITX_BASE + 0x008);
+	snap->mipitx_lane1 = INREG32(MIPITX_BASE + 0x00c);
+	snap->mipitx_lane2 = INREG32(MIPITX_BASE + 0x010);
+	snap->mipitx_lane3 = INREG32(MIPITX_BASE + 0x014);
+	snap->mipitx_top = INREG32(MIPITX_BASE + 0x040);
+	snap->mipitx_bg = INREG32(MIPITX_BASE + 0x044);
+	snap->mipitx_con = INREG32(MIPITX_BASE + 0x048);
+	snap->mipitx_pll[0] = INREG32(MIPITX_BASE + 0x050);
+	snap->mipitx_pll[1] = INREG32(MIPITX_BASE + 0x054);
+	snap->mipitx_pll[2] = INREG32(MIPITX_BASE + 0x058);
+	snap->mipitx_pll[3] = INREG32(MIPITX_BASE + 0x05c);
+	snap->mipitx_pll[4] = INREG32(MIPITX_BASE + 0x060);
+	snap->mipitx_pll[5] = INREG32(MIPITX_BASE + 0x064);
+	snap->mipitx_pll[6] = INREG32(MIPITX_BASE + 0x068);
+	snap->mipitx_rgs = INREG32(MIPITX_BASE + 0x070);
+	snap->mipitx_gpi = INREG32(MIPITX_BASE + 0x074);
+	snap->mipitx_pull = INREG32(MIPITX_BASE + 0x078);
+	snap->mipitx_phy_sel = INREG32(MIPITX_BASE + 0x07c);
+	snap->mipitx_sw_ctrl = INREG32(MIPITX_BASE + 0x080);
+	snap->mipitx_sw0 = INREG32(MIPITX_BASE + 0x084);
+	snap->mipitx_sw1 = INREG32(MIPITX_BASE + 0x088);
+	snap->mipitx_dbg = INREG32(MIPITX_BASE + 0x090);
+	snap->mipitx_apb = INREG32(MIPITX_BASE + 0x094);
+	snap->mipitx_dbg_out = INREG32(MIPITX_BASE + 0x094);
+	snap->mipitx_apb_async = INREG32(MIPITX_BASE + 0x098);
+#endif
+	return true;
+}
+
+static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM module,
+					 void *cmdq, unsigned int *count,
+					 unsigned int limit)
+{
+	if (*count >= limit)
+		return;
+
+	(*count)++;
+	dsi_m6_dump_snapshot(tag, module, cmdq);
+}
+
+static void dsi_m6_takeover_hold_once(const char *where,
+				      DISP_MODULE_ENUM module, void *cmdq,
+				      unsigned int *dump_count)
+{
+	const char *safe_where = where ? where : "null";
+
+	if (!M6_LK_HANDOFF_TAKEOVER_HOLD_MS)
+		return;
+	if (module != DISP_MODULE_DSI0)
+		return;
+	if (m6_lk_handoff_takeover_hold_done)
+		return;
+	if (atomic_read(&PMaster_enable) != 0 || dsi_force_config)
+		return;
+
+	m6_lk_handoff_takeover_hold_done = 1;
+	DISPERR("M6 DSI takeover_hold[%s]: begin hold_ms=%u PMaster=%d force=%d jiffies=%lu\n",
+		safe_where, M6_LK_HANDOFF_TAKEOVER_HOLD_MS,
+		atomic_read(&PMaster_enable), dsi_force_config, jiffies);
+	dsi_m6_sram_snapshot("takeover-hold-begin", module);
+	dsi_m6_dump_snapshot_limited("takeover-hold-begin", module, cmdq,
+				     dump_count, 4);
+	msleep(M6_LK_HANDOFF_TAKEOVER_HOLD_MS);
+	dsi_m6_sram_snapshot("takeover-hold-end", module);
+	dsi_m6_dump_snapshot_limited("takeover-hold-end", module, cmdq,
+				     dump_count, 4);
+	DISPERR("M6 DSI takeover_hold[%s]: end hold_ms=%u PMaster=%d force=%d jiffies=%lu\n",
+		safe_where, M6_LK_HANDOFF_TAKEOVER_HOLD_MS,
+		atomic_read(&PMaster_enable), dsi_force_config, jiffies);
+}
+
+static void dsi_m6_dump_hs_video_marker(const char *tag, DISP_MODULE_ENUM module,
+					void *cmdq);
+static void dsi_m6_dump_hs_video_edge_marker(const char *tag,
+					     DISP_MODULE_ENUM module,
+					     void *cmdq);
+static void dsi_m6_hs_video_after_1vsync_work(struct work_struct *work);
+static void dsi_m6_hs_video_after_500ms_work(struct work_struct *work);
+static void dsi_m6_hs_video_edge_window_work(struct work_struct *work);
+
+static DECLARE_DELAYED_WORK(dsi_m6_hs_video_after_1vsync_work_item,
+			    dsi_m6_hs_video_after_1vsync_work);
+static DECLARE_DELAYED_WORK(dsi_m6_hs_video_after_500ms_work_item,
+			    dsi_m6_hs_video_after_500ms_work);
+static DECLARE_DELAYED_WORK(dsi_m6_hs_video_edge_window_work_item,
+			    dsi_m6_hs_video_edge_window_work);
+
+static void dsi_m6_sram_scanout_edge(const char *tag, DISP_MODULE_ENUM module)
+{
+	static unsigned int count;
+	const char *safe_tag = tag ? tag : "null";
+	unsigned int n;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL || count >= 32)
+		return;
+
+	n = ++count;
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	aee_sram_printk("M6X%02u %s V=%x/%x M=%x/%x/%x R=%x %u/%u %u/%u D=%x/%x/%x/%x VM=%x/%x L=%x/%x P=%x/%x\n",
+		n, safe_tag,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x134),
+		INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008),
+		INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x058));
+#else
+	aee_sram_printk("M6X%02u %s V=%x/%x M=%x/%x/%x R=%x %u/%u %u/%u D=%x/%x/%x/%x VM=%x/%x\n",
+		n, safe_tag,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x134));
+#endif
+}
+
+static bool dsi_m6_should_dump_debug_mux(const char *tag)
+{
+	if (!tag)
+		return false;
+
+	return !strcmp(tag, "ddp-edge-0ms") ||
+	       !strcmp(tag, "edge-8ms") ||
+	       !strcmp(tag, "edge-33ms");
+}
+
+static void dsi_m6_dump_vm_payload_marker(const char *tag,
+					  DISP_MODULE_ENUM module,
+					  void *cmdq)
+{
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL)
+		return;
+
+	DISPERR("M6 DSI vm_payload[%s]: cmdq=%p start=0x%x int=0x%x mode=0x%x txrx=0x%x ps=0x%x mem=0x%x frm=0x%x h=0x%x/0x%x/0x%x/0x%x hstx=0x%x vm=0x%x data=0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x st=0x%x/0x%x/0x%x cksm=0x%x dbg=0x%x\n",
+		tag, cmdq,
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x090),
+		INREG32(DDP_REG_BASE_DSI0 + 0x094),
+		INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x064),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x134),
+		INREG32(DDP_REG_BASE_DSI0 + 0x138),
+		INREG32(DDP_REG_BASE_DSI0 + 0x13c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x140),
+		INREG32(DDP_REG_BASE_DSI0 + 0x180),
+		INREG32(DDP_REG_BASE_DSI0 + 0x184),
+		INREG32(DDP_REG_BASE_DSI0 + 0x188),
+		INREG32(DDP_REG_BASE_DSI0 + 0x18c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x168),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x144),
+		INREG32(DDP_REG_BASE_DSI0 + 0x170));
+}
+
+static void dsi_m6_dump_debug_mux_sweep_direct(const char *tag,
+					       unsigned int sweep_id)
+{
+	uint32_t orig;
+	uint32_t restored;
+	unsigned int sel;
+
+	if (DSI_REG[0] == NULL)
+		return;
+
+	orig = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
+	for (sel = 0; sel < 32; sel++) {
+		uint32_t debug_sel = (orig & ~0x1f) | sel;
+		uint32_t state6;
+		uint32_t state7;
+		uint32_t state8;
+		uint32_t state9;
+
+		DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_DEBUG_SEL, debug_sel);
+		udelay(1);
+		state6 = INREG32(DDP_REG_BASE_DSI0 + 0x160);
+		state7 = INREG32(DDP_REG_BASE_DSI0 + 0x164);
+		state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+		state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+		DISPERR("M6 DSI dbg_mux[%s]#%u sel=0x%x orig=0x%x now=0x%x st=0x%x/0x%x/0x%x/0x%x cksm=0x%x int=0x%x vm=0x%x word=%u line=%u\n",
+			tag, sweep_id, sel, orig,
+			INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+			state6, state7, state8, state9,
+			INREG32(DDP_REG_BASE_DSI0 + 0x144),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			dsi_m6_field(state8, 0, 14),
+			dsi_m6_field(state9, 0, 22));
+	}
+
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_DEBUG_SEL, orig);
+	restored = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
+	DISPERR("M6 DSI dbg_mux[%s]#%u restore orig=0x%x now=0x%x\n",
+		tag, sweep_id, orig, restored);
+}
+
+static void dsi_m6_dump_debug_mux_sweep(const char *tag,
+					DISP_MODULE_ENUM module)
+{
+	static unsigned int sweep_count;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL ||
+	    !dsi_m6_should_dump_debug_mux(tag) || sweep_count >= 3)
+		return;
+
+	sweep_count++;
+	dsi_m6_dump_debug_mux_sweep_direct(tag, sweep_count);
+}
+
+static void dsi_m6_dump_mipitx_debug_mux_sweep_direct(const char *tag,
+						      unsigned int sweep_id)
+{
+	uint32_t orig;
+	uint32_t restored;
+	unsigned int sel;
+
+	if (DSI_REG[0] == NULL)
+		return;
+
+	orig = INREG32(MIPITX_BASE + 0x090);
+	for (sel = 0; sel < 16; sel++) {
+		uint32_t debug_sel = (orig & ~0x1f) | 0x10 | sel;
+		uint32_t state8;
+		uint32_t state9;
+
+		mt_reg_sync_writel(debug_sel, MIPITX_BASE + 0x090);
+		udelay(1);
+		state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+		state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+		DISPERR("M6 MIPITX dbg_mux[%s]#%u sel=0x%x orig=0x%x now=0x%x out=0x%x apb=0x%x lanes=0x%x/0x%x/0x%x/0x%x/0x%x top=0x%x pll=0x%x/0x%x/0x%x dsi=0x%x/0x%x st=0x%x/0x%x word=%u line=%u\n",
+			tag, sweep_id, sel, orig,
+			INREG32(MIPITX_BASE + 0x090),
+			INREG32(MIPITX_BASE + 0x094),
+			INREG32(MIPITX_BASE + 0x098),
+			INREG32(MIPITX_BASE + 0x004),
+			INREG32(MIPITX_BASE + 0x008),
+			INREG32(MIPITX_BASE + 0x00c),
+			INREG32(MIPITX_BASE + 0x010),
+			INREG32(MIPITX_BASE + 0x014),
+			INREG32(MIPITX_BASE + 0x040),
+			INREG32(MIPITX_BASE + 0x050),
+			INREG32(MIPITX_BASE + 0x058),
+			INREG32(MIPITX_BASE + 0x068),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+			state8, state9,
+			dsi_m6_field(state8, 0, 14),
+			dsi_m6_field(state9, 0, 22));
+	}
+
+	mt_reg_sync_writel(orig, MIPITX_BASE + 0x090);
+	restored = INREG32(MIPITX_BASE + 0x090);
+	DISPERR("M6 MIPITX dbg_mux[%s]#%u restore orig=0x%x now=0x%x out=0x%x apb=0x%x\n",
+		tag, sweep_id, orig, restored,
+		INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098));
+}
+
+static void dsi_m6_dump_mipitx_debug_mux_sweep(const char *tag,
+					       DISP_MODULE_ENUM module)
+{
+	static unsigned int sweep_count;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL ||
+	    !dsi_m6_should_dump_debug_mux(tag) || sweep_count >= 3)
+		return;
+
+	sweep_count++;
+	dsi_m6_dump_mipitx_debug_mux_sweep_direct(tag, sweep_count);
+}
+
+static unsigned int dsi_m6_bound_mux_samples(unsigned int samples)
+{
+	if (samples == 0)
+		return 12;
+	if (samples > 32)
+		return 32;
+	return samples;
+}
+
+static unsigned int dsi_m6_bound_mux_delay_us(unsigned int delay_us)
+{
+	if (delay_us == 0)
+		return 1000;
+	if (delay_us > 5000)
+		return 5000;
+	return delay_us;
+}
+
+static void dsi_m6_dump_debug_mux_stats_direct(const char *tag,
+					       unsigned int sweep_id,
+					       unsigned int samples,
+					       unsigned int delay_us)
+{
+	uint32_t orig;
+	uint32_t restored;
+	unsigned int sel;
+	unsigned int bounded_samples;
+	unsigned int bounded_delay_us;
+
+	if (DSI_REG[0] == NULL)
+		return;
+
+	bounded_samples = dsi_m6_bound_mux_samples(samples);
+	bounded_delay_us = dsi_m6_bound_mux_delay_us(delay_us);
+	orig = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
+	for (sel = 0; sel < 32; sel++) {
+		uint32_t debug_sel = (orig & ~0x1f) | sel;
+		unsigned int sample;
+		unsigned int word_first = 0;
+		unsigned int word_last = 0;
+		unsigned int word_min = 0;
+		unsigned int word_max = 0;
+		unsigned int word_or = 0;
+		unsigned int word_and = 0;
+		unsigned int word_xor = 0;
+		unsigned int word_prev = 0;
+		unsigned int word_changes = 0;
+		unsigned int line_first = 0;
+		unsigned int line_last = 0;
+		unsigned int line_min = 0;
+		unsigned int line_max = 0;
+		unsigned int line_prev = 0;
+		unsigned int line_changes = 0;
+		uint32_t state8_first = 0;
+		uint32_t state8_last = 0;
+		uint32_t state9_first = 0;
+		uint32_t state9_last = 0;
+
+		DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_DEBUG_SEL, debug_sel);
+		udelay(1);
+		for (sample = 0; sample < bounded_samples; sample++) {
+			uint32_t state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+			uint32_t state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+			unsigned int word = dsi_m6_field(state8, 0, 14);
+			unsigned int line = dsi_m6_field(state9, 0, 22);
+
+			if (sample == 0) {
+				word_first = word_last = word_min = word_max = word;
+				word_or = word_and = word_xor = word;
+				word_prev = word;
+				line_first = line_last = line_min = line_max = line;
+				line_prev = line;
+				state8_first = state8_last = state8;
+				state9_first = state9_last = state9;
+			} else {
+				if (word != word_prev)
+					word_changes++;
+				if (line != line_prev)
+					line_changes++;
+				if (word < word_min)
+					word_min = word;
+				if (word > word_max)
+					word_max = word;
+				if (line < line_min)
+					line_min = line;
+				if (line > line_max)
+					line_max = line;
+				word_or |= word;
+				word_and &= word;
+				word_xor ^= word;
+				word_last = word;
+				word_prev = word;
+				line_last = line;
+				line_prev = line;
+				state8_last = state8;
+				state9_last = state9;
+			}
+			if (sample + 1 < bounded_samples)
+				udelay(bounded_delay_us);
+		}
+
+		DISPERR("M6 DSI mux_stats[%s]#%u sel=0x%x n=%u delay_us=%u orig=0x%x now=0x%x word=%u/%u minmax=%u/%u or=0x%x and=0x%x xor=0x%x changes=%u line=%u/%u minmax=%u/%u changes=%u st8=0x%x/0x%x st9=0x%x/0x%x int=0x%x vm=0x%x cksm=0x%x\n",
+			tag, sweep_id, sel, bounded_samples, bounded_delay_us,
+			orig, INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+			word_first, word_last, word_min, word_max, word_or,
+			word_and, word_xor, word_changes, line_first, line_last,
+			line_min, line_max, line_changes, state8_first, state8_last,
+			state9_first, state9_last, INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x144));
+	}
+
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_DEBUG_SEL, orig);
+	restored = INREG32(&DSI_REG[0]->DSI_DEBUG_SEL);
+	DISPERR("M6 DSI mux_stats[%s]#%u restore orig=0x%x now=0x%x n=%u delay_us=%u\n",
+		tag, sweep_id, orig, restored, bounded_samples, bounded_delay_us);
+}
+
+static void dsi_m6_dump_mipitx_debug_mux_stats_direct(const char *tag,
+						      unsigned int sweep_id,
+						      unsigned int samples,
+						      unsigned int delay_us)
+{
+	uint32_t orig;
+	uint32_t restored;
+	unsigned int sel;
+	unsigned int bounded_samples;
+	unsigned int bounded_delay_us;
+	int cache_slot;
+
+	if (DSI_REG[0] == NULL)
+		return;
+
+	bounded_samples = dsi_m6_bound_mux_samples(samples);
+	bounded_delay_us = dsi_m6_bound_mux_delay_us(delay_us);
+	cache_slot = dsi_m6_lkgold_mux_cache_slot(tag);
+	orig = INREG32(MIPITX_BASE + 0x090);
+	for (sel = 0; sel < 16; sel++) {
+		uint32_t debug_sel = (orig & ~0x1f) | 0x10 | sel;
+		unsigned int sample;
+		uint32_t out_first = 0;
+		uint32_t out_last = 0;
+		uint32_t out_min = 0;
+		uint32_t out_max = 0;
+		uint32_t out_or = 0;
+		uint32_t out_and = 0;
+		uint32_t out_xor = 0;
+		uint32_t out_prev = 0;
+		unsigned int out_changes = 0;
+		uint32_t apb_first = 0;
+		uint32_t apb_last = 0;
+		uint32_t apb_or = 0;
+		uint32_t apb_and = 0;
+		uint32_t apb_xor = 0;
+		uint32_t apb_prev = 0;
+		unsigned int apb_changes = 0;
+		unsigned int word_first = 0;
+		unsigned int word_last = 0;
+		unsigned int line_first = 0;
+		unsigned int line_last = 0;
+
+		mt_reg_sync_writel(debug_sel, MIPITX_BASE + 0x090);
+		udelay(1);
+		for (sample = 0; sample < bounded_samples; sample++) {
+			uint32_t out = INREG32(MIPITX_BASE + 0x094);
+			uint32_t apb = INREG32(MIPITX_BASE + 0x098);
+			uint32_t state8 = INREG32(DDP_REG_BASE_DSI0 + 0x168);
+			uint32_t state9 = INREG32(DDP_REG_BASE_DSI0 + 0x16c);
+			unsigned int word = dsi_m6_field(state8, 0, 14);
+			unsigned int line = dsi_m6_field(state9, 0, 22);
+
+			if (sample == 0) {
+				out_first = out_last = out_min = out_max = out;
+				out_or = out_and = out_xor = out;
+				out_prev = out;
+				apb_first = apb_last = apb;
+				apb_or = apb_and = apb_xor = apb;
+				apb_prev = apb;
+				word_first = word_last = word;
+				line_first = line_last = line;
+			} else {
+				if (out != out_prev)
+					out_changes++;
+				if (apb != apb_prev)
+					apb_changes++;
+				if (out < out_min)
+					out_min = out;
+				if (out > out_max)
+					out_max = out;
+				out_or |= out;
+				out_and &= out;
+				out_xor ^= out;
+				out_last = out;
+				out_prev = out;
+				apb_or |= apb;
+				apb_and &= apb;
+				apb_xor ^= apb;
+				apb_last = apb;
+				apb_prev = apb;
+				word_last = word;
+				line_last = line;
+			}
+			if (sample + 1 < bounded_samples)
+				udelay(bounded_delay_us);
+		}
+
+		if (cache_slot >= 0) {
+			struct m6_lkgold_mipitx_mux_cache *entry =
+				&m6_lkgold_mipitx_mux_cache[cache_slot][sel];
+
+			memset(entry, 0, sizeof(*entry));
+			entry->valid = true;
+			snprintf(entry->tag, sizeof(entry->tag), "%s", tag);
+			entry->sweep_id = sweep_id;
+			entry->sel = sel;
+			entry->samples = bounded_samples;
+			entry->delay_us = bounded_delay_us;
+			entry->orig = orig;
+			entry->now = INREG32(MIPITX_BASE + 0x090);
+			entry->out_first = out_first;
+			entry->out_last = out_last;
+			entry->out_min = out_min;
+			entry->out_max = out_max;
+			entry->out_or = out_or;
+			entry->out_and = out_and;
+			entry->out_xor = out_xor;
+			entry->out_changes = out_changes;
+			entry->apb_first = apb_first;
+			entry->apb_last = apb_last;
+			entry->apb_or = apb_or;
+			entry->apb_and = apb_and;
+			entry->apb_xor = apb_xor;
+			entry->apb_changes = apb_changes;
+			entry->word_first = word_first;
+			entry->word_last = word_last;
+			entry->line_first = line_first;
+			entry->line_last = line_last;
+			entry->lanes[0] = INREG32(MIPITX_BASE + 0x004);
+			entry->lanes[1] = INREG32(MIPITX_BASE + 0x008);
+			entry->lanes[2] = INREG32(MIPITX_BASE + 0x00c);
+			entry->lanes[3] = INREG32(MIPITX_BASE + 0x010);
+			entry->lanes[4] = INREG32(MIPITX_BASE + 0x014);
+			entry->pll[0] = INREG32(MIPITX_BASE + 0x050);
+			entry->pll[1] = INREG32(MIPITX_BASE + 0x058);
+			entry->pll[2] = INREG32(MIPITX_BASE + 0x068);
+		}
+
+		DISPERR("M6 MIPITX mux_stats[%s]#%u sel=0x%x n=%u delay_us=%u orig=0x%x now=0x%x out=0x%x/0x%x minmax=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u apb=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u word=%u/%u line=%u/%u lanes=0x%x/0x%x/0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x\n",
+			tag, sweep_id, sel, bounded_samples, bounded_delay_us,
+			orig, INREG32(MIPITX_BASE + 0x090),
+			out_first, out_last, out_min, out_max, out_or, out_and,
+			out_xor, out_changes, apb_first, apb_last, apb_or,
+			apb_and, apb_xor, apb_changes, word_first, word_last,
+			line_first, line_last, INREG32(MIPITX_BASE + 0x004),
+			INREG32(MIPITX_BASE + 0x008), INREG32(MIPITX_BASE + 0x00c),
+			INREG32(MIPITX_BASE + 0x010), INREG32(MIPITX_BASE + 0x014),
+			INREG32(MIPITX_BASE + 0x050), INREG32(MIPITX_BASE + 0x058),
+			INREG32(MIPITX_BASE + 0x068));
+	}
+
+	mt_reg_sync_writel(orig, MIPITX_BASE + 0x090);
+	restored = INREG32(MIPITX_BASE + 0x090);
+	DISPERR("M6 MIPITX mux_stats[%s]#%u restore orig=0x%x now=0x%x out=0x%x apb=0x%x n=%u delay_us=%u\n",
+		tag, sweep_id, orig, restored, INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), bounded_samples, bounded_delay_us);
+}
+
+void dsi_m6_lkgold_muxstats_dump(void)
+{
+	static const char *const names[M6_LKGOLD_MUX_TAGS] = {
+		"lkgold-pre-init",
+		"lkgold-post-config",
+		"lkgold-post-start",
+	};
+	unsigned int slot;
+	unsigned int sel;
+
+	DISPERR("M6 lkgold_muxstats_cache: begin live_dbg=0x%x out=0x%x apb=0x%x start=0x%x mode=0x%x txrx=0x%x lccon=0x%x\n",
+		INREG32(MIPITX_BASE + 0x090), INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x104));
+	for (slot = 0; slot < M6_LKGOLD_MUX_TAGS; slot++) {
+		unsigned int valid = 0;
+
+		for (sel = 0; sel < M6_LKGOLD_MUX_SELS; sel++) {
+			const struct m6_lkgold_mipitx_mux_cache *entry =
+				&m6_lkgold_mipitx_mux_cache[slot][sel];
+
+			if (!entry->valid)
+				continue;
+			valid++;
+			DISPERR("M6 lkgold_muxstats_cache[%s]#%u sel=0x%x n=%u delay_us=%u orig=0x%x now=0x%x out=0x%x/0x%x minmax=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u apb=0x%x/0x%x or=0x%x and=0x%x xor=0x%x changes=%u word=%u/%u line=%u/%u lanes=0x%x/0x%x/0x%x/0x%x/0x%x pll=0x%x/0x%x/0x%x\n",
+				entry->tag, entry->sweep_id, entry->sel,
+				entry->samples, entry->delay_us, entry->orig,
+				entry->now, entry->out_first, entry->out_last,
+				entry->out_min, entry->out_max, entry->out_or,
+				entry->out_and, entry->out_xor, entry->out_changes,
+				entry->apb_first, entry->apb_last, entry->apb_or,
+				entry->apb_and, entry->apb_xor, entry->apb_changes,
+				entry->word_first, entry->word_last,
+				entry->line_first, entry->line_last,
+				entry->lanes[0], entry->lanes[1], entry->lanes[2],
+				entry->lanes[3], entry->lanes[4], entry->pll[0],
+				entry->pll[1], entry->pll[2]);
+		}
+		if (!valid)
+			DISPERR("M6 lkgold_muxstats_cache[%s]: missing\n",
+				names[slot]);
+	}
+	DISPERR("M6 lkgold_muxstats_cache: end\n");
+}
+
+void dsi_m6_debug_mux_sweep(const char *tag)
+{
+	static unsigned int manual_count;
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int n;
+
+	if (DSI_REG[0] == NULL) {
+		DISPERR("M6 DSI debug_mux[%s]: DSI_REG0 missing\n", safe_tag);
+		return;
+	}
+
+	n = ++manual_count;
+	DISPERR("M6 DSI debug_mux[%s]#%u: begin dsi_debug_sel=0x%x mipitx_dbg=0x%x out=0x%x apb=0x%x\n",
+		safe_tag, n, INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+		INREG32(MIPITX_BASE + 0x090), INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098));
+	dsi_m6_dump_snapshot("debugmux-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_debug_mux_sweep_direct(safe_tag, n);
+	dsi_m6_dump_mipitx_debug_mux_sweep_direct(safe_tag, n);
+	dsi_m6_dump_snapshot("debugmux-after", DISP_MODULE_DSI0, NULL);
+	DISPERR("M6 DSI debug_mux[%s]#%u: end dsi_debug_sel=0x%x mipitx_dbg=0x%x out=0x%x apb=0x%x\n",
+		safe_tag, n, INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+		INREG32(MIPITX_BASE + 0x090), INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098));
+}
+
+void dsi_m6_debug_mux_stats(const char *tag, unsigned int samples,
+			    unsigned int delay_us)
+{
+	static unsigned int manual_count;
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int n;
+	unsigned int bounded_samples = dsi_m6_bound_mux_samples(samples);
+	unsigned int bounded_delay_us = dsi_m6_bound_mux_delay_us(delay_us);
+
+	if (DSI_REG[0] == NULL) {
+		DISPERR("M6 DSI mux_stats[%s]: DSI_REG0 missing\n", safe_tag);
+		return;
+	}
+
+	n = ++manual_count;
+	DISPERR("M6 DSI mux_stats[%s]#%u: begin samples=%u delay_us=%u dsi_debug_sel=0x%x mipitx_dbg=0x%x out=0x%x apb=0x%x\n",
+		safe_tag, n, bounded_samples, bounded_delay_us,
+		INREG32(&DSI_REG[0]->DSI_DEBUG_SEL), INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098));
+	dsi_m6_dump_snapshot("muxstats-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_debug_mux_stats_direct(safe_tag, n, bounded_samples,
+					   bounded_delay_us);
+	dsi_m6_dump_mipitx_debug_mux_stats_direct(safe_tag, n, bounded_samples,
+						  bounded_delay_us);
+	dsi_m6_dump_snapshot("muxstats-after", DISP_MODULE_DSI0, NULL);
+	DISPERR("M6 DSI mux_stats[%s]#%u: end dsi_debug_sel=0x%x mipitx_dbg=0x%x out=0x%x apb=0x%x\n",
+		safe_tag, n, INREG32(&DSI_REG[0]->DSI_DEBUG_SEL),
+		INREG32(MIPITX_BASE + 0x090), INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098));
+}
+
+static void dsi_m6_dump_hs_video_marker(const char *tag, DISP_MODULE_ENUM module,
+					 void *cmdq)
+{
+	LCM_DSI_PARAMS *p = &_dsi_context[0].dsi_params;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL)
+		return;
+
+	dsi_m6_sram_video_snapshot(tag, module);
+	DISPERR("M6 DSI HS video[%s]: cmdq=%p mode=%u switch=%u pll=%u lanes=%u packet=%u ps=%u size=%ux%u v=%u/%u/%u/%u h=%u/%u/%u/%u start=0x%x intsta=0x%x txrx=0x%x psctrl=0x%x vm=0x%x\n",
+		tag, cmdq, p->mode, p->switch_mode, p->PLL_CLOCK,
+		p->LANE_NUM, p->packet_size, p->PS,
+		_dsi_context[0].lcm_width, _dsi_context[0].lcm_height,
+		p->vertical_sync_active, p->vertical_backporch,
+		p->vertical_frontporch, p->vertical_active_line,
+		p->horizontal_sync_active, p->horizontal_backporch,
+		p->horizontal_frontporch, p->horizontal_active_pixel,
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130));
+
+	dsi_m6_dump_snapshot(tag, module, cmdq);
+}
+
+static void dsi_m6_dump_hs_video_edge_marker(const char *tag,
+					     DISP_MODULE_ENUM module,
+					     void *cmdq)
+{
+	const char *safe_tag = tag ? tag : "edge";
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL)
+		return;
+
+	dsi_m6_sram_video_snapshot(safe_tag, module);
+	dsi_m6_sram_scanout_edge(safe_tag, module);
+	DISPERR("M6 DSI HS edge[%s]: cmdq=%p route=0x%x/0x%x mutex=0x%x/0x%x/0x%x rdma=0x%x in=%u/%u out=%u/%u dsi=0x%x/0x%x state=0x%x/0x%x vm=0x%x/0x%x\n",
+		safe_tag, cmdq,
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_VALID_0),
+		DISP_REG_GET(DISP_REG_CONFIG_DISP_DL_READY_0),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD),
+		DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF),
+		DISP_REG_GET(DISP_REG_RDMA_GLOBAL_CON),
+		DISP_REG_GET(DISP_REG_RDMA_IN_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_IN_LINE_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_P_CNT),
+		DISP_REG_GET(DISP_REG_RDMA_OUT_LINE_CNT),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x134));
+	if (dsi_m6_should_dump_debug_mux(safe_tag))
+		dsi_m6_dump_vm_payload_marker(safe_tag, module, cmdq);
+	dsi_m6_dump_debug_mux_sweep(safe_tag, module);
+	dsi_m6_dump_mipitx_debug_mux_sweep(safe_tag, module);
+}
+
+static void dsi_m6_dump_hs_video_limited(const char *tag, DISP_MODULE_ENUM module,
+					 void *cmdq, unsigned int *count,
+					 unsigned int limit)
+{
+	if (*count >= limit)
+		return;
+
+	(*count)++;
+	dsi_m6_dump_hs_video_marker(tag, module, cmdq);
+}
+
+static void dsi_m6_hs_video_after_1vsync_work(struct work_struct *work)
+{
+	dsi_m6_dump_hs_video_marker("after-1vsync", DISP_MODULE_DSI0, NULL);
+}
+
+static void dsi_m6_hs_video_after_500ms_work(struct work_struct *work)
+{
+	dsi_m6_dump_hs_video_marker("after-500ms", DISP_MODULE_DSI0, NULL);
+}
+
+static void dsi_m6_hs_video_edge_window_work(struct work_struct *work)
+{
+	msleep(1);
+	dsi_m6_dump_hs_video_edge_marker("edge-1ms", DISP_MODULE_DSI0, NULL);
+	msleep(1);
+	dsi_m6_dump_hs_video_edge_marker("edge-2ms", DISP_MODULE_DSI0, NULL);
+	msleep(2);
+	dsi_m6_dump_hs_video_edge_marker("edge-4ms", DISP_MODULE_DSI0, NULL);
+	msleep(4);
+	dsi_m6_dump_hs_video_edge_marker("edge-8ms", DISP_MODULE_DSI0, NULL);
+	msleep(8);
+	dsi_m6_dump_hs_video_edge_marker("edge-16ms", DISP_MODULE_DSI0, NULL);
+	msleep(17);
+	dsi_m6_dump_hs_video_edge_marker("edge-33ms", DISP_MODULE_DSI0, NULL);
+}
+
+static void dsi_m6_schedule_hs_video_delayed(void)
+{
+	static unsigned int schedule_count;
+
+	if (schedule_count >= 4)
+		return;
+
+	schedule_count++;
+	if (schedule_count <= 2) {
+		dsi_m6_dump_hs_video_edge_marker("edge-0ms", DISP_MODULE_DSI0,
+						 NULL);
+		schedule_delayed_work(&dsi_m6_hs_video_edge_window_work_item,
+				      0);
+	}
+	schedule_delayed_work(&dsi_m6_hs_video_after_1vsync_work_item,
+			      msecs_to_jiffies(17));
+	schedule_delayed_work(&dsi_m6_hs_video_after_500ms_work_item,
+			      msecs_to_jiffies(500));
+}
+
+static void dsi_m6_schedule_ddp_hs_video_edge(DISP_MODULE_ENUM module,
+					      void *cmdq)
+{
+	static unsigned int schedule_count;
+
+	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL ||
+	    schedule_count >= 2)
+		return;
+
+	schedule_count++;
+	dsi_m6_dump_hs_video_edge_marker("ddp-edge-0ms", module, cmdq);
+	schedule_delayed_work(&dsi_m6_hs_video_edge_window_work_item, 0);
+}
+
+void dsi_m6_dump_live(const char *tag)
+{
+	const char *safe_tag = tag ? tag : "manual";
+
+	DISPERR("M6 DISPLAY truth[%s][dsi-host]: begin\n", safe_tag);
+	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
+	DISPERR("M6 DISPLAY truth[%s][dsi-host]: end\n", safe_tag);
+}
+
+void dsi_m6_dump_phy_truth(const char *tag)
+{
+	const char *safe_tag = tag ? tag : "manual";
+	LCM_DSI_PARAMS *p = &_dsi_context[0].dsi_params;
+
+	if (!DSI_REG[0]) {
+		DISPERR("M6 DSI phy_truth[%s]: DSI_REG0 missing\n", safe_tag);
+		return;
+	}
+
+	DISPERR("M6 DSI phy_truth[%s]: begin power=%d ulps=%u dsi_cur_mode=%d size=%ux%u\n",
+		safe_tag, s_isDsiPowerOn, is_mipi_enterulps(),
+		dsi_currect_mode, _dsi_context[0].lcm_width,
+		_dsi_context[0].lcm_height);
+	DISPERR("M6 DSI phy_truth[%s]: lcm mode=%u switch=%u lanes=%u datafmt color/trans/pad/fmt=%u/%u/%u/%u ps=%u packet=%u word=%u pll=%u/%u/%u dsi_clock=%u ssc=%u/%u cont=%u noncont=%u/%u\n",
+		safe_tag, p->mode, p->switch_mode, p->LANE_NUM,
+		p->data_format.color_order, p->data_format.trans_seq,
+		p->data_format.padding, p->data_format.format, p->PS,
+		p->packet_size, p->word_count, p->PLL_CLOCK,
+		p->PLL_CK_CMD, p->PLL_CK_VDO, p->dsi_clock,
+		p->ssc_disable, p->ssc_range, p->cont_clock,
+		p->noncont_clock, p->noncont_clock_period);
+	DISPERR("M6 DSI phy_truth[%s]: lcm timing v=%u/%u/%u/%u vfp_lp=%u h=%u/%u/%u/%u bllp=%u null_pkt=%u mix=%u/%u lfr=%u/%u/%u/%u\n",
+		safe_tag, p->vertical_sync_active, p->vertical_backporch,
+		p->vertical_frontporch, p->vertical_active_line,
+		p->vertical_frontporch_for_low_power,
+		p->horizontal_sync_active, p->horizontal_backporch,
+		p->horizontal_frontporch, p->horizontal_active_pixel,
+		p->horizontal_bllp, p->null_packet_en, p->mixmode_enable,
+		p->mixmode_mipi_clock, p->lfr_enable, p->lfr_mode,
+		p->lfr_type, p->lfr_skip_num);
+	DISPERR("M6 DSI phy_truth[%s]: lcm phy hs_trail/zero/prpr/lpx=%u/%u/%u/%u ta_sack/get/sure/go=%u/%u/%u/%u clk_trail/zero/lpx_wait/cont_det=%u/%u/%u/%u clk_hs_prpr/post/da_exit/clk_exit=%u/%u/%u/%u\n",
+		safe_tag, p->HS_TRAIL, p->HS_ZERO, p->HS_PRPR, p->LPX,
+		p->TA_SACK, p->TA_GET, p->TA_SURE, p->TA_GO,
+		p->CLK_TRAIL, p->CLK_ZERO, p->LPX_WAIT, p->CONT_DET,
+		p->CLK_HS_PRPR, p->CLK_HS_POST, p->DA_HS_EXIT,
+		p->CLK_HS_EXIT);
+	DISPERR("M6 DSI phy_truth[%s]: lcm lane_swap_en=%u port0=%u/%u/%u/%u/%u/%u port1=%u/%u/%u/%u/%u/%u te int=%u/%u ext=%u/%u edge=%u eint_disable=%u ufoe/dsc=%u/%u\n",
+		safe_tag, p->lane_swap_en,
+		p->lane_swap[0][0], p->lane_swap[0][1],
+		p->lane_swap[0][2], p->lane_swap[0][3],
+		p->lane_swap[0][4], p->lane_swap[0][5],
+		p->lane_swap[1][0], p->lane_swap[1][1],
+		p->lane_swap[1][2], p->lane_swap[1][3],
+		p->lane_swap[1][4], p->lane_swap[1][5],
+		p->lcm_int_te_monitor, p->lcm_int_te_period,
+		p->lcm_ext_te_monitor, p->lcm_ext_te_enable,
+		p->ext_te_edge, p->eint_disable, p->ufoe_enable,
+		p->dsc_enable);
+	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_dsi_block(safe_tag);
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	dsi_m6_dump_mipitx_block(safe_tag);
+#endif
+	DISPERR("M6 DSI phy_truth[%s]: end\n", safe_tag);
+}
+
+void dsi_m6_dump_takeover(const char *tag)
+{
+	const char *safe_tag = tag ? tag : "takeover";
+
+	dsi_m6_sram_snapshot(safe_tag, DISP_MODULE_DSI0);
+	dsi_m6_sram_video_snapshot(safe_tag, DISP_MODULE_DSI0);
+	DISPERR("M6 DSI takeover[%s]: begin\n", safe_tag);
+	dsi_m6_dump_snapshot(safe_tag, DISP_MODULE_DSI0, NULL);
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	dsi_m6_dump_mipitx_block(safe_tag);
+#endif
+	DISPERR("M6 DSI takeover[%s]: end\n", safe_tag);
+}
+
+void dsi_m6_dump_hs_window(const char *tag, unsigned int hold_ms)
+{
+	static const unsigned int marks[] = {
+		0, 17, 34, 51, 68, 85, 102, 119, 136,
+		250, 500, 1000, 2000, 5000, 10000
+	};
+	char marker[64];
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int bounded = hold_ms;
+	unsigned int elapsed = 0;
+	unsigned int idx;
+
+	if (bounded == 0)
+		bounded = 1000;
+	if (bounded > 10000)
+		bounded = 10000;
+
+	DISPERR("M6 DSI hs_window[%s]: begin hold_ms=%u jiffies=%lu\n",
+		safe_tag, bounded, jiffies);
+	for (idx = 0; idx < ARRAY_SIZE(marks); idx++) {
+		if (marks[idx] > bounded)
+			break;
+		if (marks[idx] > elapsed)
+			msleep(marks[idx] - elapsed);
+		elapsed = marks[idx];
+		snprintf(marker, sizeof(marker), "hs-window-%s-%ums",
+			 safe_tag, marks[idx]);
+		dsi_m6_dump_snapshot(marker, DISP_MODULE_DSI0, NULL);
+	}
+	if (elapsed < bounded) {
+		msleep(bounded - elapsed);
+		snprintf(marker, sizeof(marker), "hs-window-%s-%ums",
+			 safe_tag, bounded);
+		dsi_m6_dump_snapshot(marker, DISP_MODULE_DSI0, NULL);
+	}
+	DISPERR("M6 DSI hs_window[%s]: end hold_ms=%u jiffies=%lu\n",
+		safe_tag, bounded, jiffies);
+}
+
+static unsigned int dsi_m6_bound_hold_ms(unsigned int hold_ms);
+static void dsi_m6_dump_probe_mux_sweep(const char *tag);
+static void dsi_m6_dump_probe_mux_stats(const char *tag, unsigned int samples,
+					unsigned int delay_us);
+static unsigned int dsi_m6_txrx_ctrl_raw(void);
+static unsigned int dsi_m6_phy_lccon_raw(void);
+
+struct dsi_m6_mipitx_probe_field {
+	const char *name;
+	unsigned int offset;
+	unsigned int mask;
+	unsigned int shift;
+	unsigned int max;
+};
+
+struct dsi_m6_mipitx_lane_group {
+	const char *name;
+	unsigned int mask;
+	unsigned int shift;
+	unsigned int max;
+};
+
+#define M6_MIPITX_PHY_SEL_MASK 0x00777777U
+#define M6_MIPITX_PHY_SEL_FIELD(_raw, _idx) (((_raw) >> ((_idx) * 4)) & 0x7U)
+
+static const struct dsi_m6_mipitx_probe_field dsi_m6_mipitx_probe_fields[] = {
+	{ "lptx_clmp", 0x000, 1U << 11, 11, 1 },
+	{ "c_b1", 0x004, 1U << 1, 1, 1 },
+	{ "d0_b1", 0x008, 1U << 1, 1, 1 },
+	{ "d1_b1", 0x00c, 1U << 1, 1, 1 },
+	{ "d2_b1", 0x010, 1U << 1, 1, 1 },
+	{ "d3_b1", 0x014, 1U << 1, 1, 1 },
+	{ "hs_bias", 0x040, 1U << 1, 1, 1 },
+	{ "imp_en", 0x040, 1U << 2, 2, 1 },
+	{ "imp", 0x040, 0xfU << 4, 4, 15 },
+	{ "aio", 0x040, 0x7U << 8, 8, 7 },
+	{ "pad_low", 0x040, 1U << 11, 11, 1 },
+};
+
+static const unsigned int dsi_m6_mipitx_lane_offsets[] = {
+	0x004, 0x008, 0x00c, 0x010, 0x014,
+};
+
+static const struct dsi_m6_mipitx_lane_group dsi_m6_mipitx_lane_groups[] = {
+	{ "rt", 0xfU << 8, 8, 15 },
+	{ "lptx", 0x7U << 2, 2, 7 },
+	{ "lpcd", 0x3U << 5, 5, 3 },
+};
+
+static const struct dsi_m6_mipitx_probe_field *
+dsi_m6_mipitx_find_probe_field(const char *name)
+{
+	unsigned int i;
+
+	if (!name)
+		return NULL;
+
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_probe_fields); i++) {
+		if (!strcmp(name, dsi_m6_mipitx_probe_fields[i].name))
+			return &dsi_m6_mipitx_probe_fields[i];
+	}
+
+	return NULL;
+}
+
+static const struct dsi_m6_mipitx_lane_group *
+dsi_m6_mipitx_find_lane_group(const char *name)
+{
+	unsigned int i;
+
+	if (!name)
+		return NULL;
+
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_groups); i++) {
+		if (!strcmp(name, dsi_m6_mipitx_lane_groups[i].name))
+			return &dsi_m6_mipitx_lane_groups[i];
+	}
+
+	return NULL;
+}
+
+static bool dsi_m6_phy_sel_valid(unsigned int value)
+{
+	unsigned int used = 0;
+	unsigned int lane;
+	unsigned int i;
+
+	if (value & ~M6_MIPITX_PHY_SEL_MASK)
+		return false;
+
+	for (i = 0; i < 6; i++) {
+		lane = M6_MIPITX_PHY_SEL_FIELD(value, i);
+		if (lane > 5)
+			return false;
+		if (i < 5) {
+			if (used & (1U << lane))
+				return false;
+			used |= 1U << lane;
+		}
+	}
+
+	return true;
+}
+
+static void dsi_m6_log_phy_sel(const char *tag, unsigned int raw)
+{
+	DISPERR("M6 DSI phy_sel[%s]: raw=0x%x d0/d1/d2/d3/c/lprx=%u/%u/%u/%u/%u/%u valid=%u\n",
+		tag ? tag : "unknown", raw,
+		M6_MIPITX_PHY_SEL_FIELD(raw, 0),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 1),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 2),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 3),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 4),
+		M6_MIPITX_PHY_SEL_FIELD(raw, 5),
+		dsi_m6_phy_sel_valid(raw) ? 1 : 0);
+}
+
+static unsigned int dsi_m6_bound_pad_samples(unsigned int samples)
+{
+	if (samples == 0)
+		return 6;
+	if (samples > 20)
+		return 20;
+	return samples;
+}
+
+static unsigned int dsi_m6_bound_pad_delay_ms(unsigned int delay_ms)
+{
+	if (delay_ms == 0)
+		return 100;
+	if (delay_ms > 1000)
+		return 1000;
+	return delay_ms;
+}
+
+static void dsi_m6_dump_mipitx_pad_sample(const char *tag,
+					  unsigned int seq,
+					  unsigned int sample,
+					  unsigned int samples,
+					  unsigned int delay_ms)
+{
+	DISPERR("M6 DSI mipitx_pad[%s]#%u sample=%u/%u delay_ms=%u con=0x%x c=0x%x d0=0x%x d1=0x%x d2=0x%x d3=0x%x top=0x%x bg=0x%x pll=0x%x/0x%x/0x%x pll_top=0x%x pwr=0x%x rgs=0x%x gpi=0x%x pull=0x%x phy_sel=0x%x sw=0x%x/0x%x/0x%x dbg=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x st8=0x%x st9=0x%x int=0x%x vm=0x%x\n",
+		tag, seq, sample + 1, samples, delay_ms,
+		INREG32(MIPITX_BASE + 0x000),
+		INREG32(MIPITX_BASE + 0x004),
+		INREG32(MIPITX_BASE + 0x008),
+		INREG32(MIPITX_BASE + 0x00c),
+		INREG32(MIPITX_BASE + 0x010),
+		INREG32(MIPITX_BASE + 0x014),
+		INREG32(MIPITX_BASE + 0x040),
+		INREG32(MIPITX_BASE + 0x044),
+		INREG32(MIPITX_BASE + 0x050),
+		INREG32(MIPITX_BASE + 0x058),
+		INREG32(MIPITX_BASE + 0x060),
+		INREG32(MIPITX_BASE + 0x064),
+		INREG32(MIPITX_BASE + 0x068),
+		INREG32(MIPITX_BASE + 0x070),
+		INREG32(MIPITX_BASE + 0x074),
+		INREG32(MIPITX_BASE + 0x078),
+		INREG32(MIPITX_BASE + 0x07c),
+		INREG32(MIPITX_BASE + 0x080),
+		INREG32(MIPITX_BASE + 0x084),
+		INREG32(MIPITX_BASE + 0x088),
+		INREG32(MIPITX_BASE + 0x090),
+		INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098),
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw(),
+		INREG32(DDP_REG_BASE_DSI0 + 0x168),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x130));
+}
+
+void dsi_m6_mipitx_pad_window(const char *tag, unsigned int samples,
+			      unsigned int delay_ms)
+{
+	static unsigned int window_count;
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int bounded_samples = dsi_m6_bound_pad_samples(samples);
+	unsigned int bounded_delay_ms = dsi_m6_bound_pad_delay_ms(delay_ms);
+	unsigned int n;
+	unsigned int sample;
+
+	if (!DSI_REG[0])
+		return;
+
+	n = ++window_count;
+	DISPERR("M6 DSI mipitx_pad[%s]#%u: begin samples=%u delay_ms=%u\n",
+		safe_tag, n, bounded_samples, bounded_delay_ms);
+	dsi_m6_dump_snapshot("mipitx-pad-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode(safe_tag);
+
+	for (sample = 0; sample < bounded_samples; sample++) {
+		dsi_m6_dump_mipitx_pad_sample(safe_tag, n, sample,
+					      bounded_samples, bounded_delay_ms);
+		if (sample + 1 < bounded_samples)
+			msleep(bounded_delay_ms);
+	}
+
+	dsi_m6_dump_snapshot("mipitx-pad-after", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode(safe_tag);
+	DISPERR("M6 DSI mipitx_pad[%s]#%u: end samples=%u delay_ms=%u\n",
+		safe_tag, n, bounded_samples, bounded_delay_ms);
+}
+
+void dsi_m6_mipitx_pad_probe(const char *field_name, unsigned int value,
+			     unsigned int hold_ms, unsigned int restore,
+			     unsigned int sample_mux)
+{
+	char tag[64];
+	const struct dsi_m6_mipitx_probe_field *field;
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old_raw;
+	unsigned int new_raw;
+	unsigned int after_raw;
+	unsigned int restored_raw;
+
+	if (!DSI_REG[0])
+		return;
+
+	field = dsi_m6_mipitx_find_probe_field(field_name);
+	if (!field) {
+		DISPERR("M6 DSI mipitx_pad_probe: unknown field=%s allowed=lptx_clmp,c_b1,d0_b1,d1_b1,d2_b1,d3_b1,hs_bias,imp_en,imp,aio,pad_low\n",
+			field_name ? field_name : "null");
+		return;
+	}
+	if (value > field->max) {
+		DISPERR("M6 DSI mipitx_pad_probe: invalid field=%s value=%u max=%u\n",
+			field->name, value, field->max);
+		return;
+	}
+
+	old_raw = INREG32(MIPITX_BASE + field->offset);
+	new_raw = (old_raw & ~field->mask) |
+		  ((value << field->shift) & field->mask);
+	DISPERR("M6 DSI mipitx_pad_probe: begin field=%s value=%u old=0x%x new=0x%x off=0x%x mask=0x%x shift=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		field->name, value, old_raw, new_raw, field->offset,
+		field->mask, field->shift, restore ? 1 : 0, sample_mux,
+		bounded, dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("mipitx-pad-probe-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("mipitx-pad-probe-before");
+
+	MIPITX_OUTREG32(MIPITX_BASE + field->offset, new_raw);
+	udelay(1);
+	after_raw = INREG32(MIPITX_BASE + field->offset);
+	DISPERR("M6 DSI mipitx_pad_probe: after-set field=%s value=%u live=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+		field->name, value, after_raw, INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("mipitx-pad-probe-after-set", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("mipitx-pad-probe-after-set");
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "pad-%s-mux", field->name);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux == 2) {
+		snprintf(tag, sizeof(tag), "pad-%s-muxstats", field->name);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	} else if (sample_mux >= 3) {
+		snprintf(tag, sizeof(tag), "pad-%s-window", field->name);
+		dsi_m6_mipitx_pad_window(tag, 4, 50);
+	}
+
+	snprintf(tag, sizeof(tag), "pad-%s-hold", field->name);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		MIPITX_OUTREG32(MIPITX_BASE + field->offset, old_raw);
+		udelay(1);
+		restored_raw = INREG32(MIPITX_BASE + field->offset);
+		DISPERR("M6 DSI mipitx_pad_probe: after-restore field=%s old=0x%x live=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+			field->name, old_raw, restored_raw,
+			INREG32(MIPITX_BASE + 0x094),
+			INREG32(MIPITX_BASE + 0x098),
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+		dsi_m6_dump_snapshot("mipitx-pad-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+		dsi_m6_dump_mipitx_decode("mipitx-pad-probe-after-restore");
+	}
+
+	DISPERR("M6 DSI mipitx_pad_probe: end field=%s value=%u old=0x%x final=0x%x restore=%u mux=%u\n",
+		field->name, value, old_raw,
+		INREG32(MIPITX_BASE + field->offset),
+			restore ? 1 : 0, sample_mux);
+}
+
+void dsi_m6_mipitx_lane_group_probe(const char *group_name,
+				    unsigned int value,
+				    unsigned int hold_ms,
+				    unsigned int restore,
+				    unsigned int sample_mux)
+{
+	char tag[64];
+	const struct dsi_m6_mipitx_lane_group *group;
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old_raw[ARRAY_SIZE(dsi_m6_mipitx_lane_offsets)];
+	unsigned int new_raw[ARRAY_SIZE(dsi_m6_mipitx_lane_offsets)];
+	unsigned int after_raw[ARRAY_SIZE(dsi_m6_mipitx_lane_offsets)];
+	unsigned int restored_raw[ARRAY_SIZE(dsi_m6_mipitx_lane_offsets)];
+	unsigned int i;
+
+	if (!DSI_REG[0])
+		return;
+
+	group = dsi_m6_mipitx_find_lane_group(group_name);
+	if (!group) {
+		DISPERR("M6 DSI mipitx_lane_group_probe: unknown group=%s allowed=rt,lptx,lpcd\n",
+			group_name ? group_name : "null");
+		return;
+	}
+	if (value > group->max) {
+		DISPERR("M6 DSI mipitx_lane_group_probe: invalid group=%s value=%u max=%u\n",
+			group->name, value, group->max);
+		return;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++) {
+		old_raw[i] = INREG32(MIPITX_BASE +
+				     dsi_m6_mipitx_lane_offsets[i]);
+		new_raw[i] = (old_raw[i] & ~group->mask) |
+			     ((value << group->shift) & group->mask);
+	}
+
+	DISPERR("M6 DSI mipitx_lane_group_probe: begin group=%s value=%u old c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x new=0x%x/0x%x/0x%x/0x%x/0x%x mask=0x%x shift=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		group->name, value, old_raw[0], old_raw[1], old_raw[2],
+		old_raw[3], old_raw[4], new_raw[0], new_raw[1], new_raw[2],
+		new_raw[3], new_raw[4], group->mask, group->shift,
+		restore ? 1 : 0, sample_mux, bounded, dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("mipitx-lane-group-probe-before",
+			     DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("mipitx-lane-group-probe-before");
+
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++)
+		MIPITX_OUTREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[i],
+				new_raw[i]);
+	udelay(1);
+	for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++)
+		after_raw[i] = INREG32(MIPITX_BASE +
+				       dsi_m6_mipitx_lane_offsets[i]);
+	DISPERR("M6 DSI mipitx_lane_group_probe: after-set group=%s value=%u live c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+		group->name, value, after_raw[0], after_raw[1],
+		after_raw[2], after_raw[3], after_raw[4],
+		INREG32(MIPITX_BASE + 0x094), INREG32(MIPITX_BASE + 0x098),
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("mipitx-lane-group-probe-after-set",
+			     DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("mipitx-lane-group-probe-after-set");
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "lanegrp-%s-mux", group->name);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux == 2) {
+		snprintf(tag, sizeof(tag), "lanegrp-%s-muxstats", group->name);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	} else if (sample_mux >= 3) {
+		snprintf(tag, sizeof(tag), "lanegrp-%s-window", group->name);
+		dsi_m6_mipitx_pad_window(tag, 4, 50);
+	}
+
+	snprintf(tag, sizeof(tag), "lanegrp-%s-hold", group->name);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++)
+			MIPITX_OUTREG32(MIPITX_BASE +
+					dsi_m6_mipitx_lane_offsets[i],
+					old_raw[i]);
+		udelay(1);
+		for (i = 0; i < ARRAY_SIZE(dsi_m6_mipitx_lane_offsets); i++)
+			restored_raw[i] = INREG32(MIPITX_BASE +
+					dsi_m6_mipitx_lane_offsets[i]);
+		DISPERR("M6 DSI mipitx_lane_group_probe: after-restore group=%s old c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x live=0x%x/0x%x/0x%x/0x%x/0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+			group->name, old_raw[0], old_raw[1], old_raw[2],
+			old_raw[3], old_raw[4], restored_raw[0],
+			restored_raw[1], restored_raw[2], restored_raw[3],
+			restored_raw[4], INREG32(MIPITX_BASE + 0x094),
+			INREG32(MIPITX_BASE + 0x098),
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+		dsi_m6_dump_snapshot("mipitx-lane-group-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+		dsi_m6_dump_mipitx_decode("mipitx-lane-group-probe-after-restore");
+	}
+
+	DISPERR("M6 DSI mipitx_lane_group_probe: end group=%s value=%u old c/d0/d1/d2/d3=0x%x/0x%x/0x%x/0x%x/0x%x final=0x%x/0x%x/0x%x/0x%x/0x%x restore=%u mux=%u\n",
+		group->name, value, old_raw[0], old_raw[1], old_raw[2],
+		old_raw[3], old_raw[4],
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[0]),
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[1]),
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[2]),
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[3]),
+		INREG32(MIPITX_BASE + dsi_m6_mipitx_lane_offsets[4]),
+		restore ? 1 : 0, sample_mux);
+}
+
+void dsi_m6_mipitx_phy_sel_probe(unsigned int value, unsigned int hold_ms,
+				 unsigned int restore, unsigned int sample_mux)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old_raw;
+	unsigned int after_raw;
+	unsigned int restored_raw;
+
+	if (!DSI_REG[0])
+		return;
+
+	if (!dsi_m6_phy_sel_valid(value)) {
+		DISPERR("M6 DSI phy_sel_probe: invalid value=0x%x mask=0x%x fields must be <=5 and d0/d1/d2/d3/c unique\n",
+			value, M6_MIPITX_PHY_SEL_MASK);
+		dsi_m6_log_phy_sel("invalid", value);
+		return;
+	}
+
+	old_raw = INREG32(MIPITX_BASE + 0x07c);
+	DISPERR("M6 DSI phy_sel_probe: begin value=0x%x old=0x%x restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		value, old_raw, restore ? 1 : 0, sample_mux, bounded,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_log_phy_sel("old", old_raw);
+	dsi_m6_log_phy_sel("new", value);
+	dsi_m6_dump_snapshot("phy-sel-probe-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("phy-sel-probe-before");
+
+	MIPITX_OUTREG32(MIPITX_BASE + 0x07c, value);
+	udelay(1);
+	after_raw = INREG32(MIPITX_BASE + 0x07c);
+	DISPERR("M6 DSI phy_sel_probe: after-set value=0x%x live=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+		value, after_raw, INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_log_phy_sel("after-set", after_raw);
+	dsi_m6_dump_snapshot("phy-sel-probe-after-set", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("phy-sel-probe-after-set");
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "phy-sel-0x%x-mux", value);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux == 2) {
+		snprintf(tag, sizeof(tag), "phy-sel-0x%x-muxstats", value);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	} else if (sample_mux >= 3) {
+		snprintf(tag, sizeof(tag), "phy-sel-0x%x-window", value);
+		dsi_m6_mipitx_pad_window(tag, 4, 50);
+	}
+
+	snprintf(tag, sizeof(tag), "phy-sel-0x%x-hold", value);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		MIPITX_OUTREG32(MIPITX_BASE + 0x07c, old_raw);
+		udelay(1);
+		restored_raw = INREG32(MIPITX_BASE + 0x07c);
+		DISPERR("M6 DSI phy_sel_probe: after-restore old=0x%x live=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+			old_raw, restored_raw, INREG32(MIPITX_BASE + 0x094),
+			INREG32(MIPITX_BASE + 0x098), dsi_m6_txrx_ctrl_raw(),
+			dsi_m6_phy_lccon_raw());
+		dsi_m6_log_phy_sel("after-restore", restored_raw);
+		dsi_m6_dump_snapshot("phy-sel-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+		dsi_m6_dump_mipitx_decode("phy-sel-probe-after-restore");
+	}
+
+	DISPERR("M6 DSI phy_sel_probe: end value=0x%x old=0x%x final=0x%x restore=%u mux=%u\n",
+		value, old_raw, INREG32(MIPITX_BASE + 0x07c),
+		restore ? 1 : 0, sample_mux);
+}
+
+void dsi_m6_mipitx_plltop_probe(unsigned int value, unsigned int hold_ms,
+				unsigned int restore, unsigned int sample_mux,
+				unsigned int shift)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int max;
+	unsigned int mask;
+	unsigned int old_raw;
+	unsigned int new_raw;
+	unsigned int after_raw;
+	unsigned int restored_raw;
+
+	if (!DSI_REG[0])
+		return;
+
+	if (shift != 7 && shift != 8) {
+		DISPERR("M6 DSI plltop_probe: invalid shift=%u allowed=7,8\n",
+			shift);
+		return;
+	}
+
+	max = (shift == 7) ? 31U : 255U;
+	if (value > max) {
+		DISPERR("M6 DSI plltop_probe: invalid value=%u max=%u shift=%u\n",
+			value, max, shift);
+		return;
+	}
+
+	mask = max << shift;
+	old_raw = INREG32(MIPITX_BASE + 0x064);
+	new_raw = (old_raw & ~mask) | ((value << shift) & mask);
+	DISPERR("M6 DSI plltop_probe: begin value=%u shift=%u old=0x%x new=0x%x mask=0x%x restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		value, shift, old_raw, new_raw, mask, restore ? 1 : 0,
+		sample_mux, bounded, dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("plltop-probe-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("plltop-probe-before");
+
+	MIPITX_OUTREG32(MIPITX_BASE + 0x064, new_raw);
+	udelay(1);
+	after_raw = INREG32(MIPITX_BASE + 0x064);
+	DISPERR("M6 DSI plltop_probe: after-set value=%u shift=%u live=0x%x preserve7=0x%x preserve8=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+		value, shift, after_raw, dsi_m6_field(after_raw, 7, 5),
+		dsi_m6_field(after_raw, 8, 8), INREG32(MIPITX_BASE + 0x094),
+		INREG32(MIPITX_BASE + 0x098), dsi_m6_txrx_ctrl_raw(),
+		dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("plltop-probe-after-set", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_mipitx_decode("plltop-probe-after-set");
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "plltop-%u-s%u-mux", value, shift);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux == 2) {
+		snprintf(tag, sizeof(tag), "plltop-%u-s%u-muxstats",
+			 value, shift);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	} else if (sample_mux >= 3) {
+		snprintf(tag, sizeof(tag), "plltop-%u-s%u-window",
+			 value, shift);
+		dsi_m6_mipitx_pad_window(tag, 4, 50);
+	}
+
+	snprintf(tag, sizeof(tag), "plltop-%u-s%u-hold", value, shift);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		MIPITX_OUTREG32(MIPITX_BASE + 0x064, old_raw);
+		udelay(1);
+		restored_raw = INREG32(MIPITX_BASE + 0x064);
+		DISPERR("M6 DSI plltop_probe: after-restore old=0x%x live=0x%x preserve7=0x%x preserve8=0x%x out=0x%x apb=0x%x txrx=0x%x lccon=0x%x\n",
+			old_raw, restored_raw,
+			dsi_m6_field(restored_raw, 7, 5),
+			dsi_m6_field(restored_raw, 8, 8),
+			INREG32(MIPITX_BASE + 0x094),
+			INREG32(MIPITX_BASE + 0x098),
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+		dsi_m6_dump_snapshot("plltop-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+		dsi_m6_dump_mipitx_decode("plltop-probe-after-restore");
+	}
+
+	DISPERR("M6 DSI plltop_probe: end value=%u shift=%u old=0x%x final=0x%x restore=%u mux=%u\n",
+		value, shift, old_raw, INREG32(MIPITX_BASE + 0x064),
+		restore ? 1 : 0, sample_mux);
+}
+
+void dsi_m6_force_hsa_wc(unsigned int value, unsigned int hold_ms)
+{
+	unsigned int bounded = hold_ms;
+
+	if (!DSI_REG[0])
+		return;
+	if (bounded > 10000)
+		bounded = 10000;
+
+	DISPERR("M6 DSI hsa_wc: begin value=0x%x hold_ms=%u live_before=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		value, bounded, INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x064));
+	dsi_m6_dump_snapshot("hsa-wc-before", DISP_MODULE_DSI0, NULL);
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_HSA_WC, value);
+	DISPERR("M6 DSI hsa_wc: after-write value=0x%x live=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		value, INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x064));
+	dsi_m6_dump_snapshot("hsa-wc-after-write", DISP_MODULE_DSI0, NULL);
+	if (bounded)
+		dsi_m6_dump_hs_window("hsa-wc-hold", bounded);
+	DISPERR("M6 DSI hsa_wc: end value=0x%x live=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+		value, INREG32(DDP_REG_BASE_DSI0 + 0x050),
+		INREG32(DDP_REG_BASE_DSI0 + 0x054),
+		INREG32(DDP_REG_BASE_DSI0 + 0x058),
+		INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x064));
+}
+
+static unsigned int dsi_m6_bound_hold_ms(unsigned int hold_ms)
+{
+	if (hold_ms == 0)
+		return 1000;
+	if (hold_ms > 10000)
+		return 10000;
+	return hold_ms;
+}
+
+void dsi_m6_force_vm_cmd(unsigned int value, unsigned int hold_ms,
+			 unsigned int restore, unsigned int sample_mux)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old_raw;
+	unsigned int final_raw;
+
+	if (!DSI_REG[0])
+		return;
+
+	old_raw = INREG32(DDP_REG_BASE_DSI0 + 0x130);
+	DISPERR("M6 DSI vm_cmd_probe: begin value=0x%x old=0x%x restore=%u mux=%u hold=%u start=0x%x int=0x%x mode=0x%x txrx=0x%x ps=0x%x\n",
+		value, old_raw, restore ? 1 : 0, sample_mux, bounded,
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x014),
+		INREG32(DDP_REG_BASE_DSI0 + 0x018),
+		INREG32(DDP_REG_BASE_DSI0 + 0x01c));
+	dsi_m6_dump_snapshot("vmcmd-probe-before", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_vm_payload_marker("vmcmd-probe-before", DISP_MODULE_DSI0,
+				      NULL);
+
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_VM_CMD_CON, value);
+	DISPERR("M6 DSI vm_cmd_probe: after-write value=0x%x live=0x%x start=0x%x int=0x%x state=0x%x/0x%x checksum=0x%x\n",
+		value, INREG32(DDP_REG_BASE_DSI0 + 0x130),
+		INREG32(DDP_REG_BASE_DSI0 + 0x000),
+		INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x164),
+		INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+		INREG32(DDP_REG_BASE_DSI0 + 0x144));
+	dsi_m6_dump_snapshot("vmcmd-probe-after-write", DISP_MODULE_DSI0, NULL);
+	dsi_m6_dump_vm_payload_marker("vmcmd-probe-after-write",
+				      DISP_MODULE_DSI0, NULL);
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "vmcmd-0x%x-mux", value);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux >= 2) {
+		snprintf(tag, sizeof(tag), "vmcmd-0x%x-muxstats", value);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	}
+
+	snprintf(tag, sizeof(tag), "vmcmd-0x%x-hold", value);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_VM_CMD_CON, old_raw);
+		DISPERR("M6 DSI vm_cmd_probe: after-restore old=0x%x live=0x%x start=0x%x int=0x%x state=0x%x/0x%x checksum=0x%x\n",
+			old_raw, INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x164),
+			INREG32(DDP_REG_BASE_DSI0 + 0x16c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x144));
+		dsi_m6_dump_snapshot("vmcmd-probe-after-restore",
+				     DISP_MODULE_DSI0, NULL);
+	}
+
+	final_raw = INREG32(DDP_REG_BASE_DSI0 + 0x130);
+	DISPERR("M6 DSI vm_cmd_probe: end value=0x%x old=0x%x final=0x%x restore=%u mux=%u\n",
+		value, old_raw, final_raw, restore ? 1 : 0, sample_mux);
+}
+
+static void dsi_m6_dump_probe_mux_sweep(const char *tag)
+{
+	static unsigned int probe_mux_count;
+	unsigned int n;
+
+	if (!DSI_REG[0])
+		return;
+
+	n = ++probe_mux_count;
+	dsi_m6_dump_debug_mux_sweep_direct(tag, n);
+	dsi_m6_dump_mipitx_debug_mux_sweep_direct(tag, n);
+}
+
+static void dsi_m6_dump_probe_mux_stats(const char *tag, unsigned int samples,
+					unsigned int delay_us)
+{
+	static unsigned int probe_mux_stats_count;
+	unsigned int n;
+
+	if (!DSI_REG[0])
+		return;
+
+	n = ++probe_mux_stats_count;
+	dsi_m6_dump_debug_mux_stats_direct(tag, n, samples, delay_us);
+	dsi_m6_dump_mipitx_debug_mux_stats_direct(tag, n, samples, delay_us);
+}
+
+static unsigned int dsi_m6_txrx_ctrl_raw(void)
+{
+	return AS_UINT32(&DSI_REG[0]->DSI_TXRX_CTRL);
+}
+
+static unsigned int dsi_m6_phy_lccon_raw(void)
+{
+	return AS_UINT32(&DSI_REG[0]->DSI_PHY_LCCON);
+}
+
+void dsi_m6_force_clk_restore(const char *tag)
+{
+	const char *safe_tag = tag ? tag : "manual";
+	unsigned int old_cc;
+	unsigned int old_lc;
+
+	if (!DSI_REG[0])
+		return;
+
+	old_cc = PanelMaster_get_CC(PM_DSI0);
+	old_lc = DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0;
+	DISPERR("M6 DSI clk_restore[%s]: begin old_cc=%u old_lc=%u txrx=0x%x lccon=0x%x\n",
+		safe_tag, old_cc, old_lc,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("clk-restore-before", DISP_MODULE_DSI0, NULL);
+
+	PanelMaster_set_CC(PM_DSI0, 1);
+	DSI_clk_HS_mode(DISP_MODULE_DSI0, NULL, true);
+	DISPERR("M6 DSI clk_restore[%s]: after-force cc=%u lc=%u txrx=0x%x lccon=0x%x\n",
+		safe_tag, PanelMaster_get_CC(PM_DSI0),
+		DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("clk-restore-after", DISP_MODULE_DSI0, NULL);
+}
+
+void DSI_PHY_clk_change(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PARAMS *dsi_params);
+void DSI_PHY_TIMCONFIG(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PARAMS *dsi_params);
+
+void dsi_m6_force_pll_change(unsigned int new_pll, const char *tag)
+{
+	const char *safe_tag = tag ? tag : "manual";
+	LCM_DSI_PARAMS *dsi_params = &_dsi_context[0].dsi_params;
+	unsigned int old_pll = dsi_params->PLL_CLOCK;
+	unsigned int data_rate = new_pll * 2;
+
+	if (!DSI_REG[0])
+		return;
+
+	if (data_rate < 50 || data_rate > 1250) {
+		DISPERR("M6 DSI pll_change[%s]: REJECTED new_pll=%u data_rate=%u out of range [25..625]\n",
+			safe_tag, new_pll, data_rate);
+		return;
+	}
+
+	DISPERR("M6 DSI pll_change[%s]: begin old_pll=%u new_pll=%u data_rate=%u\n",
+		safe_tag, old_pll, new_pll, data_rate);
+	dsi_m6_dump_phy_truth("pll-change-before");
+
+	dsi_params->PLL_CLOCK = new_pll;
+	DSI_PHY_clk_change(DISP_MODULE_DSI0, NULL, dsi_params);
+	DSI_PHY_TIMCONFIG(DISP_MODULE_DSI0, NULL, dsi_params);
+
+	DISPERR("M6 DSI pll_change[%s]: done old_pll=%u new_pll=%u data_rate=%u\n",
+		safe_tag, old_pll, new_pll, data_rate);
+	dsi_m6_dump_phy_truth("pll-change-after");
+}
+
+void dsi_m6_force_cc_probe(unsigned int enable, unsigned int hold_ms,
+			   unsigned int restore, unsigned int sample_mux)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old;
+
+	if (!DSI_REG[0])
+		return;
+
+	old = PanelMaster_get_CC(PM_DSI0);
+	DISPERR("M6 DSI cc_probe: begin enable=%u old=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux, bounded,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("cc-probe-before", DISP_MODULE_DSI0, NULL);
+
+	PanelMaster_set_CC(PM_DSI0, enable ? 1 : 0);
+	DISPERR("M6 DSI cc_probe: after-set enable=%u now=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0, PanelMaster_get_CC(PM_DSI0),
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("cc-probe-after-set", DISP_MODULE_DSI0, NULL);
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "cc-probe-%u-mux", enable ? 1 : 0);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux >= 2) {
+		snprintf(tag, sizeof(tag), "cc-probe-%u-muxstats", enable ? 1 : 0);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	}
+
+	snprintf(tag, sizeof(tag), "cc-probe-%u-hold", enable ? 1 : 0);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		PanelMaster_set_CC(PM_DSI0, old ? 1 : 0);
+		DISPERR("M6 DSI cc_probe: after-restore old=%u now=%u txrx=0x%x lccon=0x%x\n",
+			old, PanelMaster_get_CC(PM_DSI0),
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+		dsi_m6_dump_snapshot("cc-probe-after-restore", DISP_MODULE_DSI0, NULL);
+	}
+
+	DISPERR("M6 DSI cc_probe: end enable=%u old=%u restore=%u mux=%u final=%u\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux,
+		PanelMaster_get_CC(PM_DSI0));
+}
+
+void dsi_m6_force_lc_hs_probe(unsigned int enable, unsigned int hold_ms,
+			      unsigned int restore, unsigned int sample_mux)
+{
+	char tag[64];
+	unsigned int bounded = dsi_m6_bound_hold_ms(hold_ms);
+	unsigned int old;
+
+	if (!DSI_REG[0])
+		return;
+
+	old = DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0;
+	DISPERR("M6 DSI lc_hs_probe: begin enable=%u old=%u restore=%u mux=%u hold=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux, bounded,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("lc-hs-probe-before", DISP_MODULE_DSI0, NULL);
+
+	DSI_clk_HS_mode(DISP_MODULE_DSI0, NULL, enable ? true : false);
+	DISPERR("M6 DSI lc_hs_probe: after-set enable=%u now=%u txrx=0x%x lccon=0x%x\n",
+		enable ? 1 : 0,
+		DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0,
+		dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+	dsi_m6_dump_snapshot("lc-hs-probe-after-set", DISP_MODULE_DSI0, NULL);
+
+	if (sample_mux == 1) {
+		snprintf(tag, sizeof(tag), "lc-hs-probe-%u-mux", enable ? 1 : 0);
+		dsi_m6_dump_probe_mux_sweep(tag);
+	} else if (sample_mux >= 2) {
+		snprintf(tag, sizeof(tag), "lc-hs-probe-%u-muxstats", enable ? 1 : 0);
+		dsi_m6_dump_probe_mux_stats(tag, 12, 1000);
+	}
+
+	snprintf(tag, sizeof(tag), "lc-hs-probe-%u-hold", enable ? 1 : 0);
+	dsi_m6_dump_hs_window(tag, bounded);
+
+	if (restore) {
+		DSI_clk_HS_mode(DISP_MODULE_DSI0, NULL, old ? true : false);
+		DISPERR("M6 DSI lc_hs_probe: after-restore old=%u now=%u txrx=0x%x lccon=0x%x\n",
+			old, DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0,
+			dsi_m6_txrx_ctrl_raw(), dsi_m6_phy_lccon_raw());
+		dsi_m6_dump_snapshot("lc-hs-probe-after-restore", DISP_MODULE_DSI0, NULL);
+	}
+
+	DISPERR("M6 DSI lc_hs_probe: end enable=%u old=%u restore=%u mux=%u final=%u\n",
+		enable ? 1 : 0, old, restore ? 1 : 0, sample_mux,
+		DSI_clk_HS_state(DISP_MODULE_DSI0, NULL) ? 1 : 0);
+}
+
+static uint32_t dsi_m6_dcs_read_noreset(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)
+{
+	uint32_t recv_data_cnt = 0;
+	unsigned char packet_type;
+	DSI_RX_DATA_REG read_data0 = {0};
+	DSI_RX_DATA_REG read_data1 = {0};
+	DSI_RX_DATA_REG read_data2 = {0};
+	DSI_RX_DATA_REG read_data3 = {0};
+	DSI_T0_INS t0 = {0};
+	DSI_T0_INS t1 = {0};
+	long ret;
+	static const long WAIT_TIMEOUT = HZ / 2;
+
+	if (buffer == NULL || buffer_size == 0) {
+		DISPERR("M6 DCS status: skip cmd=0x%x invalid buffer=%p size=%u\n",
+			cmd, buffer, buffer_size);
+		return 0;
+	}
+
+	memset(buffer, 0, buffer_size);
+
+	if (DSI_REG[0]->DSI_MODE_CTRL.MODE) {
+		DISPERR("M6 DCS status: skip cmd=0x%x video-mode=%u START=0x%x STA=0x%x INTSTA=0x%x\n",
+			cmd, DSI_REG[0]->DSI_MODE_CTRL.MODE,
+			AS_UINT32(&DSI_REG[0]->DSI_START),
+			AS_UINT32(&DSI_REG[0]->DSI_TRIG_STA),
+			AS_UINT32(&DSI_REG[0]->DSI_INTSTA));
+		return 0;
+	}
+
+	DSI_WaitForNotBusy(DISP_MODULE_DSI0, NULL);
+
+	DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, RD_RDY, 1);
+	DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, CMD_DONE, 1);
+
+	if (DSI_REG[0]->DSI_INTSTA.RD_RDY || DSI_REG[0]->DSI_INTSTA.CMD_DONE) {
+		DSI_OUTREGBIT(NULL, DSI_INT_STATUS_REG, DSI_REG[0]->DSI_INTSTA, RD_RDY, 0);
+		DSI_OUTREGBIT(NULL, DSI_INT_STATUS_REG, DSI_REG[0]->DSI_INTSTA, CMD_DONE, 0);
+	}
+
+	t1.CONFG = 0x00;
+	t1.Data_ID = 0x37;
+	t1.Data0 = buffer_size <= 10 ? buffer_size : 10;
+	t1.Data1 = 0;
+
+	t0.CONFG = 0x04;
+	t0.Data_ID = (cmd < 0xB0) ? DSI_DCS_READ_PACKET_ID : DSI_GERNERIC_READ_LONG_PACKET_ID;
+	t0.Data0 = cmd;
+	t0.Data1 = 0;
+
+	waitRDDone = false;
+	DSI_OUTREG32(NULL, &DSI_CMDQ_REG[0]->data[0], AS_UINT32(&t1));
+	DSI_OUTREG32(NULL, &DSI_CMDQ_REG[0]->data[1], AS_UINT32(&t0));
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_CMDQ_SIZE, 2);
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_START, 0);
+	DSI_OUTREG32(NULL, &DSI_REG[0]->DSI_START, 1);
+
+	ret = wait_event_interruptible_timeout(_dsi_dcs_read_wait_queue[0],
+					       waitRDDone, WAIT_TIMEOUT);
+	waitRDDone = false;
+	if (ret <= 0) {
+		DISPERR("M6 DCS status: cmd=0x%x noreset-timeout ret=%ld START=0x%x STA=0x%x INTSTA=0x%x RX0=0x%x\n",
+			cmd, ret, AS_UINT32(&DSI_REG[0]->DSI_START),
+			AS_UINT32(&DSI_REG[0]->DSI_TRIG_STA),
+			AS_UINT32(&DSI_REG[0]->DSI_INTSTA),
+			AS_UINT32(&DSI_REG[0]->DSI_RX_DATA0));
+		DSI_OUTREGBIT(NULL, DSI_RACK_REG, DSI_REG[0]->DSI_RACK, DSI_RACK, 1);
+		DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, RD_RDY, 0);
+		DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, CMD_DONE, 0);
+		return 0;
+	}
+
+	DSI_OUTREGBIT(NULL, DSI_RACK_REG, DSI_REG[0]->DSI_RACK, DSI_RACK, 1);
+	DSI_OUTREGBIT(NULL, DSI_INT_STATUS_REG, DSI_REG[0]->DSI_INTSTA, RD_RDY, 0);
+	DSI_OUTREGBIT(NULL, DSI_INT_STATUS_REG, DSI_REG[0]->DSI_INTSTA, CMD_DONE, 0);
+	DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, RD_RDY, 0);
+	DSI_OUTREGBIT(NULL, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, CMD_DONE, 0);
+
+	AS_UINT32(&read_data0) = INREG32(&DSI_REG[0]->DSI_RX_DATA0);
+	AS_UINT32(&read_data1) = INREG32(&DSI_REG[0]->DSI_RX_DATA1);
+	AS_UINT32(&read_data2) = INREG32(&DSI_REG[0]->DSI_RX_DATA2);
+	AS_UINT32(&read_data3) = INREG32(&DSI_REG[0]->DSI_RX_DATA3);
+
+	packet_type = read_data0.byte0;
+	if (packet_type == 0x1A || packet_type == 0x1C) {
+		recv_data_cnt = read_data0.byte1 + read_data0.byte2 * 16;
+		if (recv_data_cnt > 10)
+			recv_data_cnt = 10;
+		if (recv_data_cnt > buffer_size)
+			recv_data_cnt = buffer_size;
+		if (recv_data_cnt <= 4) {
+			memcpy(buffer, &read_data1, recv_data_cnt);
+		} else if (recv_data_cnt <= 8) {
+			memcpy(buffer, &read_data1, 4);
+			memcpy(buffer + 4, &read_data2, recv_data_cnt - 4);
+		} else {
+			memcpy(buffer, &read_data1, 4);
+			memcpy(buffer + 4, &read_data2, 4);
+			memcpy(buffer + 8, &read_data3, recv_data_cnt - 8);
+		}
+	} else if (packet_type == 0x11 || packet_type == 0x21) {
+		recv_data_cnt = buffer_size < 1 ? buffer_size : 1;
+		memcpy(buffer, &read_data0.byte1, recv_data_cnt);
+	} else if (packet_type == 0x12 || packet_type == 0x22) {
+		recv_data_cnt = buffer_size < 2 ? buffer_size : 2;
+		memcpy(buffer, &read_data0.byte1, recv_data_cnt);
+	}
+
+	DISPERR("M6 DCS status: cmd=0x%x ret=%u pkt=0x%x data=%02x %02x %02x %02x RX=0x%x/0x%x/0x%x/0x%x\n",
+		cmd, recv_data_cnt, packet_type,
+		buffer_size > 0 ? buffer[0] : 0,
+		buffer_size > 1 ? buffer[1] : 0,
+		buffer_size > 2 ? buffer[2] : 0,
+		buffer_size > 3 ? buffer[3] : 0,
+		AS_UINT32(&read_data0), AS_UINT32(&read_data1),
+		AS_UINT32(&read_data2), AS_UINT32(&read_data3));
+
+	return recv_data_cnt;
+}
+
+static void dsi_m6_dump_dcs_status_inner(const char *tag, bool force)
+{
+	static int dump_count;
+	uint8_t buffer[4];
+	uint8_t cmds[] = {0x0A, 0x0B, 0x0C, 0x0D, 0xDA, 0xDB, 0xDC};
+	int i;
+
+	if (!force && dump_count >= 2) {
+		DISPERR("M6 DCS status[%s]: skip dump_count=%d force=0\n",
+			tag ? tag : "null", dump_count);
+		return;
+	}
+	if (!force)
+		dump_count++;
+
+	DISPERR("M6 DCS status[%s]: begin force=%u count=%d\n",
+		tag ? tag : "null", force ? 1 : 0, dump_count);
+	for (i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++)
+		dsi_m6_dcs_read_noreset(cmds[i], buffer, sizeof(buffer));
+	dsi_m6_dump_snapshot("dcs-status-after", DISP_MODULE_DSI0, NULL);
+}
+
+void dsi_m6_dump_dcs_status(const char *tag)
+{
+	dsi_m6_dump_dcs_status_inner(tag, false);
+}
+
+void dsi_m6_dump_dcs_status_force(const char *tag)
+{
+	dsi_m6_dump_dcs_status_inner(tag, true);
 }
 
 unsigned int dsi_phy_get_clk(DISP_MODULE_ENUM module)
@@ -1355,6 +4538,7 @@ void DSI_PHY_clk_setting(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PA
 #endif
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
+		dsi_m6_dump_rt_cal("phy-clk-before");
 		/* step 0 */
 		MIPITX_OUTREGBIT(MIPITX_DSI_CLOCK_LANE_REG, DSI_PHY_REG[i]->MIPITX_DSI_CLOCK_LANE,
 						RG_DSI_LNTC_RT_CODE, (clock_lane>>8) & 0xf);
@@ -1373,6 +4557,7 @@ void DSI_PHY_clk_setting(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PA
 		INREG32(&DSI_PHY_REG[i]->MIPITX_DSI_DATA_LANE2),
 		INREG32(&DSI_PHY_REG[i]->MIPITX_DSI_DATA_LANE1),
 		INREG32(&DSI_PHY_REG[i]->MIPITX_DSI_DATA_LANE0));
+		dsi_m6_dump_rt_cal("phy-clk-after-rt-write");
 		/* step 1 */
 		/* MIPITX_MASKREG32(APMIXED_BASE+0x00, (0x1<<6), 1); */
 
@@ -1383,7 +4568,7 @@ void DSI_PHY_clk_setting(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PA
 				 RG_DSI_BG_CKEN, 1);
 
 		/* step 3 */
-		mdelay(1);
+		dsi_m6_phy_lk_delay("phy-clk-bg-settle", M6_LK_PHY_BG_SETTLE_MS);
 
 		/* step 4 */
 		MIPITX_OUTREGBIT(MIPITX_DSI_TOP_CON_REG, DSI_PHY_REG[i]->MIPITX_DSI_TOP_CON,
@@ -1543,7 +4728,8 @@ void DSI_PHY_clk_setting(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PA
 				 RG_DSI0_MPPLL_PLL_EN, 1);
 
 		/* step 17 */
-		mdelay(1);
+		dsi_m6_phy_lk_delay("phy-clk-pll-en-settle",
+			M6_LK_PHY_PLL_EN_SETTLE_MS);
 
 		MIPITX_OUTREGBIT(MIPITX_DSI_PLL_CHG_REG, DSI_PHY_REG[i]->MIPITX_DSI_PLL_CHG,
 				 RG_DSI0_MPPLL_SDM_PCW_CHG, 0);
@@ -1560,14 +4746,16 @@ void DSI_PHY_clk_setting(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, LCM_DSI_PA
 					 RG_DSI0_MPPLL_SDM_SSC_EN, 0);
 		}
 
-		/* step 18 */
-		MIPITX_OUTREGBIT(MIPITX_DSI_TOP_CON_REG, DSI_PHY_REG[i]->MIPITX_DSI_TOP_CON,
-				 RG_DSI_PAD_TIE_LOW_EN, 0);
+			/* step 18 */
+			MIPITX_OUTREGBIT(MIPITX_DSI_TOP_CON_REG, DSI_PHY_REG[i]->MIPITX_DSI_TOP_CON,
+					 RG_DSI_PAD_TIE_LOW_EN, 0);
 
-		mdelay(1);
+			dsi_m6_phy_lk_delay("phy-clk-pcw-pad-settle",
+				M6_LK_PHY_PCW_PAD_SETTLE_MS);
+			dsi_m6_dump_rt_cal("phy-clk-after");
+		}
+	#endif
 	}
-#endif
-}
 
 
 
@@ -1820,9 +5008,16 @@ DSI_STATUS DSI_DisableClk(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 
 DSI_STATUS DSI_Start(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 {
+	static unsigned int dump_count;
+
 	if (module == DISP_MODULE_DSI0) {
+		dsi_m6_dump_hs_video_limited("start-before", module, cmdq,
+					     &dump_count, 8);
 		DSI_OUTREGBIT(cmdq, DSI_START_REG, DSI_REG[0]->DSI_START, DSI_START, 0);
 		DSI_OUTREGBIT(cmdq, DSI_START_REG, DSI_REG[0]->DSI_START, DSI_START, 1);
+		dsi_m6_dump_hs_video_limited("start-after", module, cmdq,
+					     &dump_count, 16);
+		dsi_m6_schedule_hs_video_delayed();
 	}
 
 	return DSI_STATUS_OK;
@@ -1832,6 +5027,21 @@ void DSI_Set_VM_CMD(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 {
 
 	int i = 0;
+	static unsigned int m6_vm_set_count;
+	bool m6_dump = false;
+
+	if (module == DISP_MODULE_DSI0 && DSI_REG[0] &&
+	    m6_vm_set_count < 16) {
+		m6_vm_set_count++;
+		m6_dump = true;
+		dsi_m6_sram_video_snapshot("vm-set-entry", module);
+		DISPERR("M6 DSI vm_cmd[set-entry]: count=%u cmdq=%p raw=0x%x start=0x%x intsta=0x%x\n",
+			m6_vm_set_count, cmdq,
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c));
+		dsi_m6_dump_vm_payload_marker("vm-set-entry", module, cmdq);
+	}
 
 	if (module != DISP_MODULE_DSIDUAL) {
 		for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
@@ -1845,11 +5055,35 @@ void DSI_Set_VM_CMD(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 		DSI_OUTREGBIT(cmdq, DSI_VM_CMD_CON_REG, DSI_REG[i]->DSI_VM_CMD_CON, TS_VFP_EN, 1);
 		DSI_OUTREGBIT(cmdq, DSI_VM_CMD_CON_REG, DSI_REG[i]->DSI_VM_CMD_CON, VM_CMD_EN, 1);
 	}
+	if (m6_dump) {
+		dsi_m6_sram_video_snapshot("vm-set-after", module);
+		DISPERR("M6 DSI vm_cmd[set-after-enqueue]: count=%u cmdq=%p raw=0x%x start=0x%x intsta=0x%x\n",
+			m6_vm_set_count, cmdq,
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c));
+		dsi_m6_dump_vm_payload_marker("vm-set-after-enqueue", module,
+					       cmdq);
+	}
 }
 
 DSI_STATUS DSI_EnableVM_CMD(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 {
 	int i = 0;
+	static unsigned int m6_vm_enable_count;
+	bool m6_dump = false;
+
+	if (module == DISP_MODULE_DSI0 && DSI_REG[0] &&
+	    m6_vm_enable_count < 32) {
+		m6_vm_enable_count++;
+		m6_dump = true;
+		dsi_m6_sram_video_snapshot("vm-enable-entry", module);
+		DISPERR("M6 DSI vm_cmd[enable-entry]: count=%u cmdq=%p raw=0x%x start=0x%x intsta=0x%x\n",
+			m6_vm_enable_count, cmdq,
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c));
+	}
 
 	if (cmdq)
 		DSI_MASKREG32(cmdq, &DSI_REG[0]->DSI_INTSTA, 0x00000020, 0x00000000);
@@ -1870,6 +5104,15 @@ DSI_STATUS DSI_EnableVM_CMD(DISP_MODULE_ENUM module, cmdqRecHandle cmdq)
 		DSI_MASKREG32(cmdq, &DSI_REG[0]->DSI_INTSTA, 0x00000020, 0x00000000);
 	} else
 		wait_event_interruptible(_dsi_wait_vm_cmd_done_queue[0], wait_vm_cmd_done);
+
+	if (m6_dump) {
+		dsi_m6_sram_video_snapshot("vm-enable-after", module);
+		DISPERR("M6 DSI vm_cmd[enable-after-wait]: count=%u cmdq=%p raw=0x%x start=0x%x intsta=0x%x\n",
+			m6_vm_enable_count, cmdq,
+			INREG32(DDP_REG_BASE_DSI0 + 0x130),
+			INREG32(DDP_REG_BASE_DSI0 + 0x000),
+			INREG32(DDP_REG_BASE_DSI0 + 0x00c));
+	}
 
 	return DSI_STATUS_OK;
 }
@@ -1897,7 +5140,7 @@ int DSI_read_cmp(unsigned int index, DSI_RX_DATA_REG *read_data,
 	int ret = 0;
 	int i = 0;
 	unsigned char packet_type;
-	uint32_t recv_data_cnt;
+	uint32_t recv_data_cnt = 0;
 	LCM_DSI_PARAMS *dsi_params = NULL;
 	unsigned char buffer[20];
 
@@ -2011,6 +5254,16 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 	static const long WAIT_TIMEOUT = 2 * HZ;	/* 2 sec */
 	long ret;
 	int timeout = 0;
+	static unsigned int m6_core_read_count;
+	unsigned int m6_core_seq = 0;
+	bool m6_core_dump = false;
+
+	if (m6_core_read_count < 32) {
+		m6_core_seq = ++m6_core_read_count;
+		m6_core_dump = true;
+	}
+	if (m6_core_dump)
+		dsi_m6_clkstate_marker("read-entry", module);
 
 	for (d = DSI_MODULE_BEGIN(module); d <= DSI_MODULE_END(module); d++) {
 		if (DSI_REG[d]->DSI_MODE_CTRL.MODE) {
@@ -2098,6 +5351,8 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 
 			DSI_OUTREG32(cmdq, &DSI_REG[d]->DSI_START, 0);
 			DSI_OUTREG32(cmdq, &DSI_REG[d]->DSI_START, 1);
+			if (m6_core_dump)
+				dsi_m6_clkstate_marker("read-start", module);
 
 			/* / the following code is to */
 			/* / 1: wait read ready */
@@ -2108,6 +5363,21 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 			    wait_event_interruptible_timeout(_dsi_dcs_read_wait_queue[d],
 							     waitRDDone, WAIT_TIMEOUT);
 			waitRDDone = false;
+			if (m6_core_dump)
+				dsi_m6_clkstate_marker("read-wait", module);
+			if (m6_core_dump)
+				DISPERR("M6 DSI core read wait #%u d=%d cmd=0x%x ret=%ld intsta=0x%08x trig=0x%08x start=0x%08x cmdq=0x%08x rx=%08x/%08x/%08x/%08x mode=%u busy=%u\n",
+					m6_core_seq, d, cmd, ret,
+					AS_UINT32(&DSI_REG[d]->DSI_INTSTA),
+					AS_UINT32(&DSI_REG[d]->DSI_TRIG_STA),
+					AS_UINT32(&DSI_REG[d]->DSI_START),
+					AS_UINT32(&DSI_REG[d]->DSI_CMDQ_SIZE),
+					AS_UINT32(&DSI_REG[d]->DSI_RX_DATA0),
+					AS_UINT32(&DSI_REG[d]->DSI_RX_DATA1),
+					AS_UINT32(&DSI_REG[d]->DSI_RX_DATA2),
+					AS_UINT32(&DSI_REG[d]->DSI_RX_DATA3),
+					DSI_REG[d]->DSI_MODE_CTRL.MODE,
+					DSI_REG[d]->DSI_INTSTA.BUSY);
 			if (ret > 0) {
 				do {
 					timeout++;
@@ -2134,6 +5404,8 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 			} else if (ret == 0) {
 				/* wait read ready timeout */
 				DISPERR("DSI Read Fail: dsi wait read ready timeout\n");
+				if (m6_core_dump)
+					dsi_m6_clkstate_marker("read-timeout", module);
 				DSI_DumpRegisters(module, 2);
 
 				/* /do necessary reset here */
@@ -2251,8 +5523,24 @@ uint32_t DSI_dcs_read_lcm_reg_v2(DISP_MODULE_ENUM module, cmdqRecHandle cmdq, ui
 			} else {
 				DISPMSG("read return type is non-recognite, type = 0x%x\n",
 					  packet_type);
+				if (m6_core_dump)
+					DISPERR("M6 DSI core read packet #%u d=%d cmd=0x%x type=0x%x recv=%u retry_left=%u data=%02x %02x %02x %02x\n",
+						m6_core_seq, d, cmd, packet_type,
+						recv_data_cnt, max_try_count,
+						buffer_size > 0 && buffer ? buffer[0] : 0,
+						buffer_size > 1 && buffer ? buffer[1] : 0,
+						buffer_size > 2 && buffer ? buffer[2] : 0,
+						buffer_size > 3 && buffer ? buffer[3] : 0);
 				return 0;
 			}
+			if (m6_core_dump)
+				DISPERR("M6 DSI core read packet #%u d=%d cmd=0x%x type=0x%x recv=%u retry_left=%u data=%02x %02x %02x %02x\n",
+					m6_core_seq, d, cmd, packet_type,
+					recv_data_cnt, max_try_count,
+					buffer_size > 0 && buffer ? buffer[0] : 0,
+					buffer_size > 1 && buffer ? buffer[1] : 0,
+					buffer_size > 2 && buffer ? buffer[2] : 0,
+					buffer_size > 3 && buffer ? buffer[3] : 0);
 		} while (packet_type == 0x02);
 		/* / here: we may receive a ACK packet which packet type is 0x02 (incdicates some error happened) */
 		/* / therefore we try re-read again until no ACK packet */
@@ -2819,7 +6107,25 @@ void DSI_set_cmdq_wrapper_DSIDual(unsigned int *pdata, unsigned int queue_size,
 
 unsigned int DSI_dcs_read_lcm_reg_v2_wrapper_DSI0(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)
 {
-	return DSI_dcs_read_lcm_reg_v2(DISP_MODULE_DSI0, NULL, cmd, buffer, buffer_size);
+	unsigned int ret;
+	static unsigned int m6_wrapper_count;
+	bool m6_dump = false;
+
+	if (m6_wrapper_count < 64) {
+		m6_dump = true;
+		m6_wrapper_count++;
+		DISPERR("M6 DSI wrapper read begin #%u cmd=0x%x size=%u buffer=%p\n",
+			m6_wrapper_count, cmd, buffer_size, buffer);
+	}
+	ret = DSI_dcs_read_lcm_reg_v2(DISP_MODULE_DSI0, NULL, cmd, buffer, buffer_size);
+	if (m6_dump)
+		DISPERR("M6 DSI wrapper read end #%u cmd=0x%x ret=%u data=%02x %02x %02x %02x\n",
+			m6_wrapper_count, cmd, ret,
+			buffer_size > 0 && buffer ? buffer[0] : 0,
+			buffer_size > 1 && buffer ? buffer[1] : 0,
+			buffer_size > 2 && buffer ? buffer[2] : 0,
+			buffer_size > 3 && buffer ? buffer[3] : 0);
+	return ret;
 }
 
 unsigned int DSI_dcs_read_lcm_reg_v2_wrapper_DSI1(uint8_t cmd, uint8_t *buffer, uint8_t buffer_size)
@@ -2950,6 +6256,10 @@ int ddp_dsi_init(DISP_MODULE_ENUM module, void *cmdq)
 {
 	DSI_STATUS ret = DSI_STATUS_OK;
 	int i = 0;
+	static unsigned int dump_count;
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	int mipitx_enabled = 0;
+#endif
 
 	DISPFUNC();
 	/* DSI_OUTREG32(cmdq, 0xf0000048, 0x80000000); */
@@ -2982,10 +6292,16 @@ int ddp_dsi_init(DISP_MODULE_ENUM module, void *cmdq)
 		DISPMSG("dsi%d initializing\n", i);
 	}
 
+	dsi_m6_lkgold_snapshot_once("pre-init");
 	disp_register_module_irq_callback(DISP_MODULE_DSI0, _DSI_INTERNAL_IRQ_Handler);
 
 #ifndef CONFIG_FPGA_EARLY_PORTING
-	if (MIPITX_IsEnabled(module, cmdq)) {
+	dsi_m6_dump_rt_cal("init-before-is-enabled");
+	mipitx_enabled = MIPITX_IsEnabled(module, cmdq);
+	DISPERR("M6 DSI mipitx-decision[init]: enabled=%d PMaster=%d force=%d\n",
+		mipitx_enabled, atomic_read(&PMaster_enable), dsi_force_config);
+	dsi_m6_dump_rt_cal("init-after-is-enabled");
+	if (mipitx_enabled) {
 		s_isDsiPowerOn = true;
 #ifdef ENABLE_CLK_MGR
 #ifdef CONFIG_MTK_CLKMGR
@@ -3018,10 +6334,12 @@ int ddp_dsi_init(DISP_MODULE_ENUM module, void *cmdq)
 		data_lane3 = (INREG32(MIPI_TX_REG_BASE + 0x14));/*MIPITX_DSI_DATA_LANE3*/
 		data_lane2 = (INREG32(MIPI_TX_REG_BASE + 0x10));/*MIPITX_DSI_DATA_LANE2*/
 		data_lane1 = (INREG32(MIPI_TX_REG_BASE + 0xc));/*MIPITX_DSI_DATA_LANE1*/
-		data_lane0 = (INREG32(MIPI_TX_REG_BASE + 0x8));/*MIPITX_DSI_DATA_LANE0*/
-		DISPMSG("clk=0x%x,lan3=0x%x,lan2=0x%x,lan1=0x%x,lan0=0x%x\n",
-			clock_lane, data_lane3, data_lane2, data_lane1, data_lane0);
-	}
+			data_lane0 = (INREG32(MIPI_TX_REG_BASE + 0x8));/*MIPITX_DSI_DATA_LANE0*/
+			DISPMSG("clk=0x%x,lan3=0x%x,lan2=0x%x,lan1=0x%x,lan0=0x%x\n",
+				clock_lane, data_lane3, data_lane2, data_lane1, data_lane0);
+			dsi_m6_dump_rt_cal("init-after-save-lanes");
+			dsi_m6_dump_snapshot_limited("init-after", module, cmdq, &dump_count, 2);
+		}
 #endif
 
 	return DSI_STATUS_OK;
@@ -3101,6 +6419,13 @@ static void DSI_PHY_CLK_LP_PerLine_config(DISP_MODULE_ENUM module, cmdqRecHandle
 		if (dsi_mode == CMD_MODE)
 			continue;
 		/* vdo mode */
+		DISPERR("M6 DSI lp_per_line[before]: enable=%u mode=%u HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+			dsi_params->clk_lp_per_line_enable, dsi_mode,
+			INREG32(DDP_REG_BASE_DSI0 + 0x050),
+			INREG32(DDP_REG_BASE_DSI0 + 0x054),
+			INREG32(DDP_REG_BASE_DSI0 + 0x058),
+			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x064));
 		DSI_OUTREG32(cmdq, &hsa, AS_UINT32(&DSI_REG[i]->DSI_HSA_WC));
 		DSI_OUTREG32(cmdq, &hbp, AS_UINT32(&DSI_REG[i]->DSI_HBP_WC));
 		DSI_OUTREG32(cmdq, &hfp, AS_UINT32(&DSI_REG[i]->DSI_HFP_WC));
@@ -3187,17 +6512,30 @@ static void DSI_PHY_CLK_LP_PerLine_config(DISP_MODULE_ENUM module, cmdqRecHandle
 			DSI_OUTREG32(cmdq, &DSI_REG[i]->DSI_HSTX_CKL_WC, (v_a - v_b));
 			DSI_OUTREG32(cmdq, &new_hstx_ckl_wc,
 				     AS_UINT32(&DSI_REG[i]->DSI_HSTX_CKL_WC));
-			DISPMSG("===>new HSTX_CKL_WC=0x%x, HFP_WC=0x%x\n", new_hstx_ckl_wc,
-				  new_hfp.HFP_WC);
+				DISPMSG("===>new HSTX_CKL_WC=0x%x, HFP_WC=0x%x\n", new_hstx_ckl_wc,
+					  new_hfp.HFP_WC);
+			}
+			DISPERR("M6 DSI lp_per_line[after]: enable=%u mode=%u HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+				dsi_params->clk_lp_per_line_enable, dsi_mode,
+				INREG32(DDP_REG_BASE_DSI0 + 0x050),
+				INREG32(DDP_REG_BASE_DSI0 + 0x054),
+				INREG32(DDP_REG_BASE_DSI0 + 0x058),
+				INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+				INREG32(DDP_REG_BASE_DSI0 + 0x064));
 		}
-	}
 
-}
+	}
 
 int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *cmdq)
 {
 	int i = 0;
 	LCM_DSI_PARAMS *dsi_config = &(config->dispif_config.dsi);
+	static unsigned int dump_count;
+	static unsigned int m6_force_first_lk_mipitx_config_done;
+	static unsigned int m6_boot_pll_reprog_done;
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	int mipitx_enabled = 0;
+#endif
 
 	if (!config->dst_dirty) {
 		if (atomic_read(&PMaster_enable) == 0)
@@ -3205,6 +6543,7 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 	}
 	DISPFUNC();
 	DISPDBG("===>run here 00 Pmaster: clk:%d\n", _dsi_context[0].dsi_params.PLL_CLOCK);
+	dsi_m6_takeover_hold_once("config-entry", module, cmdq, &dump_count);
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
 		_copy_dsi_params(dsi_config, &(_dsi_context[i].dsi_params));
@@ -3230,12 +6569,55 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 	if (dsi_config->mode != CMD_MODE)
 		dsi_currect_mode = 1;
 #ifndef CONFIG_FPGA_EARLY_PORTING
-	if ((MIPITX_IsEnabled(module, cmdq)) && (atomic_read(&PMaster_enable) == 0)) {
+	dsi_m6_dump_rt_cal("config-before-is-enabled");
+	mipitx_enabled = MIPITX_IsEnabled(module, cmdq);
+	DISPERR("M6 DSI mipitx-decision[config]: enabled=%d PMaster=%d force=%d clk_lp_per_line=%u\n",
+		mipitx_enabled, atomic_read(&PMaster_enable), dsi_force_config,
+		dsi_config->clk_lp_per_line_enable);
+	dsi_m6_dump_rt_cal("config-after-is-enabled");
+	if (M6_LK_HANDOFF_SKIP_FIRST_DSI_CONFIG &&
+	    atomic_read(&PMaster_enable) == 0 && !dsi_force_config) {
+		DISPERR("M6 DSI lk-handoff[config]: skip first DSI reconfig to preserve LK bootlogo state enabled=%d\n",
+			mipitx_enabled);
+		dsi_m6_sram_snapshot("lk-handoff-config-skip", module);
+		dsi_m6_dump_snapshot_limited("lk-handoff-config-skip", module,
+					     cmdq, &dump_count, 4);
+		goto done;
+	}
+	if ((mipitx_enabled) && (atomic_read(&PMaster_enable) == 0)) {
 		DISPDBG("mipitx is already init\n");
-		if (dsi_force_config)
+		if (M6_FORCE_FIRST_DSI_CONFIG_ON_LK_MIPITX &&
+		    !m6_force_first_lk_mipitx_config_done &&
+		    !dsi_force_config) {
+			m6_force_first_lk_mipitx_config_done = 1;
+			DISPERR("M6 DSI mipitx-decision[config-force-first]: enabled=%d PMaster=%d replay_phy=1 cmdq=%p\n",
+				mipitx_enabled, atomic_read(&PMaster_enable),
+				cmdq);
+			dsi_m6_sram_snapshot("config-force-first", module);
+			dsi_m6_dump_snapshot_limited("config-force-before",
+						     module, cmdq,
+						     &dump_count, 4);
+			DSI_PHY_clk_setting(module, NULL, dsi_config);
+			dsi_m6_dump_rt_cal("config-force-after-phy-clk-setting");
+			dsi_m6_dump_snapshot_limited("config-force-after-phy",
+						     module, cmdq,
+						     &dump_count, 6);
 			goto force_config;
-		else
+		} else if (dsi_force_config)
+			goto force_config;
+		else {
+			if (M6_BOOT_PLL_REPROG && !m6_boot_pll_reprog_done) {
+				m6_boot_pll_reprog_done = 1;
+				pr_err("M6BOOTPLL: reprog PLL from LK handoff, target pll=%u data_rate=%u pcw_before=0x%x\n",
+					dsi_config->PLL_CLOCK, dsi_config->PLL_CLOCK * 2,
+					DSI_INREG32(PMIPITX_DSI_PLL_CON2_REG, &DSI_PHY_REG[0]->MIPITX_DSI_PLL_CON2));
+				DSI_PHY_clk_change(module, NULL, dsi_config);
+				DSI_PHY_TIMCONFIG(module, NULL, dsi_config);
+				pr_err("M6BOOTPLL: reprog done, pcw_after=0x%x\n",
+					DSI_INREG32(PMIPITX_DSI_PLL_CON2_REG, &DSI_PHY_REG[0]->MIPITX_DSI_PLL_CON2));
+			}
 			goto done;
+		}
 	} else
 #endif
 	{
@@ -3243,6 +6625,7 @@ int ddp_dsi_config(DISP_MODULE_ENUM module, disp_ddp_path_config *config, void *
 		DISPMSG("===>Pmaster:CLK SETTING??==> clk:%d\n",
 			  _dsi_context[0].dsi_params.PLL_CLOCK);
 		DSI_PHY_clk_setting(module, NULL, dsi_config);
+		dsi_m6_dump_rt_cal("config-after-phy-clk-setting");
 	}
 
 force_config:
@@ -3261,14 +6644,30 @@ force_config:
 	if (dsi_config->mode != CMD_MODE
 	    || ((dsi_config->switch_mode_enable == 1) && (dsi_config->switch_mode != CMD_MODE))) {
 		DSI_Config_VDO_Timing(module, cmdq, dsi_config);
+		dsi_m6_dump_takeover("config-before-vmcmd-enqueue");
 		DSI_Set_VM_CMD(module, cmdq);
+		dsi_m6_dump_takeover("config-after-vmcmd-enqueue");
 	}
-	/* Enable clk low power per Line ; */
-	if (dsi_config->clk_lp_per_line_enable)
-		DSI_PHY_CLK_LP_PerLine_config(module, cmdq, dsi_config);
+		/* Enable clk low power per Line ; */
+		DISPERR("M6 DSI lp_per_line[config]: enable=%u mode=%u HSA/HBP/HFP/BLLP/HSTX=0x%x/0x%x/0x%x/0x%x/0x%x\n",
+			dsi_config->clk_lp_per_line_enable, dsi_config->mode,
+			INREG32(DDP_REG_BASE_DSI0 + 0x050),
+			INREG32(DDP_REG_BASE_DSI0 + 0x054),
+			INREG32(DDP_REG_BASE_DSI0 + 0x058),
+			INREG32(DDP_REG_BASE_DSI0 + 0x05c),
+			INREG32(DDP_REG_BASE_DSI0 + 0x064));
+		if (dsi_config->clk_lp_per_line_enable)
+			DSI_PHY_CLK_LP_PerLine_config(module, cmdq, dsi_config);
 
 
 done:
+	dsi_m6_sram_snapshot("config-done", module);
+	dsi_m6_lkgold_snapshot_once("post-config");
+	dsi_m6_dump_hs_video_limited("config-done", module, cmdq,
+				     &dump_count, 4);
+#ifndef CONFIG_FPGA_EARLY_PORTING
+	dsi_m6_dump_mipitx_block("config-done");
+#endif
 
 	return 0;
 }
@@ -3279,13 +6678,30 @@ int ddp_dsi_start(DISP_MODULE_ENUM module, void *cmdq)
 	int i = 0;
 	int g_lcm_x = disp_helper_get_option(DISP_OPT_FAKE_LCM_X);
 	int g_lcm_y = disp_helper_get_option(DISP_OPT_FAKE_LCM_Y);
+	static unsigned int dump_count;
 
 	DISPFUNC();
+	dsi_m6_takeover_hold_once("start-entry", module, cmdq, &dump_count);
+	if (M6_LK_HANDOFF_SKIP_FIRST_DSI_CONFIG &&
+	    atomic_read(&PMaster_enable) == 0 && !dsi_force_config) {
+		DISPERR("M6 DSI lk-handoff[start]: skip first DSI start to preserve LK bootlogo state\n");
+		dsi_m6_sram_snapshot("lk-handoff-start-skip", module);
+		dsi_m6_dump_snapshot_limited("lk-handoff-start-skip", module,
+					     cmdq, &dump_count, 4);
+		return 0;
+	}
 	if (module == DISP_MODULE_DSI0) {
 		DSI_Send_ROI(module, cmdq, g_lcm_x, g_lcm_y, _dsi_context[i].lcm_width,
 			     _dsi_context[i].lcm_height);
 		DSI_SetMode(module, cmdq, _dsi_context[i].dsi_params.mode);
 		DSI_clk_HS_mode(module, cmdq, true);
+		dsi_m6_sram_snapshot("start-after-hs", module);
+		dsi_m6_lkgold_snapshot_once("post-start");
+		dsi_m6_dump_snapshot_limited("start-after-hs", module, cmdq, &dump_count, 4);
+		dsi_m6_schedule_ddp_hs_video_edge(module, cmdq);
+#ifndef CONFIG_FPGA_EARLY_PORTING
+		dsi_m6_dump_mipitx_block("start-after-hs");
+#endif
 	}
 
 	return 0;
@@ -3331,8 +6747,18 @@ int ddp_dsi_stop(DISP_MODULE_ENUM module, void *cmdq_handle)
 /*TUI will use the api*/
 int dsi_enable_irq(DISP_MODULE_ENUM module, void *handle, unsigned int enable)
 {
-	if (module == DISP_MODULE_DSI0)
+	if (module == DISP_MODULE_DSI0) {
+		uint32_t before = INREG32(&DSI_REG[0]->DSI_INTEN);
+
 		DSI_OUTREGBIT(handle, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, FRAME_DONE_INT_EN, enable);
+		DISPERR("M6 DSI irq_enable: frame_done=%u handle=%p before=0x%x after=0x%x intsta=0x%x\n",
+			enable, handle, before, INREG32(&DSI_REG[0]->DSI_INTEN),
+			INREG32(&DSI_REG[0]->DSI_INTSTA));
+		dsi_m6_dump_irq_decode("enable_irq", INREG32(&DSI_REG[0]->DSI_START),
+				       INREG32(&DSI_REG[0]->DSI_STA),
+				       INREG32(&DSI_REG[0]->DSI_INTEN),
+				       INREG32(&DSI_REG[0]->DSI_INTSTA));
+	}
 
 	return 0;
 }
@@ -3344,6 +6770,10 @@ int ddp_dsi_switch_lcm_mode(DISP_MODULE_ENUM module, void *params)
 	LCM_DSI_MODE_SWITCH_CMD lcm_cmd = *((LCM_DSI_MODE_SWITCH_CMD *) (params));
 	int mode = (int)(lcm_cmd.mode);
 
+	DISPERR("M6 DSI switch_lcm_mode enter: module=%d cur=%d mode=%d cmd_if=%u addr=0x%x val=%02x/%02x/%02x/%02x\n",
+		module, dsi_currect_mode, mode, lcm_cmd.cmd_if, lcm_cmd.addr,
+		lcm_cmd.val[0], lcm_cmd.val[1], lcm_cmd.val[2], lcm_cmd.val[3]);
+	dsi_m6_dump_live("switch-lcm-enter");
 	if (dsi_currect_mode == mode) {
 		DISPMSG
 		    ("[ddp_dsi_switch_mode] not need switch mode, current mode = %d, switch to %d\n",
@@ -3367,15 +6797,59 @@ int ddp_dsi_switch_lcm_mode(DISP_MODULE_ENUM module, void *params)
 		wait_vm_cmd_done = false;
 		wait_event_interruptible(_dsi_wait_vm_cmd_done_queue[i], wait_vm_cmd_done);
 	}
+	dsi_m6_dump_live("switch-lcm-exit");
+	DISPERR("M6 DSI switch_lcm_mode exit: module=%d cur=%d mode=%d ret=0\n",
+		module, dsi_currect_mode, mode);
 	return 0;
 }
 
 int ddp_dsi_switch_mode(DISP_MODULE_ENUM module, void *cmdq_handle, void *params)
 {
 	int i = 0;
-	LCM_DSI_MODE_SWITCH_CMD lcm_cmd = *((LCM_DSI_MODE_SWITCH_CMD *) (params));
-	int mode = (int)(lcm_cmd.mode);
+	LCM_DSI_MODE_SWITCH_CMD lcm_cmd;
+	int mode;
+	static unsigned int m6_switch_mode_count;
+	unsigned int m6_seq = ++m6_switch_mode_count;
 
+	if (m6_seq <= 64) {
+		aee_sram_printk("M6K%02u enter mod=%d q=%p p=%p S=%x M=%x I=%x\n",
+			m6_seq, module, cmdq_handle, params,
+			INREG32(&DSI_REG[0]->DSI_START),
+			INREG32(&DSI_REG[0]->DSI_MODE_CTRL),
+			INREG32(&DSI_REG[0]->DSI_INTSTA));
+		DISPERR("M6 DSI switch_mode raw enter #%u module=%d handle=%p params=%p start=0x%x mode_ctrl=0x%x intsta=0x%x\n",
+			m6_seq, module, cmdq_handle, params,
+			INREG32(&DSI_REG[0]->DSI_START),
+			INREG32(&DSI_REG[0]->DSI_MODE_CTRL),
+			INREG32(&DSI_REG[0]->DSI_INTSTA));
+	}
+	if (!params) {
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u null-params\n", m6_seq);
+		DISPERR("M6 DSI switch_mode null params #%u module=%d handle=%p\n",
+			m6_seq, module, cmdq_handle);
+		return -EINVAL;
+	}
+
+	lcm_cmd = *((LCM_DSI_MODE_SWITCH_CMD *) (params));
+	mode = (int)(lcm_cmd.mode);
+	if (m6_seq <= 64)
+		aee_sram_printk("M6K%02u copied mode=%d if=%u addr=%x val=%x/%x/%x/%x\n",
+			m6_seq, mode, lcm_cmd.cmd_if, lcm_cmd.addr,
+			lcm_cmd.val[0], lcm_cmd.val[1], lcm_cmd.val[2],
+			lcm_cmd.val[3]);
+
+	DISPERR("M6 DSI switch_mode enter: module=%d handle=%p cur=%d mode=%d cmd_if=%u addr=0x%x val=%02x/%02x/%02x/%02x\n",
+		module, cmdq_handle, dsi_currect_mode, mode, lcm_cmd.cmd_if,
+		lcm_cmd.addr, lcm_cmd.val[0], lcm_cmd.val[1], lcm_cmd.val[2],
+		lcm_cmd.val[3]);
+	if (m6_seq <= 64)
+		aee_sram_printk("M6K%02u logged cur=%d mode=%d S=%x M=%x I=%x\n",
+			m6_seq, dsi_currect_mode, mode,
+			INREG32(&DSI_REG[0]->DSI_START),
+			INREG32(&DSI_REG[0]->DSI_MODE_CTRL),
+			INREG32(&DSI_REG[0]->DSI_INTSTA));
+	dsi_m6_dump_live("switch-dsi-enter");
 	if (dsi_currect_mode == mode) {
 		DISPMSG
 		    ("[ddp_dsi_switch_mode] not need switch mode, current mode = %d, switch to %d\n",
@@ -3393,36 +6867,144 @@ int ddp_dsi_switch_mode(DISP_MODULE_ENUM module, void *cmdq_handle, void *params
 
 	if (mode == 0) {	/* V2C */
 
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-before-set-switch i=%d S=%x M=%x I=%x\n",
+				m6_seq, i, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_SetSwitchMode(module, cmdq_handle, 0);	/*  */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-after-set-switch S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x130,
 			0x00001539 | (lcm_cmd.addr << 16) | (lcm_cmd.val[1] << 24));	/* DM = 0 */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-after-pkt S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_OUTREGBIT(cmdq_handle, DSI_START_REG, DSI_REG[i]->DSI_START, VM_CMD_START, 0);
 		DSI_OUTREGBIT(cmdq_handle, DSI_START_REG, DSI_REG[i]->DSI_START, VM_CMD_START, 1);
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-after-vmstart S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_MASKREG32(cmdq_handle, 0xF4020028, 0x1, 0x1);	/* reset mutex for V2C */
 		DSI_MASKREG32(cmdq_handle, 0xF4020028, 0x1, 0x0);	/*  */
 		DSI_MASKREG32(cmdq_handle, 0xF4020030, 0x1, 0x0);	/* mutext to cmd  mode */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u v2c-after-mutex S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		cmdqRecFlush(cmdq_handle);
 		cmdqRecReset(cmdq_handle);
 		cmdqRecWaitNoClear(cmdq_handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
 		DSI_SetMode(module, NULL, 0);
 	} else {		/* C2V */
 
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-before-set-mode i=%d S=%x M=%x I=%x\n",
+				m6_seq, i, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_SetMode(module, cmdq_handle, mode);
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-set-mode S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_SetSwitchMode(module, cmdq_handle, 1);	/* EXT TE could not use C2V */
-		DSI_MASKREG32(cmdq_handle, 0xF4020030, 0x1, 0x1);	/* mutext to video mode */
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-set-switch S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
+		if (cmdq_handle) {
+			DSI_MASKREG32(cmdq_handle, 0xF4020030, 0x1, 0x1);	/* mutext to video mode */
+			if (m6_seq <= 64)
+				aee_sram_printk("M6K%02u c2v-after-mutex-video S=%x M=%x I=%x\n",
+					m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+					INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+					INREG32(&DSI_REG[i]->DSI_INTSTA));
+		} else {
+			unsigned int m6_mutex_en = DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN);
+			unsigned int m6_mutex_mod = DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD);
+			unsigned int m6_mutex_sof = DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF);
+
+			DISPERR("M6 DSI switch_mode C2V: skip cpu-direct MUTEX0_SOF video write for WDT isolation en=%x mod=%x sof=%x\n",
+				m6_mutex_en, m6_mutex_mod, m6_mutex_sof);
+			if (m6_seq <= 64)
+				aee_sram_printk("M6K%02u c2v-skip-mutex-video E=%x O=%x F=%x S=%x M=%x I=%x\n",
+					m6_seq, m6_mutex_en, m6_mutex_mod, m6_mutex_sof,
+					INREG32(&DSI_REG[i]->DSI_START),
+					INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+					INREG32(&DSI_REG[i]->DSI_INTSTA));
+		}
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x200 + 0,
 			     0x00001500 | (lcm_cmd.addr << 16) | (lcm_cmd.val[0] << 24));
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-pkt0 S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x200 + 4, 0x00000020);
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-pkt1 S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_OUTREG32(cmdq_handle, (unsigned long)(DSI_REG[i]) + 0x60, 2);
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-vmstart-reg S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
 		DSI_Start(module, cmdq_handle);	/* ???????????????????????????????? */
-		DSI_MASKREG32(NULL, 0xF4020020, 0x1, 0x1);	/* release mutex for video mode */
-		cmdqRecFlush(cmdq_handle);
-		cmdqRecReset(cmdq_handle);
-		cmdqRecWaitNoClear(cmdq_handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
+		if (m6_seq <= 64)
+			aee_sram_printk("M6K%02u c2v-after-dsi-start S=%x M=%x I=%x\n",
+				m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+				INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+				INREG32(&DSI_REG[i]->DSI_INTSTA));
+		if (cmdq_handle) {
+			DSI_MASKREG32(NULL, 0xF4020020, 0x1, 0x1);	/* release mutex for video mode */
+			if (m6_seq <= 64)
+				aee_sram_printk("M6K%02u c2v-after-mutex-release S=%x M=%x I=%x\n",
+					m6_seq, INREG32(&DSI_REG[i]->DSI_START),
+					INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+					INREG32(&DSI_REG[i]->DSI_INTSTA));
+		} else {
+			unsigned int m6_mutex_en = DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_EN);
+			unsigned int m6_mutex_mod = DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_MOD);
+			unsigned int m6_mutex_sof = DISP_REG_GET(DISP_REG_CONFIG_MUTEX0_SOF);
+
+			DISPERR("M6 DSI switch_mode C2V: skip cpu-direct MUTEX0_EN release write for WDT isolation en=%x mod=%x sof=%x\n",
+				m6_mutex_en, m6_mutex_mod, m6_mutex_sof);
+			if (m6_seq <= 64)
+				aee_sram_printk("M6K%02u c2v-skip-mutex-release E=%x O=%x F=%x S=%x M=%x I=%x\n",
+					m6_seq, m6_mutex_en, m6_mutex_mod, m6_mutex_sof,
+					INREG32(&DSI_REG[i]->DSI_START),
+					INREG32(&DSI_REG[i]->DSI_MODE_CTRL),
+					INREG32(&DSI_REG[i]->DSI_INTSTA));
+		}
+		dsi_m6_dump_live("switch-dsi-after-c2v-start");
+		if (cmdq_handle) {
+			cmdqRecFlush(cmdq_handle);
+			cmdqRecReset(cmdq_handle);
+			cmdqRecWaitNoClear(cmdq_handle, CMDQ_SYNC_TOKEN_STREAM_EOF);
+		} else {
+			DISPERR("M6 DSI switch_mode C2V: cpu-direct path skip cmdq flush/reset/wait\n");
+		}
 	}
 	dsi_currect_mode = mode;
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++)
 		_dsi_context[i].dsi_params.mode = mode;
+	dsi_m6_dump_live("switch-dsi-exit");
+	DISPERR("M6 DSI switch_mode exit: module=%d cur=%d mode=%d ret=0\n",
+		module, dsi_currect_mode, mode);
 	return 0;
 }
 
@@ -3445,7 +7027,22 @@ int ddp_dsi_ioctl(DISP_MODULE_ENUM module, void *cmdq_handle, DDP_IOCTL_NAME ioc
 	int ret = 0;
 	/* DISPFUNC(); */
 	DDP_IOCTL_NAME ioctl = (DDP_IOCTL_NAME) ioctl_cmd;
+	static unsigned int m6_ioctl_count;
 	/* DISPMSG("[ddp_dsi_ioctl] index = %d\n", ioctl); */
+	if ((ioctl == DDP_SWITCH_DSI_MODE || ioctl == DDP_SWITCH_LCM_MODE) &&
+	    m6_ioctl_count < 32) {
+		m6_ioctl_count++;
+		aee_sram_printk("M6J%02u enter mod=%d cmd=%d q=%p p=%p S=%x M=%x I=%x\n",
+			m6_ioctl_count, module, ioctl, cmdq_handle, params,
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x014),
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x00c));
+		DISPERR("M6 DSI ioctl enter #%u module=%d cmd=%d cmdq=%p params=%p start=0x%x mode=0x%x intsta=0x%x\n",
+			m6_ioctl_count, module, ioctl, cmdq_handle, params,
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x000),
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x014),
+			DISP_REG_GET(DDP_REG_BASE_DSI0 + 0x00c));
+	}
 	switch (ioctl) {
 	case DDP_STOP_VIDEO_MODE:
 		{
@@ -3470,12 +7067,34 @@ int ddp_dsi_ioctl(DISP_MODULE_ENUM module, void *cmdq_handle, DDP_IOCTL_NAME ioc
 
 	case DDP_SWITCH_DSI_MODE:
 		{
+			if (m6_ioctl_count < 32) {
+				aee_sram_printk("M6J%02u before-switch-dsi mod=%d cmd=%d q=%p\n",
+					m6_ioctl_count, module, ioctl, cmdq_handle);
+				DISPERR("M6 DSI ioctl before switch_dsi module=%d cmdq=%p params=%p\n",
+					module, cmdq_handle, params);
+			}
 			ret = ddp_dsi_switch_mode(module, cmdq_handle, params);
+			if (m6_ioctl_count < 32) {
+				aee_sram_printk("M6J%02u after-switch-dsi ret=%d\n",
+					m6_ioctl_count, ret);
+				DISPERR("M6 DSI ioctl after switch_dsi ret=%d\n", ret);
+			}
 			break;
 		}
 	case DDP_SWITCH_LCM_MODE:
 		{
+			if (m6_ioctl_count < 32) {
+				aee_sram_printk("M6J%02u before-switch-lcm mod=%d cmd=%d q=%p\n",
+					m6_ioctl_count, module, ioctl, cmdq_handle);
+				DISPERR("M6 DSI ioctl before switch_lcm module=%d cmdq=%p params=%p\n",
+					module, cmdq_handle, params);
+			}
 			ret = ddp_dsi_switch_lcm_mode(module, params);
+			if (m6_ioctl_count < 32) {
+				aee_sram_printk("M6J%02u after-switch-lcm ret=%d\n",
+					m6_ioctl_count, ret);
+				DISPERR("M6 DSI ioctl after switch_lcm ret=%d\n", ret);
+			}
 			break;
 		}
 	case DDP_BACK_LIGHT:
@@ -3547,6 +7166,7 @@ int ddp_dsi_power_on(DISP_MODULE_ENUM module, void *cmdq_handle)
 	int ret = 0;
 
 	DISPFUNC();
+	dsi_m6_clkstate_marker("power-on-entry", module);
 
 	/* DSI_DumpRegisters(module,1); */
 	if (!s_isDsiPowerOn) {
@@ -3569,6 +7189,7 @@ int ddp_dsi_power_on(DISP_MODULE_ENUM module, void *cmdq_handle)
 					pr_warn("DISP/DSI " "DSI power manager API return FALSE\n");
 			}
 			s_isDsiPowerOn = true;
+			dsi_m6_clkstate_marker("power-on-ipoh", module);
 			DISPMSG("ipoh dsi power on return\n");
 			return DSI_STATUS_OK;
 		}
@@ -3605,9 +7226,11 @@ int ddp_dsi_power_on(DISP_MODULE_ENUM module, void *cmdq_handle)
 		DSI_EnableClk(module, NULL);
 
 		DSI_Reset(module, NULL);
+		dsi_m6_clkstate_marker("power-on-after-reset", module);
 #endif
 		s_isDsiPowerOn = true;
 	}
+	dsi_m6_clkstate_marker("power-on-exit", module);
 	/* DSI_DumpRegisters(module,1); */
 #ifdef CONFIG_LOG_JANK
       LOG_JANK_D(JLID_KERNEL_LCD_POWER_ON, "%s", "JL_KERNEL_LCD_POWER_ON");
@@ -3623,6 +7246,7 @@ int ddp_dsi_power_off(DISP_MODULE_ENUM module, void *cmdq_handle)
 	unsigned int value = 0;
 
 	DISPFUNC();
+	dsi_m6_clkstate_marker("power-off-entry", module);
 	/* DSI_DumpRegisters(module,1); */
 
 	if (s_isDsiPowerOn) {
@@ -3650,6 +7274,7 @@ int ddp_dsi_power_off(DISP_MODULE_ENUM module, void *cmdq_handle)
 		DSI_OUTREGBIT(NULL, DSI_TXRX_CTRL_REG, DSI_REG[0]->DSI_TXRX_CTRL, LANE_NUM, 0);
 		/* disable clock */
 		DSI_DisableClk(module, NULL);
+		dsi_m6_clkstate_marker("power-off-before-clk-disable", module);
 
 		if (module == DISP_MODULE_DSI0 || module == DISP_MODULE_DSIDUAL) {
 #ifdef CONFIG_MTK_CLKMGR
@@ -3669,10 +7294,12 @@ int ddp_dsi_power_off(DISP_MODULE_ENUM module, void *cmdq_handle)
 #else
 		ddp_set_mipi26m(0);
 #endif
+		dsi_m6_clkstate_marker("power-off-after-clk-disable", module);
 
 #endif
 		s_isDsiPowerOn = false;
 	}
+	dsi_m6_clkstate_marker("power-off-exit", module);
 	/* DSI_DumpRegisters(module,1); */
 	return DSI_STATUS_OK;
 }
