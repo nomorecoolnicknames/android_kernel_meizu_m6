@@ -119,6 +119,21 @@ static bool primary_present_fence_timeout_diag_logged;
 static bool primary_m6_direct_dsi_route_applied;
 static unsigned int primary_m6_cpu_rdma_log_count;
 static unsigned int primary_m6_smart_ovl_log_count;
+/* m681/m6 (2026-07-16): force DDP DECOUPLE. Ported from the 4.4 route where this
+ * is DEVICE-VERIFIED and USER-CONFIRMED to eliminate the display underflow tearing.
+ * In DIRECT_LINK, OVL0 must fetch EVERY layer from DRAM in lockstep with DSI
+ * scanout; MT6755's real-time budget at 1080x1920 is hrt_magicnum=2 fullscreen
+ * layers, but the Flyme HWC never demotes to GLES, so UI transitions run ~2x over
+ * budget -> OVL FIFO drains -> underflow -> horizontally shifted bands. No
+ * arbitration knob fixes this (greq/OSTD/BWL/ULTRA/EMI-scenario all tested inert):
+ * they redistribute DRAM access, they do not create bandwidth. DECOUPLE keeps
+ * composition IN HARDWARE (OVL -> WDMA0, asynchronous) and leaves ONE flat RGB888
+ * layer on the real-time path: ~2.02 -> ~0.379 GB/s. NOT force-GPU.
+ * 4.4 result: underflow over 10 transitions 36-59 -> 0; tearing gone.
+ * m6_dc_force=0 restores the previous DIRECT_LINK-held behaviour (live rollback via
+ * /sys/module/primary_display/parameters/m6_dc_force). */
+static int m6_dc_force = 1;
+module_param(m6_dc_force, int, 0644);
 static unsigned int primary_m6_ovl_release_log_count;
 static unsigned int primary_m6_present_update_log_count;
 static unsigned int primary_m6_present_timeout_log_count;
@@ -5774,6 +5789,30 @@ static int smart_ovl_try_switch_mode_nolock(void)
 
 	if (get_boot_mode() == FACTORY_BOOT)
 		return 0;
+
+	/* m681/m6: force DECOUPLE (see m6_dc_force comment near the top of this file).
+	 * MUST sit ABOVE the DISP_OPT_SMART_OVL early-return below, else it never runs.
+	 * Runs every frame (called from the trigger path) -> self-heals DC after
+	 * resume/SVP force a DL revert. Same guards as the stock path, and deliberately
+	 * NOT subject to the "only switch DL->DC when fps is stable" gate further down:
+	 * fps is by definition unstable during a transition, which is exactly when DC is
+	 * needed. That gate is why stock smart_ovl could never win this race. */
+	if (m6_dc_force) {
+		if (!primary_display_is_video_mode())
+			return 0;
+		if (pgc->state != DISP_ALIVE)
+			return 0;
+		if (pgc->session_mode != DISP_SESSION_DIRECT_LINK_MODE &&
+			pgc->session_mode != DISP_SESSION_DECOUPLE_MODE)
+			return 0;
+		if (pgc->session_mode != DISP_SESSION_DECOUPLE_MODE) {
+			if (primary_m6_diag_sample(&primary_m6_smart_ovl_log_count))
+				DISPERR("M6 DDP smart ovl: m6_dc_force -> switching to DECOUPLE\n");
+			do_primary_display_switch_mode(DISP_SESSION_DECOUPLE_MODE,
+				pgc->session_id, 0, NULL, 0);
+		}
+		return 0;
+	}
 
 	if (!disp_helper_get_option(DISP_OPT_SMART_OVL))
 		return 0;
