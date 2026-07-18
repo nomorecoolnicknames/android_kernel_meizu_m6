@@ -98,3 +98,59 @@ write, back up and hash preloader, GPT, and boot.
   pair, then retry only GPT/read-back and capture the full output. Do not use
   `--stock`, generic DA files, or unrelated preloaders as a substitute for
   that verification.
+
+## 2026-07-18 14:41 MSK controlled retry
+
+- **FACT** (`west`, 2026-07-18 14:41:13 MSK): USB enumerated as
+  `0e8d:0003 MediaTek Inc. MT6227 phone`; no mtkclient process was running
+  before the retry.
+- **FACT:** the local west checkout is
+  `/home/gun/mtkclient` at commit
+  `a6a7147e92907b2017027ae404b84101444ee502`; `printgpt` exposes the
+  `--ptype` and `--preloader` options.
+- **FACT:** the following bounded command was run with no write/erase/format
+  action:
+  `timeout 35 .venv/bin/python -u mtk.py printgpt --noreconnect --ptype kamakiri2 --preloader /home/gun/m6_preloader.bin`
+- **FACT:** the command ended with exit status 124 after repeated
+  `Couldn't get device configuration` messages and the reconnect hint; no
+  `GPT`, partition listing, DRAM success, or eMMC identification marker was
+  produced.
+- **LIMIT:** this retry does not distinguish USB timing, the selected exploit
+  mode, loader behavior, or storage initialization. It is not evidence that
+  eMMC is dead and does not establish device identity beyond the USB BROM
+  enumeration.
+- **NEXT SAFE STEP:** stop guessing payload modes. Recover the exact historical
+  successful bypass invocation or obtain a verified Meizu-compatible service
+  loader/auth pair, then repeat only GPT/read-back with complete captured output.
+
+## Historical invocation search result
+
+- **FACT** (bounded read-only artifact search, task `ad98c8216ba74a8c6`): no
+  primary timestamped record was found that ties the original Android serial,
+  BROM `0e8d:0003`, HW code `0x326`, an exact mtkclient command, and a verified
+  bypass/read success marker together in one invocation.
+- **FACT:** historical transcript matches for the Android serial describe ADB,
+  kernel, display, and flash work, not an mtkclient BROM/bypass command. They
+  therefore cannot establish the missing invocation.
+- **FACT:** a second local mtkclient checkout at `/home/n8n/mtkclient` was found
+  at commit `2c9f4d78601e2b223cacfed773a5c4cbb1808189`; this differs from the
+  verified west checkout commit recorded above. Neither checkout identity is
+  evidence of which revision performed the historical successful operation.
+- **REJECTED:** generic
+  `/home/n8n/mtkclient/mtkclient/Loader/MTK_AllInOne_DA_mt6590.bin` is not a
+  verified M6-specific service DA. Its parser-level support for `0x6755` proves
+  only SoC-family coverage, not board compatibility or a successful operation
+  on this handset.
+- **REJECTED:** `/home/n8n/mtkclient/Loader/Preloader/preloader_M6T.bin` is not
+  a substitute for the hash-verified stock preloader. It is only 1696 bytes and
+  identifies internally as `preloader_wt6750_66_b_n.bin`, not the stock
+  `preloader_wt6750s_66_s11_n.bin`.
+- **INFERENCE:** the latest attempts did not reproduce a fully evidenced
+  historical bypass context. The unresolved discriminators are USB state at
+  command start, exact flags, executable/checkout revision, and payload hashes;
+  the available evidence does not select one of them as the cause.
+- **NEXT SAFE STEP:** do not broaden filesystem searches or try further payload
+  variants blindly. If a narrowly identified shell transcript or saved stdout
+  becomes available, compare its command, cwd, checkout revision, USB VID:PID,
+  HW code, exploit markers, and first DA/auth transition. Until then, keep the
+  device boundary read-only and do not treat generic family loaders as verified.
