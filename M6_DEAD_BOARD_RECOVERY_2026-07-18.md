@@ -63,3 +63,18 @@ Keep retries read-only (`printgpt --preloader`) until GPT and stronger device
 identity are captured. If the DA check remains the blocker, use only a verified
 Meizu/MT6750 service loader matched to the stock firmware. Before any repair
 write, back up and hash preloader, GPT, and boot.
+
+## Retry result
+
+- **FACT:** the retry reader ran from 12:42:47 MSK for more than seven minutes while
+  the west host still listed USB `0e8d:0003`; `/home/gun/m6_gpt_readonly.log`
+  remained 39 bytes containing only its `reader start` line.
+- **FACT:** no GPT marker, partition listing, DRAM/eMMC success marker, or new
+  contact/error record was captured by that reader.
+- **LIMIT:** this is an inconclusive read-only probe, not evidence that eMMC is
+  dead. The available USB device node was root-owned and root-group-only, while
+  the retry process ran as root; the missing output therefore does not identify
+  whether the blocker was USB timing, loader behavior, or storage initialization.
+- **NEXT SAFE STEP:** stop this retry instance and do not escalate to any write.
+  A later attempt should use a verified compatible service-loader/auth setup and
+  capture the complete command output, still limited to GPT/read-back operations.
