@@ -78,3 +78,23 @@ write, back up and hash preloader, GPT, and boot.
 - **NEXT SAFE STEP:** stop this retry instance and do not escalate to any write.
   A later attempt should use a verified compatible service-loader/auth setup and
   capture the complete command output, still limited to GPT/read-back operations.
+
+## 2026-07-18 loader inventory
+
+- **FACT:** the west retry process is no longer present. The USB device still
+  enumerates as `0e8d:0003` when queried on west.
+- **FACT:** mtkclient identifies HW code `0x326` as
+  `MT6755/MT6750/M/T/S` and uses its XFlash configuration; the local checkout
+  is commit `a6a7147e92907b2017027ae404b84101444ee502`.
+- **FACT:** the stock firmware directory contains the verified 171264-byte
+  preloader, but no `.auth`, `.da`, or service-loader artifact.
+- **FACT:** the west mtkclient checkout contains generic DA binaries and many
+  unrelated preloaders, but no filename or artifact has been verified as a
+  Meizu M6 service DA/auth pair.
+- **LIMIT:** a generic DA or a preloader from another handset is not an
+  identity-preserving recovery path. It must not be selected merely because
+  its filename mentions MT6750/MT6755.
+- **NEXT SAFE STEP:** obtain a verified Meizu/MT6750 service-loader and auth
+  pair, then retry only GPT/read-back and capture the full output. Do not use
+  `--stock`, generic DA files, or unrelated preloaders as a substitute for
+  that verification.
