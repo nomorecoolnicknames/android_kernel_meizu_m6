@@ -1,0 +1,28 @@
+# LOS 15.1 (Android 8.1) build environment for meizu_m6 on west.
+# Toolchain image is the one already proven for these builds:
+#   androidforge/build-env:android-8.1  (OpenJDK 1.8.0_452, python2/3, gcc, ccache, bison, flex)
+#
+# Run:  docker compose -f docker-compose.m6build.yml run --rm m6build
+services:
+  m6build:
+    image: androidforge/build-env:android-8.1
+    container_name: m6-los151-build
+    working_dir: /src
+    # keep the build off the host's RAM cliff: 8 cores, ~13 GB free RAM, 99 GB swap
+    shm_size: "2gb"
+    volumes:
+      - /home/gun/m6rom/rom-lineage-15.1-meizu_m6-experimental:/src
+      - /home/gun/m6-out:/src/out          # out/ on NVMe, outside the source tree copy
+      - /home/gun/m6-ccache:/ccache
+    environment:
+      USE_CCACHE: "1"
+      CCACHE_DIR: /ccache
+      CCACHE_EXEC: /usr/bin/ccache
+      CCACHE_MAXSIZE: "50G"
+      JAVA_HOME: /opt/java/openjdk
+      LC_ALL: C
+      # Android 8.1 build servers are Java-heavy; cap heaps so we swap instead of OOM
+      ANDROID_JACK_VM_ARGS: "-Dfile.encoding=UTF-8 -XX:+TieredCompilation -Xmx4g"
+      _JAVA_OPTIONS: "-Xmx6g"
+      BUILD_JOBS: "6"
+    command: ["bash", "/src/build-m6.sh"]
