@@ -183,6 +183,109 @@ Compared against `kernel-3.18/arch/arm64/boot/dts/meizu_m6.dts`,
   self-consistent `gf-keys` + `gf-keys.kl` pair, so this must be changed as a
   pair, not one-sided.
 
+## 6a. INPUT — correction to §6 after reading the stock keylayouts
+
+The `gf-keys` vs `fp-keys` divergence in §6 is **narrower than it first looked**.
+
+- **FACT** (`/system/usr/keylayout/` on stock): stock ships **both**
+  `fp-keys.kl` *and* `gf-keys.kl`, plus `mtk-kpd.kl`, `mtk-tpd.kl`, `fts.kl`,
+  `fts_ts.kl`, `ACCDET.kl`, `Generic.kl`.
+- **FACT (contents):**
+  - `fp-keys.kl` = `key 158 FINGERPRINT` / `key 194 FINGERPRINT_LONG_PRESS`
+  - `gf-keys.kl` = `key 195 GESTURE` / `key 158 FINGERPRINT` /
+    `key 194 FINGERPRINT_LONG_PRESS`
+  - `mtk-kpd.kl` maps `key 102 HOME`, `key 158 BACK`, `key 139 MENU`,
+    `key 116 POWER`, `key 212 CAMERA`, …
+- **REJECTED (the §6 hypothesis as stated):** "our `gf-keys` name breaks the
+  stock keylayout" is wrong — stock ships a `gf-keys.kl` too, and it is a
+  superset of `fp-keys.kl`. Naming our device `gf-keys` is therefore **not** a
+  defect by itself.
+- **FACT (the real semantic difference):** on stock, keycode 158 coming from the
+  fingerprint device is labelled **`FINGERPRINT`**, not `BACK`. Only the keypad
+  device maps 158 to `BACK`. So stock does **not** turn an mBack tap into Back
+  via the keylayout; the fingerprint device emits FINGERPRINT /
+  FINGERPRINT_LONG_PRESS and **Flyme framework logic** decides the gesture.
+- **INFERENCE:** this explains why the LOS-3.18 "tap = Back via keylayout"
+  attempt was a dead end. LineageOS has no Flyme gesture layer, so the
+  behaviour must be produced somewhere else (driver-side mapping or a
+  userspace daemon) — the framework will not do it for us.
+
+## 6b. TOUCH
+
+- **FACT** (`m6cap/logs/dmesg.txt`): the stock touch driver is the FocalTech
+  `fts` family under `mtk-tpd` (`mtk-tpd: fts enter sleep mode successfully!`,
+  `mtk-tpd: set tp charger plug in para`, `TPD enter sleep`).
+- **FACT:** stock ships `fts.kl` and `fts_ts.kl` keylayouts alongside `mtk-tpd.kl`.
+
+## 6c. FINGERPRINT / TEE — the stock stack, fully enumerated
+
+This is the reference for the outstanding "MicroTrust TEE rejects the Goodix TA"
+blocker.
+
+- **FACT (running processes on stock):**
+  `/system/vendor/bin/teei_daemon` (uid system), `/system/bin/goodixfingerprintd`,
+  `/system/bin/fingerprintd`, kernel threads `teei_switch_thr`, `utgate_tlog`,
+  and IRQ thread `irq/300-goodix_`.
+- **FACT (device nodes):** `/dev/goodix_fp` (224,0), `/dev/teei_client` (230,0),
+  `/dev/teei_config` (229,0), `/dev/teei_fp` (227,0).
+- **FACT (properties):** `ro.mtk_microtrust_tee_support=1`,
+  `ro.flyme_softsim_mtee_enable=1`, **`soter.teei.init=INIT_OK`**,
+  `init.svc.teei_daemon=running`, `init.svc.goodixfpd=running`,
+  `init.svc.fingerprintd=running`.
+- **FACT (TEE-side logging):** the Goodix TA runs *inside* the TEE and logs
+  through uTgate, e.g.
+  `[uTgate LOG] [GF_TA][I][gf_ta][gf_ta_screen_on]` and
+  `[uTgate LOG] [GF_TA][I][gf_milan_an_series][gf_milan_an_series_set_mode]`.
+  The stock sensor family is therefore **`gf_milan_an_series`**.
+- **FACT (stock TA blobs, `/vendor/thh/`):** `fp_server_goodix` 1776149 B
+  (md5 `44e9846e49b105c8da0152693c854dec`), `fp_server_sunwave` 1197560 B,
+  `alipayapp` 1266607 B, `softsim` 1118207 B, `soter.raw` 7877052 B
+  (md5 `d606fa8942be1dae5f253c23e00d0c09`).
+- **FACT:** `/data/thh/` on stock contains a populated TEE storage tree
+  (`tee`, `tee_00` … `tee_0E`, `system`).
+- **FACT:** no fingerprints are enrolled on this spare handset either
+  (`/data/system/users/0/fpdata` empty), yet `soter.teei.init=INIT_OK` — so
+  INIT_OK alone never proved enrolment would work, on stock or on ours.
+
+### Our ROM vs stock — what is actually shipped
+
+- **REJECTED ("our ROM is missing the Goodix TA / the TEE daemon"):**
+  `vendor/meizu/meizu_m6/meizu_m6-vendor-blobs.mk` installs
+  `vendor/thh/fp_server_goodix`, `vendor/thh/soter.raw`, `vendor/thh/alipayapp`,
+  `vendor/thh/softsim`, `vendor/bin/teei_daemon`, `bin/goodixfingerprintd`,
+  `lib64/libgoodixfingerprintd_binder.so` and `lib64/hw/fingerprint.default.so`.
+  The whole stack is present.
+- **REJECTED ("we ship the M2 Note TEE blobs"):** the `vendor/meizu/m2note/`
+  tree does contain a foreign `fp_server` (1409430 B) and `uTAgent`, but the M6
+  product pulls from `vendor/meizu/meizu_m6/`, which carries the genuine M6
+  blobs. The m2note tree is not the source for this device.
+- **FACT (version skew, the one real difference found):** our blobs were
+  harvested from **Flyme 7.1.2.0G**, the live reference runs **Flyme 6.2.0.0RU**,
+  and the builds differ:
+  `fp_server_goodix` ours 1776196 B / md5 `03e190c37b77b7d9f233f38088ef85ff`
+  vs stock 1776149 B / md5 `44e9846e…`; `soter.raw` same size 7877052 B but
+  ours md5 `b84be09f888775e6355f96a7610fe052` vs stock `d606fa89…`.
+- **HYPOTHESIS A (TA ↔ TEE-OS version skew):** the TEE OS lives in the
+  `tee1`/`tee2` partitions, which our flashes do not replace. A TA built for one
+  Flyme generation may be rejected by a TEE OS from another, which would present
+  exactly as the observed `Error:-1` with `challenge=0`.
+  **Falsify by:** recording the Flyme build that owns the target's `tee1`, then
+  retrying enrolment with the `fp_server_goodix` harvested from *that same*
+  build. If a matched pair still fails, this is refuted.
+- **HYPOTHESIS B (SELinux):** stock boots
+  `androidboot.selinux=permissive` (§3), while our LOS build does not. A denial
+  around `teei_daemon` / `goodixfingerprintd` / `/dev/teei_fp` would block TA
+  loading without any kernel-level fault.
+  **Falsify by:** booting our build with SELinux permissive and retrying
+  enrolment; if it still fails, SELinux is not the gate. Also collect
+  `dmesg | grep avc` during an enrolment attempt.
+- **HYPOTHESIS C (sensor family mismatch):** stock drives
+  `gf_milan_an_series`. If our TA/driver pairing assumes a different Goodix
+  family, the challenge exchange can fail.
+  **Falsify by:** grepping our TEE log for the family string during enrolment;
+  a matching `gf_milan_an_series` line refutes it.
+- These three are **not yet distinguished** by any evidence in this capture.
+
 ## 7. What was NOT obtained
 
 - **LIMIT:** `/proc/config.gz` absent → no live stock kernel config.
@@ -199,6 +302,29 @@ Compared against `kernel-3.18/arch/arm64/boot/dts/meizu_m6.dts`,
 
 1. Boot our kernel on a working M6, open the camera, and capture the same
    `clk_summary` / `clk_dump` / `pg_isp` snapshot; diff against §4.1.
-2. Decide the `gf-keys` → `fp-keys` rename together with its keylayout.
+2. Do **not** rename `gf-keys` (§6a refutes that need). Instead decide where the
+   mBack gesture logic lives on LOS, since no Flyme framework layer exists.
 3. Validate panel work against `ili9881c_hd_dsi_txd`.
 4. Treat 16 MiB as the real boot partition size.
+5. For the fingerprint blocker, separate hypotheses A/B/C in §6c — the cheapest
+   first pass is a permissive-SELinux boot plus `avc` collection during an
+   enrolment attempt, because that is one boot and needs no new blobs.
+6. Consider harvesting `fp_server_goodix` / `soter.raw` from the Flyme build
+   that matches the target's `tee1`, so the TA and TEE OS come from one release.
+
+## 9. Overall verdict on our kernel (as of this capture)
+
+- **FACT:** on every parameter this capture could compare directly — camera
+  GPIO pinmux, camera clock input names, IMX278 lane count, i2c address,
+  pclk/linelength/framelength and grab windows — our tree already matches the
+  stock DTB and the stock driver's own printouts. No divergence was found.
+- **FACT:** the userspace/TEE fingerprint stack is fully present in our vendor
+  blobs; nothing is missing there.
+- **INFERENCE:** the "did we build a bad kernel?" question is **not** answered
+  "yes" by anything in this capture. The remaining suspects are not
+  mis-transcribed constants but (a) runtime clock/power sequencing that only a
+  camera-active capture from our own build can show, and (b) release skew plus
+  SELinux around the TEE.
+- **LIMIT:** this is a comparison against a *stock* handset. It cannot by itself
+  prove our kernel is correct — it only removes the static-configuration
+  hypotheses listed above.
