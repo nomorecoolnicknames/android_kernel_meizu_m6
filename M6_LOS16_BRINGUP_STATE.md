@@ -204,3 +204,11 @@ Method: `mka nothing` + `mka selinux_policy` per device в ОТДЕЛЬНЫХ OU
    m681 4.4 headers, acceptable for bring-up). SFOS/source override lanes untouched.
    The kernel.mk patch must go into the forge-build patches overlay for
    reproducibility (like the 15.1 AOSP patches).
+   **8-CORRECTION (true root cause, FACT):** pointing the lanes' TARGET_KERNEL_SOURCE
+   at the real source was NOT enough — soong.variables still exported "" because
+   `vendor/lineage/config/BoardConfigKernel.mk:44` FORCE-CLEARS TARGET_KERNEL_SOURCE
+   whenever TARGET_PREBUILT_KERNEL is set (upstream Lineage16 behaviour; upstream
+   prebuilt-kernel devices simply never build header consumers). Second patch:
+   clear only when `$(wildcard $(TARGET_KERNEL_SOURCE)/Makefile)` is empty.
+   Both lineage patches (kernel.mk KERNEL_BIN honor + BoardConfigKernel wildcard
+   guard) → forge-build patches overlay for reproducibility.
