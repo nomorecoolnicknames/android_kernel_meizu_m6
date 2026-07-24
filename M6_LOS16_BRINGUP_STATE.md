@@ -235,3 +235,15 @@ in-tree jdk9, no Jack). Location: `/home/gun/m6-out16/target/product/meizu_m6/`.
   `62563129…ae01471` == local == build) + `boot-16.0-20260724-meizu_m6.img`
   (9 166 848 B, sha256 `bebfc1cd…d35c47`). Local staging kept at
   `/srv/forge/m6-out-release/`. Verified via rclone hashsum sha256.
+
+## ✅ 2026-07-24 16:42 UTC — GREEN BUILD #2: LineageOS 16.0 for m681
+**`lineage-16.0-20260724-UNOFFICIAL-m681.zip`** — 732 778 753 B, sha256
+`4ef6be1a73fdafc178f641d2181d0df32185e8269fafb5b2d4bfb0b05a2e486c`, unzip -t OK.
+Full bacon 2:49:42 (shared ccache with m6; out=/src/out-m681). ZERO extra
+blockers — the family prep (NAND vars, LINEAGE_BUILD, in-tree kernel prebuilt,
+sepolicy types, kernel-source-for-headers) was sufficient.
+- boot.img 9 234 432 B; **kernel identity verified (FACT):** kernel-in-boot ==
+  pinned m681 4.4 prebuilt `e8128b40…21bbe78` (in-tree copy of the local 4.4 artifact).
+- Location: `/home/gun/m6rom16/rom/out-m681/target/product/m681/`.
+- NOT yet: flashed/booted (m681 bench device is on container 228), uploaded, pushed.
+- M6T full bacon launched next (out=/src/out-m6t).
