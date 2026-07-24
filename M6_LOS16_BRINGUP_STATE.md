@@ -189,3 +189,18 @@ Method: `mka nothing` + `mka selinux_policy` per device в ОТДЕЛЬНЫХ OU
 - Оставшийся риск для полных сборок m681/M6T: C++ device-специфичных модулей
   (напр. M6T camera_compat) и packaging — проявится только в полном bacon,
   который пойдёт последовательно после зелёного m6.
+8. **ninja 57% (38 min): `generated_kernel_includes` FAILED** — LOS 16.0's new
+   vendor/lineage soong genrule runs `make -C $(TARGET_KERNEL_SOURCE) headers_install`;
+   our prebuilt lanes used the fake `/dev/null/forge-prebuilt-kernel` → `make -C ''`.
+   FIX (uniform, keeps the PINNED prebuilt kernels — no image change):
+   (a) transferred the real m6 kernel source (kernel-meizu_M6-N-ex6/kernel-3.18,
+   3.18.140, 148M tar) to west → `kernel/meizu/meizu_m6/kernel-3.18`;
+   (b) 5-line patch to vendor/lineage/build/tasks/kernel.mk: when kernel source
+   EXISTS but TARGET_KERNEL_CONFIG is empty, honor TARGET_PREBUILT_KERNEL
+   (upstream leaves KERNEL_BIN empty there → broken kernel copy rule);
+   (c) pointed the default (prebuilt) lanes of ALL THREE devices'
+   TARGET_KERNEL_SOURCE at the shared 3.18 source (headers-only role; m681's 4.4 /
+   M6T's stock prebuilt images unchanged; uapi family-shared — noted impurity for
+   m681 4.4 headers, acceptable for bring-up). SFOS/source override lanes untouched.
+   The kernel.mk patch must go into the forge-build patches overlay for
+   reproducibility (like the 15.1 AOSP patches).
