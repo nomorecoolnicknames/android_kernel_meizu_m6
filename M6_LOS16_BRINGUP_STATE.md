@@ -168,3 +168,24 @@ Known caveats (documented, not blockers):
    cmdline) so assertions have no runtime delta; flag auto-errors on user builds.
    REVISIT before any enforcing build. → `mka selinux_policy` GREEN (48 s).
    Iteration trick: `mka selinux_policy` alone = 1-2 min/round instead of 25 min.
+
+## 2026-07-24 — family really-buildable pass (m681 + M6T через parse+sepolicy)
+User: «адаптируй чтобы было реально собрать остальные устройства». Honest scope:
+parse+sepolicy green = дерево консистентно (модули/файлы/типы находятся); полный
+компилятор-прогон каждого устройства — отдельный этап после зелёного m6.
+Method: `mka nothing` + `mka selinux_policy` per device в ОТДЕЛЬНЫХ OUT_DIR
+(`out-check-m681`, `out-check-m6t`) параллельно бегущему m6-bacon.
+
+- **m681:** blocker — Pie: `MTD ... BOARD_NAND_PAGE_SIZE is deprecated` (error, not
+  warning) → закомментированы BOARD_NAND_{PAGE,SPARE}_SIZE в
+  mt6755-common/BoardConfigCommon.mk (девайс eMMC; строки — карго-культ старых MTK).
+  → parse GREEN (1:18), selinux_policy GREEN (57 s).
+- **M6T:** blocker — те же missing `lib_driver_cmd_mt66xx`/`libwifi-hal-mt66xx`, что
+  ловил M6T-хэндофф на 15.1: device-guard'ы не знали M6T (эти правки жили только в
+  ЛОКАЛЬНОМ дереве, west их не видел). FIX: добавлен M6T в guard'ы
+  `m3_meizu_m6-common/Android.mk` (wpa_supplicant static lib) и
+  `vendor/mediatek/Android.mk` (wifi_hal branch meizu_m6 m681 → + M6T).
+  → parse GREEN (1:19), selinux_policy GREEN (56 s).
+- Оставшийся риск для полных сборок m681/M6T: C++ device-специфичных модулей
+  (напр. M6T camera_compat) и packaging — проявится только в полном bacon,
+  который пойдёт последовательно после зелёного m6.
