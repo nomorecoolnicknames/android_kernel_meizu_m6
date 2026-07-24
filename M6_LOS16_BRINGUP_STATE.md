@@ -110,3 +110,8 @@ build **that version** for the M6. This continues the M6 work; 15.1 is already g
   hidl/audio/include/{VersionUtils.h,common/}, 2 .forge-disabled bp).
   NB: 15.1 build had ALWAYS used the *pie* branch of lenovo-k4note vendor/mediatek —
   so these edits apply to the Pie tree without rebase.
+- **MILESTONE 2026-07-24 ~10:20 UTC: config phase CLEAN.** After the vendor/mediatek
+  port, kati+soong parse the whole product with no errors; ninja is compiling
+  (93 521 targets, cold ccache, 8 cores — expect hours). Next risk class:
+  C++ compile errors in MTK shims vs Pie headers, then sepolicy neverallows,
+  then image packaging.
