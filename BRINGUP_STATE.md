@@ -17920,3 +17920,72 @@ echo m6_dsi_pll_change:240:revert > /d/mtkfb
 dumpsys SurfaceFlinger | grep refresh=
 # Expect: 17295053 ns (57.82 fps, HAL under-measurement)
 ```
+
+## 2026-07-24 M6T Stage 3: green full source-kernel LineageOS build
+
+Patch category: **DOCUMENTATION / BUILD VERIFICATION**. This entry is for the
+M6T worktree on branch `work/m6t-stage0-20260724`; it does not change M6/M6T
+kernel code and no device was flashed.
+
+### Proven build result (FACT)
+
+- FACT: M6T kernel source commit:
+  `2357ab6c1ca69b25fc21e3434ca3a43891a1fcaa`.
+- FACT: launcher recipe:
+  `/srv/forge/android/meizu_m6t/m6t-source-kernel-rom-build.yaml`.
+- FACT: recipe/result identity:
+  `37c03f098397bf92585b0188bade8892780e4ef846ebe0c637a84848b8e4fe43`.
+- FACT: immutable result root:
+  `/srv/forge/ephemeral-builds/37c03f098397bf92585b0188bade8892780e4ef846ebe0c637a84848b8e4fe43`.
+- FACT: launcher recorded `SUCCESS`, `exit_code=0` at
+  `2026-07-24T19:54:53Z`, with 238,728 regular artifacts.
+- FACT: `artifacts.json` sha256:
+  `cc747b190e19c73d0c24fe6cef17c611e577cf6e9610f8082e1e2e3a083bb73f`.
+- FACT: launcher source provenance records ROM HEAD
+  `0e6ba46ea766a3ab724417cfc53737179b196199`, git-status sha256
+  `e8b70fc724010e647fcff3d28ff9be316e77315b54018a6872ab83419f74721c`,
+  and working-tree sha256
+  `c10512e084baf5c403774c7ef94c95c04ae945f20472474f8ea9f8874af695f1`.
+
+Final artifact hashes:
+
+- FACT: `target/product/M6T/lineage-15.1-20260724-UNOFFICIAL-M6T.zip`,
+  558,858,523 bytes, sha256
+  `96ba61ee71fb6423db43bbb7a6edd08b53818c497317061d0b6929ea65af2e55`.
+- FACT: `target/product/M6T/boot.img`, 9,039,872 bytes, sha256
+  `2aa31aed919447fbd7b3e83717ca4b58625497a3dd25127e21062b4e6a7d8138`.
+- FACT: `target/product/M6T/recovery.img`, 14,678,016 bytes, sha256
+  `162c09c9ea00d880cf4e926759079993d104782450d531ff2cd3b84abc775635`.
+- FACT: `target/product/M6T/kernel` and
+  `target/product/M6T/obj/KERNEL_OBJ/arch/arm64/boot/Image.gz-dtb` are both
+  7,759,977 bytes with sha256
+  `59617e8d830f1b0a116c25c163308bb99cec301a4b2d811bed1484079ea297b7`.
+
+### Packaged-kernel provenance (FACT / INFERENCE)
+
+- FACT: the final `.config` contains
+  `CONFIG_CUSTOM_KERNEL_LCM="hx83102b_hd_dsi_vdo_lide"`; sha256
+  `d62f2dc24711b9ee9cb718d3c0625e1c0a2a54e851999e06a97af3f765379107`.
+- FACT: the final `System.map` contains
+  `ffffffc00135a098 D hx83102b_hd_dsi_vdo_lide_lcm_drv`; sha256
+  `d9c01cf9e3c0351125f4b3b8f2ff1b7b03785c9f279bc5a79cf49cbdfc6740e7`.
+- FACT: the kernel extracted from `boot.img`, `target/product/M6T/kernel`,
+  and the `KERNEL_OBJ` `Image.gz-dtb` have identical sizes and hashes.
+- FACT: `boot.img` extracted from the final zip exactly matches the top-level
+  `boot.img` hash.
+- INFERENCE: the ROM package therefore contains the intended M6T source-built
+  kernel with the reverse-ported HX83102B LCM, not the stock prebuilt.
+- NOTE: the integration build kernel hash is not expected to equal the prior
+  standalone-build hash `5ffd9688...`; final-package provenance is based on
+  the byte-identical integrated copies above.
+
+### Runtime boundary and next gate
+
+- FACT: no M6T device was attached and nothing was flashed in this stage.
+- REJECTED: successful compilation and packaging do not establish boot or
+  subsystem functionality and do not make the ROM release-ready.
+- NEXT: with an M6T attached, verify the exact device and flash target, obtain
+  explicit human confirmation, flash the selected artifact, prove the boot
+  partition by raw readback hash, then collect cold-boot evidence and validate
+  panel, touch, cameras, fingerprint, sensors, modem, audio, and
+  suspend/resume.
