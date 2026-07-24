@@ -245,7 +245,7 @@ CONFIG_MTK_LCM=y
 # in-tree source build we pick the closest available ili9881c driver so the
 # build wires; panel init will likely need RE-porting from stock vmlinux to
 # match the actual 720x1440 18:9 module. See KERNEL_REVERSE_HANDOFF.md §Stop.
-CONFIG_CUSTOM_KERNEL_LCM="ili9881p_hd_dsi_txd"
+CONFIG_CUSTOM_KERNEL_LCM="hx83102b_hd_dsi_vdo_lide"
 CONFIG_MTK_LENS=y
 CONFIG_MTK_LENS_DUMMYLENS_SUPPORT=y
 CONFIG_MTK_LENS_DW9714AF_SUPPORT=y

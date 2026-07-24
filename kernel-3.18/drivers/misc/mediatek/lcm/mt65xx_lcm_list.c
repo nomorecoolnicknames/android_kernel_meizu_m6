@@ -23,6 +23,12 @@ extern LCM_DRIVER ili9881p_hd_dsi_txd_lcm_drv;
 #if defined(ILI9885_FHD_DSI_VDO_TXD1)
 extern LCM_DRIVER ili9885_fhd_dsi_vdo_txd_lcm_drv1;
 #endif
+#if defined(HX83102B_HD_DSI_VDO_LIDE)
+/* M6T stock panel driver — RE-ported from stock vmlinux
+ * (lcm_init/init_power/resume/suspend cluster at 0xffffffc0004e70xx).
+ * See /srv/forge/android/meizu_m6t/KERNEL_REVERSE_HANDOFF.md §Stage-1. */
+extern LCM_DRIVER hx83102b_hd_dsi_vdo_lide_lcm_drv;
+#endif
 /* #include <mach/mt_gpio.h> */
 #endif
 LCM_DSI_MODE_CON lcm_dsi_mode;
@@ -42,6 +48,9 @@ LCM_DSI_MODE_CON lcm_dsi_mode;
 LCM_DRIVER *lcm_driver_list[] = {
 #if defined(ILI9881P_HD_DSI_TXD)
 	&ili9881p_hd_dsi_txd_lcm_drv,
+#endif
+#if defined(HX83102B_HD_DSI_VDO_LIDE)
+	&hx83102b_hd_dsi_vdo_lide_lcm_drv,
 #endif
 #if defined(ILI9885_FHD_DSI_VDO_TXD1)
 	&ili9885_fhd_dsi_vdo_txd_lcm_drv1,
