@@ -247,3 +247,20 @@ sepolicy types, kernel-source-for-headers) was sufficient.
 - Location: `/home/gun/m6rom16/rom/out-m681/target/product/m681/`.
 - NOT yet: flashed/booted (m681 bench device is on container 228), uploaded, pushed.
 - M6T full bacon launched next (out=/src/out-m6t).
+
+## ✅✅✅ 2026-07-24 20:08 UTC — GREEN BUILD #3: M6T → ВСЯ СЕМЬЯ mt6750/mt6755 НА LOS 16.0
+**`lineage-16.0-20260724-UNOFFICIAL-M6T.zip`** — 653 409 054 B, sha256
+`0f332e7c97c68f65f709f39a310ec867a47f79ae27d6de3c405c9a3dc7c9e481`, unzip -t OK.
+Full bacon 2:44:57 (out=/src/out-m6t). ZERO extra blockers (как и m681).
+- boot.img 9 836 544 B; **kernel identity (FACT):** kernel-in-boot == M6T STOCK
+  prebuilt `e45de551…a474e60c` (ровно sha256 из M6T_DUMP_ANALYSIS/HANDOFF).
+
+### Family scoreboard (one tree, `/home/gun/m6rom16/rom`)
+| device | zip | sha256 | kernel pin | build time |
+|---|---|---|---|---|
+| meizu_m6 | lineage-16.0-20260724-UNOFFICIAL-meizu_m6.zip 656 458 607 B | 62563129… | #209 3.18.140 `57a13343…` ✅ | 1:47:36 |
+| m681 | …-m681.zip 732 778 753 B | 4ef6be1a… | 4.4 artifact `e8128b40…` ✅ | 2:49:42 |
+| M6T | …-M6T.zip 653 409 054 B | 0f332e7c… | stock `e45de551…` ✅ | 2:44:57 |
+
+m6 uploaded to gdrive:ReMeizu/M6-LOS16/. m681/M6T zips NOT uploaded yet.
+Nothing flashed yet (human-confirmed gate). Sources/patches NOT pushed yet.
