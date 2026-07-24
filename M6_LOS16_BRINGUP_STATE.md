@@ -65,3 +65,34 @@ build **that version** for the M6. This continues the M6 work; 15.1 is already g
 - Heavy surfaces to re-check for Pie: `camera_compat/`, `manifest.xml` (VINTF),
   fingerprint HAL (`init.fingerprint.rc`, `microtrust.rc`), `rild-mtk-hidl.rc`,
   `overlay/`, `prebuilt-kernel/Image.gz-dtb`.
+
+## 2026-07-24 — sync DONE, port started, build blocker log
+- **Sync complete (FACT):** 405 projects + `vendor/mediatek@pie` (1ab7db9, same rev as 15.1)
+  + 4 chromium-webview LFS projects (git-lfs installed on west; `repo sync` left 133-byte
+  LFS pointers — needed explicit `git lfs pull` per project; apks now 90–329 MB). Tree 52 GB.
+- **Port:** m6 dirs copied from 15.1 tree (`device/meizu/{meizu_m6,m3_meizu_m6-common,
+  meizu_mt675x-common}`, `vendor/meizu/meizu_m6` 492M). Version bumped in the
+  AUTHORITATIVE `lineage.mk` (NOT `lineage_meizu_m6.mk` — that file is a stale 172-line
+  twin; lineage.mk 175-line has the newer sensor-xml/zygote64/rild fixes).
+- **Build wrappers:** `/home/gun/m6rom16/rom/build-m6-16.sh` +
+  `/home/gun/docker-compose.m6build16.yml` (same android-8.1 image; NO Jack/Temurin,
+  in-tree jdk9; out=/home/gun/m6-out16, ccache16).
+
+### Blocker log (sequential, each FACT with fix)
+1. **`lunch`: "Can not locate config makefile for product lineage_meizu_m6"** —
+   Pie derives the product NAME from the *basename* of a path-only PRODUCT_MAKEFILES
+   entry (`build/make/core/product_config.mk` ~195); our AndroidProducts.mk pointed to
+   `lineage.mk` → product named "lineage". FIX: explicit
+   `lineage_meizu_m6:$(LOCAL_DIR)/lineage.mk` name:path form. → lunch OK,
+   `LINEAGE_VERSION=16.0-20260724-UNOFFICIAL-meizu_m6`, PLATFORM_VERSION=9.
+2. **soong: `android.hardware.bluetooth@1.0-service.mtk` depends on undefined module
+   "libnvram"** — in 15.1 the soong module `libnvram` came from
+   `vendor/meizu/m2note/Android.bp` (Lenovo tree we did NOT copy). Android.mk prebuilts
+   are invisible to soong. FIX: new `vendor/meizu/meizu_m6/Android.bp` with
+   `cc_prebuilt_library_shared { name: "libnvram", proprietary, both multilib }`;
+   removed the 2 libnvram.so copy lines from meizu_m6-vendor-blobs.mk (dup-install).
+   NOTE: `check_elf_files` property does NOT exist in Pie soong (Q-ism) — rejected.
+3. **kati: `flyme-res: Must specify LOCAL_SDK_VERSION or LOCAL_PRIVATE_PLATFORM_APIS`**
+   (Pie sdk_check.mk) — FIX: `LOCAL_PRIVATE_PLATFORM_APIS := true` in
+   `m3_meizu_m6-common/flyme/res/Android.mk`. Scanned all device/vendor meizu Android.mk:
+   no other java/apk module lacks the flag.
