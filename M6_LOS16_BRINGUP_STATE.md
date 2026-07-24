@@ -96,3 +96,17 @@ build **that version** for the M6. This continues the M6 work; 15.1 is already g
    (Pie sdk_check.mk) — FIX: `LOCAL_PRIVATE_PLATFORM_APIS := true` in
    `m3_meizu_m6-common/flyme/res/Android.mk`. Scanned all device/vendor meizu Android.mk:
    no other java/apk module lacks the flag.
+4. **kati: `OUT is obsolete. Use OUT_DIR instead`** in `m3_meizu_m6-common/Android.mk:7`
+   (`$(shell mkdir -p $(OUT)/obj/KERNEL_OBJ/usr)`) — Pie kati bans `$(OUT)`.
+   FIX: `$(PRODUCT_OUT)` (same path). Only occurrence in our trees (grep-verified).
+5. **kati: `libwifi-hal missing libwifi-hal-mt66xx`** — first hit BEFORE the
+   vendor/mediatek local-work port (below); the guard fix arrives with that patch.
+- **vendor/mediatek local meizu work PORTED (FACT):** the 15.1 tree carried 41 modified
+  files (+2050/−322: Android.mk device guards, hidl audio/bt/light/sensor/thermal fixes,
+  symbols/{camera,gui,ui}.cpp shims, combo_loader, wlan wifi_hal) as UNCOMMITTED changes
+  on the same `1ab7db9@pie` base both trees use. Exported `git diff` →
+  `/home/gun/vendor-mediatek-m6-localwork.patch` (3361 lines), `git apply` into the 16.0
+  checkout = clean. Plus 7 untracked files copied (symbols/{binder,icu,sensor}.cpp,
+  hidl/audio/include/{VersionUtils.h,common/}, 2 .forge-disabled bp).
+  NB: 15.1 build had ALWAYS used the *pie* branch of lenovo-k4note vendor/mediatek —
+  so these edits apply to the Pie tree without rebase.
