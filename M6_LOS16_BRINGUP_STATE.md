@@ -115,3 +115,38 @@ build **that version** for the M6. This continues the M6 work; 15.1 is already g
   (93 521 targets, cold ccache, 8 cores — expect hours). Next risk class:
   C++ compile errors in MTK shims vs Pie headers, then sepolicy neverallows,
   then image packaging.
+
+## 2026-07-24 — family universality: the 16.0 tree now hosts m6 + m681 + M6T
+User directive: the new tree must be universal for the mt6750/mt6755 family.
+All changes ADD-only (running m6 ninja untouched). All three lunch targets verified
+on Pie via throwaway-OUT_DIR dumpvars (`docker compose run --name m6-lunchcheck*`):
+- `lineage_meizu_m6` → 16.0-…-meizu_m6 ✅  `lineage_m681` → 16.0-…-m681 ✅
+- `lineage_M6T` → 16.0-…-M6T ✅ (PLATFORM_VERSION=9 all three)
+
+Done:
+- **m681:** device (1.2M) + `mt6755-common` (56K) + vendor (430M) copied from west 15.1
+  tree. FIXES: (a) default prebuilt-kernel lane pointed at an ABSOLUTE local-host path
+  (`/home/n8n/mt6755-49/b-4.4/out-local/...Image.gz-dtb` — the 4.4-kernel effort
+  artifact); copied that artifact in-tree → `device/meizu/m681/prebuilt-kernel/`
+  (sha256 e8128b40…) and repointed BoardConfig (same class of bug as the old m6
+  absolute-path lesson). (b) `LINEAGE_BUILD := m681` was never set (m6/M6T set it
+  explicitly; Pie vendor/lineage does not default it) → version suffix was empty.
+- **M6T:** device (62M incl. prebuilt kernel) + vendor (320M) did NOT exist on west —
+  transferred from the LOCAL 15.1 tree (203M tar over LAN). FIXES: AndroidProducts.mk
+  had the same Pie basename bug as m6 → explicit `lineage_M6T:$(LOCAL_DIR)/lineage.mk`;
+  version bumped 15.1→16.0 in its lineage.mk. (M6T bring-up itself stays with the
+  other agent; this tree just makes it buildable.)
+- **Scans clean:** no `$(OUT)` refs, no java modules missing sdk flags, no Android.bp
+  (soong-name) collisions in the new dirs.
+
+Known caveats (documented, not blockers):
+- Source-kernel lanes keep absolute `/srv/forge/...` paths (m681 SFOS lane 3.18-graft,
+  M6T + mt6755-common `TARGET_KERNEL_CROSS_COMPILE_PREFIX`); default lanes are
+  prebuilt and fully in-tree. Fix when a source-kernel build on west is actually wanted.
+- soong module `libnvram` (vendor/meizu/meizu_m6/Android.bp) serves the whole family;
+  m6 vs m681 blob hashes differ (a8cf02fb… vs e210e2db…) → an m681/M6T image gets the
+  m6 copy IF the MTK BT service pulls it in. m681's own blobs.mk ships only
+  libnvram_platform/sec/agentclient (no libnvram.so) so there is no install collision.
+  Revisit per-device if BT NVRAM misbehaves on m681/M6T.
+- m2note (MT6753) + lenovo donor dirs intentionally NOT ported (outside the
+  mt6750/mt6755 scope the user named).
