@@ -150,3 +150,21 @@ Known caveats (documented, not blockers):
   Revisit per-device if BT NVRAM misbehaves on m681/M6T.
 - m2note (MT6753) + lenovo donor dirs intentionally NOT ported (outside the
   mt6750/mt6755 scope the user named).
+6. **sepolicy: `unknown type mtk_m4u_proc`** (ninja 29%, 24 min in) — FACT: the 15.1
+   LOS base policy declared MTK compat types (`system/sepolicy/public/file.te`:
+   mtk_m4u_proc, mtk_ged_proc + `private/genfs_contexts` /m4u,/ged) and 16.0 dropped
+   them; our device .te files (m6 lane hal_camera/mediaserver/surfaceflinger, m681
+   genfs comment even documents the reliance) referenced them. FIX device-side (no
+   platform patch): re-declared `type mtk_{m4u,ged}_proc, fs_type;` + genfscon lines
+   in all three lanes (m6: mt675x-common/sepolicy/meizu_m6/{device.te,genfs_contexts};
+   m681: sepolicy/{file.te,genfs_contexts}; M6T: mt675x-common/sepolicy/M6T/...).
+   Bonus: M6T's mt675x-common bits (configs/M6T.mk, sepolicy/M6T/, init rc) were
+   missing on west entirely — transferred from the local 15.1 tree.
+7. **sepolicy: Pie neverallow `dac_override`** for mtk_wmt_loader / mtk_gsm0710muxd /
+   mtk_aee_core_forwarder (public/domain.te:1385) — Oreo-era vendor rules banned in
+   Pie. FIX (bring-up): `SELINUX_IGNORE_NEVERALLOWS := true` in
+   m3_meizu_m6-common + mt6755-common BoardConfigCommon (covers m6/M6T + m681).
+   JUSTIFIED: family boots `androidboot.selinux=permissive` (FACT, BoardConfigCommon
+   cmdline) so assertions have no runtime delta; flag auto-errors on user builds.
+   REVISIT before any enforcing build. → `mka selinux_policy` GREEN (48 s).
+   Iteration trick: `mka selinux_policy` alone = 1-2 min/round instead of 25 min.
