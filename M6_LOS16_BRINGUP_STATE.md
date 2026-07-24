@@ -230,3 +230,8 @@ in-tree jdk9, no Jack). Location: `/home/gun/m6-out16/target/product/meizu_m6/`.
 - Blockers fixed this lane: 8 total (see log above). NOT yet: flashed/booted,
   uploaded, pushed to canonical repos.
 - m681 full bacon launched next (OUT_DIR=/src/out-m681, shared ccache); M6T after.
+- **Uploaded to gdrive (FACT, 2026-07-24):** `gdrive:ReMeizu/M6-LOS16/` —
+  `lineage-16.0-20260724-UNOFFICIAL-meizu_m6.zip` (656 458 607 B, remote sha256
+  `62563129…ae01471` == local == build) + `boot-16.0-20260724-meizu_m6.img`
+  (9 166 848 B, sha256 `bebfc1cd…d35c47`). Local staging kept at
+  `/srv/forge/m6-out-release/`. Verified via rclone hashsum sha256.
