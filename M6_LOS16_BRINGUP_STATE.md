@@ -212,3 +212,21 @@ Method: `mka nothing` + `mka selinux_policy` per device в ОТДЕЛЬНЫХ OU
    clear only when `$(wildcard $(TARGET_KERNEL_SOURCE)/Makefile)` is empty.
    Both lineage patches (kernel.mk KERNEL_BIN honor + BoardConfigKernel wildcard
    guard) → forge-build patches overlay for reproducibility.
+
+## ✅ 2026-07-24 13:51 UTC — GREEN BUILD: LineageOS 16.0 for meizu_m6
+**`lineage-16.0-20260724-UNOFFICIAL-meizu_m6.zip`** — 656 458 607 B,
+sha256 `62563129f82c4ee4faf56965089a9edcd9f1d3558976eca5e460c33c9ae01471`,
+unzip -t OK. Full bacon 1:47:36 on west (8 cores, docker android-8.1 image,
+in-tree jdk9, no Jack). Location: `/home/gun/m6-out16/target/product/meizu_m6/`.
+- boot.img 9 166 848 B (kernel 7 361 828 + ramdisk 1 801 102, page 2048,
+  kaddr 0x40080000 = base+0x8000, ramdisk 0x45000000 — geometry == 15.1 lane).
+  BOARD limit 16 MB → build check passed. ⚠ Memory notes a "9 025 536-byte
+  boot-partition fit limit" from the 15.1 repack era — VERIFY against scatter
+  before flashing (flash is human-confirmed anyway). 15.1 boot was 8 640 512 B.
+- **Kernel identity verified (FACT):** kernel inside boot.img sha256
+  `57a1334396cea1b75106ba088bb8595b74b0ac0bc2a672616df3e063c43b1cb8` ==
+  `prebuilt-kernel/Image.gz-dtb` == the pinned #209 artifact from BoardConfig.
+  The kernel.mk/BoardConfigKernel patches preserved the pin exactly as designed.
+- Blockers fixed this lane: 8 total (see log above). NOT yet: flashed/booted,
+  uploaded, pushed to canonical repos.
+- m681 full bacon launched next (OUT_DIR=/src/out-m681, shared ccache); M6T after.
