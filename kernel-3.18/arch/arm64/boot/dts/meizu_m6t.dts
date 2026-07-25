@@ -23,13 +23,13 @@
 		atag,videolfb-islcm_inited = <0>;
 		atag,videolfb-fps= <6000>;
 		atag,videolfb-vramSize= <0x01800000>;
-		/* M6T: 18:9 720x1440 panel. Stock dumped DTB atag.
-		 * NB. the stock M6T kernel actually probes multivendor panels
-		 * (ft8613/hx83102b/nt36525) — none are in the M6 source tree.
-		 * The CONFIG_CUSTOM_KERNEL_LCM="ili9881c_hd720_dsi_vdo_dijing"
-		 * in M6T_defconfig is the best-fit source-side driver; getting
-		 * the genuine M6T init sequence needs RE from stock vmlinux. */
-		/* The stock M6T DTB carried "ili9881c_hd_dsi_txd" here, but that
+		/* M6T: 18:9 720x1440 panel.
+		 * All three stock panel drivers (ft8613_hd_dsi_vdo_tcl,
+		 * nt36525_hd_dsi_vdo_djn, hx83102b_hd_dsi_vdo_lide) are now
+		 * RE-ported into this tree and listed together in
+		 * CONFIG_CUSTOM_KERNEL_LCM, so lcm_count is 3 as in stock.
+		 *
+		 * The stock M6T DTB carried "ili9881c_hd_dsi_txd" here, but that
 		 * string does not exist anywhere in the stock kernel (0 hits in
 		 * the recovered vmlinux) — the stock image only registers
 		 * ft8613_hd_dsi_vdo_tcl / nt36525_hd_dsi_vdo_djn /
@@ -1356,4 +1356,49 @@ hw-dev-detect@0{
 		main_bus = <2>;
 		sub_bus = <1>;
 	};
+};
+
+/* ---------------------------------------------------------------------------
+ * M6T EINT corrections (2026-07-25)
+ *
+ * arch/arm64/boot/dts/cust.dtsi in this tree is the M6-generated MTK DrvGen
+ * output (no M6T DrvGen project input exists), so its EINT table is M6's.
+ * Diffed node-by-node against the STOCK M6T DTB
+ * (dump-analysis/unpacked/m6t.dts, nodes whose interrupt-parent is the
+ * eintc phandle 0x1a):
+ *
+ *   node         cust.dtsi (M6)          stock M6T            verdict
+ *   touch        1  EDGE_FALLING         0x01 0x02            same
+ *   accdet       2  LEVEL_LOW  deb 256k  0x02 0x08 0x3e800    same
+ *   msdc1_ins    3  LEVEL_LOW  deb 1000  0x03 0x08 0x3e8      same
+ *   irq_nfc      26 LEVEL_HIGH           0x1a 0x04            same
+ *   dsi_te       44 EDGE_RISING          0x2c 0x01            same
+ *   als          6  LEVEL_LOW            0x0b 0x08            MISMATCH
+ *   gyro         4  LEVEL_HIGH           0x4b 0x04            MISMATCH
+ *
+ * Fingerprint needs no entry here: stock wires it at EINT 0x0c and the
+ * mediatek,goodix-fp node above already uses EINT12.
+ *
+ * Left alone deliberately: cust.dtsi also enables ext_buck_oc(0), mse(5) and
+ * mrdump_ext_rst(7), which the stock M6T DTB does not list under eintc. mse is
+ * the magnetometer line — M6T's AKM09911 is polled, so an unused EINT is
+ * harmless; removing entries from a generated file is riskier than leaving
+ * them. Stock-only nodes eint_wpc(0x2a) and swtp(0x51) likewise are not wired
+ * here because this DTS descends from meizu_m6.dts, not from the stock DTB.
+ *
+ * These two overrides come AFTER the #include "cust.dtsi" at the top of this
+ * file, so they win.
+ * --------------------------------------------------------------------------- */
+&als {
+	interrupt-parent = <&eintc>;
+	interrupts = <11 IRQ_TYPE_LEVEL_LOW>;
+	debounce = <11 0>;
+	status = "okay";
+};
+
+&gyro {
+	interrupt-parent = <&eintc>;
+	interrupts = <75 IRQ_TYPE_LEVEL_HIGH>;
+	debounce = <75 0>;
+	status = "okay";
 };
