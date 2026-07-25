@@ -1161,7 +1161,7 @@ static void lcm_init(void)
 
 	LCM_LOGI("M6 LCM init seq=%u reset=1 delay=6ms\n", seq);
 	SET_RESET_PIN(1);
-	MDELAY(6);
+	MDELAY(60)   /* stock waits 60ms after reset release before the init table */;
 	if (lcm_dsi_mode == CMD_MODE) {
 		LCM_LOGI("ili9881c_hd_dsi_txd----not support ----lcm mode\n");
 		LCM_LOGI("M6 LCM init seq=%u skip init table cmd mode=%d\n",

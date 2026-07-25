@@ -1037,3 +1037,42 @@ Live results (device, no reflash needed):
 - Now testing exactly that: both `start pq` and `start guiext-server` moved into
   `/system/etc/init/forge-pq.rc` (fires on `init.svc.servicemanager=running`, i.e.
   before SF opens the HWC), full reboot, measuring `Display device added`.
+
+### 2026-07-25 (night) — display SOLVED, init reached, real blocker was a wrong fstab
+**Context discovered:** `git log` on this kernel shows the base is
+`9960a77eadc Kernel Source Pack of Honor 6C Pro` — our "M6 kernel" is an **Honor 6C Pro
+BSP** (also MT6750) adapted to the M6. That explains why the M6's own panel driver was
+missing, why the display needed a chain of fixes, and (below) why the fstab was wrong.
+
+**Panel, final pieces (all RE'd from this unit's stock kernel):**
+- stock `lcm_init` disassembly (`0x4849ac`) = SET_RESET_PIN(1), MDELAY(1), 0, MDELAY(2), 1,
+  **MDELAY(60)**, then push_table with count `0xC9` = **201** — independently confirming the
+  201-entry table I extracted. Our driver waited only **6 ms** after reset release → fixed to 60.
+- stock `init_power` (`0x484b18`) = SET_RESET_PIN(0), lcd_enp(1), MDELAY(2), lcd_enn(1),
+  MDELAY(2), tps65132 reg0=0x0F, reg1=0x0F. Our `lcm_init` already performs the equivalent.
+- With stock-exact params the **LK hand-over path works**: reverted
+  `FORGE_M6_FORCE_LCM_REINIT` to 0 (the force-reinit was only needed while our params were
+  wrong). User-observed result: **clean upside-down logo, no garbage** (before: garbage).
+
+**Boot progression across the session (FACT, from last_kmsg each round):**
+2.5 s (wedged at hand-over) → 32.8 s (force-reinit, display alive, WDT with pgc->lock held)
+→ 10.3 s (stock table, wrong params) → **101 s, kernel fully alive**: no watchdog, interrupts
+served (the final log lines are the user's own power-key presses via `kpd`), **and userspace
+`init` running as PID 239**.
+
+**THE BLOCKER (FACT):** `init: [libfs_mgr] Skipping
+'/dev/block/platform/mtk-msdc.0/11240000.msdc1/by-name/system' during mount_all`.
+`11240000.msdc1` is the **SD-card** controller; this device's eMMC is
+`11230000.msdc0` (confirmed by the live stock capture, `95-unlock-inputs`). So `/system`
+never mounts, init cannot proceed, and adbd/USB are never reached — which is exactly why
+"no adb": adb is userspace, and userspace never got that far.
+FIX: `device/meizu/m3_meizu_m6-common/rootdir/fstab.mt6755` — all 11 entries
+`11240000.msdc1` → `11230000.msdc0` (backup kept as `fstab.mt6755.bak-msdc1`).
+
+**Process note (my error, corrected):** I first patched the fstab by unpacking/repacking the
+ramdisk by hand as a non-root user — that loses permissions and device nodes and can kill
+init on its own. Rebuilt properly instead: kernel copied into
+`device/meizu/meizu_m6/prebuilt-kernel/Image.gz-dtb` (sha256 `d56c7758…`) + `mka bootimage`
+(1:03) → `boot.img` md5 **`d3c486ee5e2a795bd913dc7b5615899c`**, fstab verified inside the
+built ramdisk. **Staged, not yet flashed** — device is hung off-bus awaiting a power-cycle
+into TWRP.

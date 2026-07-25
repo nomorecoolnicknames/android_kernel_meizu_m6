@@ -3950,7 +3950,7 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	 * on the (upside-down) bootloader logo. The is_lcm_inited branch also skips the
 	 * dpmgr_path_trigger() that starts the video path. Force the full re-init branch so
 	 * the kernel programs the panel itself and kicks the path. */
-#define FORGE_M6_FORCE_LCM_REINIT 1
+#define FORGE_M6_FORCE_LCM_REINIT 0   /* params are now stock-exact -> the LK hand-over should match */
 	if (is_lcm_inited && !FORGE_M6_FORCE_LCM_REINIT) {
 		ret = disp_lcm_init(pgc->plcm, 0);	/* no need lcm power on,because lk power on lcm */
 	} else {
