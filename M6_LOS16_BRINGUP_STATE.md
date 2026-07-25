@@ -883,3 +883,52 @@ verified:
 - rebooted to system; acceptance pass running.
 (The single harmless error in the log — `/sbin/sh: logcat: not found` — is just TWRP
 lacking logcat for the pre-reboot buffer clear.)
+
+### 2026-07-25 (late) — stock panel programming fully REVERSED and applied
+Both halves of the stock panel setup were recovered from THIS unit's own stock kernel
+(`/srv/forge/android/meizu_m6/re-stock-lcm/stock_Image`, decompressed from
+`boot_stock_flyme6.2.0.0RU.img`) and are now in the tree:
+
+**a) init table (201 entries).** Found in rodata at file offset `0x111acd0` by the ILI9881
+page-select signature (`FF 00 00 00 03 98 81`), entry stride 72 (`u32 cmd; u8 count;
+u8 para[64]`). Runs page 3 → page 4 → page 1 → page 0, ends `0x35`, `0x11`, delay 120,
+`0x29`, delay 20, `REGFLAG_END_OF_TABLE`. The stock kernel's REGFLAG constants (0xFFFC
+delay / 0xFFFD end) are identical to our tree's — same BSP. Verified byte-for-byte **inside
+the built kernel image**, not just in source.
+
+**b) DSI parameters.** `LCM_DRIVER ili9881c_hd_dsi_txd_lcm_drv` located at file offset
+`0x111e678` by searching for the 8-byte pointer to the standalone name string
+(`0xe819f8` → VA `0xffffffc000f019f8`, base `0xffffffc000080000`). Field order from our own
+`lcm_drv.h`: `get_params` = +0x10 → VA `0xffffffc0005047d0` (file `0x4847d0`), disassembled
+with `aarch64-linux-android-objdump -b binary`. LCM_PARAMS offsets were mapped to names by
+disassembling OUR object (known values) and correlating. Result — the tree was wrong on
+almost every timing:
+
+| field | tree had | STOCK |
+|---|---|---|
+| vertical_sync_active | 20 | **8** |
+| vertical_backporch | 24 | **16** |
+| vertical_frontporch | 64 | **8** |
+| vertical_frontporch_for_low_power | 540 | **0** |
+| horizontal_sync_active | 20 | **60** |
+| horizontal_backporch | 80 | **50** |
+| horizontal_frontporch | 100 | **50** |
+| PLL_CLOCK / CK_CMD / CK_VDO | 240 | **230** |
+| ssc_disable | 1 | **0** |
+
+(The tree's `PLL_CLOCK = 240` even carries the comment "M6: 230->240" — it was retuned for
+the OLD, now-dead unit whose panel was the ili9881p.)
+
+**Result on device:** still no boot. Flashed as `boot_M6_stockparams.img`
+(md5 `f485e3c759e29f4a689bacde95899858`, readback byte-exact); the device hangs silently
+with no USB, exactly as before. So faithfully reproducing the stock table AND the stock
+timings is *still* not sufficient.
+
+**Stock-only LCM_PARAMS fields not yet mapped/applied** (seen in the stock disassembly, not
+set by our driver) — the obvious next lead:
+`[460]=3, [508]=2160, [676]=4, [808]=1, [812]=1, byte[844]=10, byte[845]=1, byte[846]=0x9C,
+[996]=68, [1000]=121`. Map these against `LCM_PARAMS`/`LCM_DSI_PARAMS` in
+`drivers/misc/mediatek/lcm/inc/lcm_drv.h` and set them too (candidates: cont_clock, HS/LP
+transition timings, ESD/te parameters).
+Kernel artifacts: `Image.gz-dtb` sha256 for the stock-table build `d14d721d…`, for the
+stock-params build see `boot_M6_stockparams.img` above.
