@@ -365,3 +365,36 @@ is gone from Pie's liblog/libcutils). Alongside it `init.svc.surfaceflinger = re
 - Device left ON in this state (no rollback flashed). Rollback if needed:
   `/home/gun/m681-work/p22_backup_pre16-20260725.img` (head 9 730 048 B == allbaked1 `1083ff05`).
 - Consequence: the 20260725 zip on gdrive is NOT yet device-accepted — do not publish as good.
+
+## 2026-07-25 — m681 live-patch attempt: MY MISTAKE, device currently off-USB
+Idea (user): instead of a full reflash, drop the rebuilt liblog/libcutils into the
+live system and see if SF comes up. Libs were ready in out-m681 (verified symbols:
+`__xlog_buf_printf` in liblog.so, `android_atomic_inc` in libcutils.so).
+
+**What went wrong (FACT, my error):** installed with
+`cat /data/local/tmp/liblog.so.lib64 > /system/lib64/liblog.so`. The redirect
+TRUNCATES the target first, and `cat` itself links against liblog.so → the very
+first write left `/system/lib64/liblog.so` at **0 bytes** and no further device-side
+binary could exec (`CANNOT LINK EXECUTABLE "cat"/"ls"`). The backup
+(`/data/local/tmp/liblog.so.lib64.bak`) HAD been made; the other three libs were
+never written. Correct method would have been `adb push` straight to /system
+(adbd writes internally, no device-side exec) — or a TWRP-side copy.
+Consequence: adbd could not restart → device left adb.
+
+**Recovery so far:** device re-appeared on USB as `0bb4:0c01` with interface
+`ff/42/03` = **fastboot** (bootloader `WT6755_66_SZ_L`, `unlocked: yes`,
+max-download-size 128 MB, boot/recovery = 16 MB each). `fastboot reboot recovery`
+was ACCEPTED (OKAY) and adb briefly reported the serial once, but the device then
+returned to fastboot; on a second, patiently-polled attempt it went **off USB
+entirely** (no adb, no fastboot, no 0e8d BROM) — currently unreachable.
+Background watcher armed for any USB re-appearance.
+
+Assets ready for the moment it returns (nothing lost):
+- p22 pre-flash backup `/home/gun/m681-work/p22_backup_pre16-20260725.img` (allbaked1).
+- Proven TWRP images: `/srv/forge/android/m681/m681_twrp_44kernel.img` (4.4 kernel,
+  Jul 17) and `m681_twrp_16M_boot_recovery.img`, both 16 MB = exact partition size.
+- LOS16 boot.img (`d151db2e`) + rebuild #3 (with the xlog/atomic fix) in flight.
+Plan on return: fastboot → flash TWRP (recovery or boot) → TWRP `adb push` the good
+liblog.so (or install the fixed zip) → restore proper boot.img.
+If it stays absent it needs a physical force-off (hold Power ~10-15 s) / replug,
+which also puts MTK into preloader where mtkclient can flash.
