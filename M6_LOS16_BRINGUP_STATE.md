@@ -463,3 +463,22 @@ TWRP (`dd` of the pushed boot.img) or via fastboot after the ROM install.
 Full remaining sequence once TWRP is up (all remote):
 `adb push` fixed zip `880528ae…` → `twrp install` → push+`dd` boot.img to
 /dev/block/mmcblk0p22 → reboot → acceptance (crash_dump flat, SF alive, stpbt perms).
+
+### Device recovered + FIXED ROM installed (2026-07-25)
+**Correction to my earlier read (user caught it):** after the power-on the phone was
+in **TWRP**, not fastboot — the TWRP written to `boot` via BROM DID boot. The
+`fastboot` device I saw belonged to ANOTHER agent's session (30785d1a / Nubia poll
+loop); my `fastboot -s 91HEBNL163XD flash boot` never matched a device (it sat in
+`< waiting for … >`) and was killed — nothing foreign was touched. Lesson: identify
+mode by the sysfs interface triple of OUR port, not by a global `fastboot devices`
+list on a shared hub (`ff/42/01`=ADB, `ff/42/03`=fastboot; our 1-8 read
+`18d1:d001 ff/42/01` = TWRP-adb, `adb devices` = recovery).
+
+Executed in TWRP 3.7.0_9-0 (`ro.product.device=m681` gated):
+- removed the superseded broken zip, `twrp wipe cache/dalvik/data`,
+- pushed FIXED zip `880528ae…` (md5 on device `03f68b99…` == west),
+- `twrp install` → `script succeeded: result was [1.000000]`,
+- **boot partition readback == rebuild-3 boot.img md5 `adb4f53a…`** (the zip flashes
+  boot, so the TWRP-in-boot was replaced by the proper LOS16 boot automatically).
+- Rebooted; first-boot acceptance in progress.
+NOTE: rebuild #3's boot.img md5 is `adb4f53a…` (not `d151db2e…` = rebuild #2).
