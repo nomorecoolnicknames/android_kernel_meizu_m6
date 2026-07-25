@@ -517,3 +517,31 @@ The boot now dies one layer deeper. Distinct classes (deduped by signature):
 Dispatched 4 parallel tracer subagents (one per class 12/13/14/15) with the logs, both
 trees (15.1 working reference + 16.0), and strict evidence rules; build+flash stay with
 me. Reports to be folded back here.
+
+### Blocker 12 root cause CONFIRMED + fix applied (2026-07-25)
+Subagent (tracer) + my own byte-level verification:
+- **FACT: Pie deleted the exported symbol.** Oreo `frameworks/native/libs/ui/Fence.cpp:48`
+  had an out-of-line `Fence::~Fence()`; Pie's `ui/Fence.h:141` makes it
+  `~Fence() = default;` (inline) and `mFenceFd` a `base::unique_fd`, so libui.so
+  exports **no** `_ZN7android5FenceD1Ev/D2Ev` at all (verified: present in 15.1's built
+  libui.so, absent in the 16.0 one; Fence *constructors* still exported in both).
+  The unchanged Nougat-era blobs (`libgui_ext.so` ← `hwcomposer.mt6755.so`,
+  `guiext-server`) still import it → SF cannot load the composer HAL → abort loop.
+- **FACT: the shim MECHANISM was never broken** — `TARGET_LD_SHIM_LIBS`
+  (m681 BoardConfig.mk:14-34) and the Pie bionic linker's LD_SHIM_LIBS support are
+  both present and working; the whole boot log contains exactly ONE distinct
+  unresolved symbol, so every other shimmed symbol resolves. Only the shim's CONTENT
+  lacked the Fence dtor (it was free from real libui.so on Oreo).
+- **FIX:** added `_ZN7android5FenceD1Ev`/`D2Ev` to `vendor/mediatek/symbols/gui.cpp`
+  (the libmtkshim_gui source already mapped onto libgui_ext/libui_ext).
+- **Field offset byte-VERIFIED, not assumed** (the subagent flagged it as its one
+  unproven step): disassembling the real Oreo `libui.so` dtor gives exactly
+  `ldr w0,[x0,#4] ; cmn w0,#0x1 ; b.eq <ret> ; b close@plt` → mFenceFd at offset 4.
+  Pie's layout puts unique_fd's int at the same offset (LightRefBase atomic<int32_t>
+  at 0, Flattenable empty base), so the shim is correct whichever side constructed
+  the object, and there is no double-close (the object is destroyed once).
+- Rebuilt `libmtkshim_gui` only (21 s): both arches now export D1Ev+D2Ev (merged to a
+  single address, exactly like the real Oreo libui did).
+- Installed live via **`adb push`** (the correct method — adbd writes internally, no
+  device-side exec; this lib is not a dependency of adbd/toolbox so the shell is never
+  at risk), then rebooted for a fast verification cycle before a full ROM rebuild.
