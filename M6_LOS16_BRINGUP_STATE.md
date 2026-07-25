@@ -723,3 +723,39 @@ the m681 (other agent) and a Nubia. It attached to the **m681's** port (1-8) ins
   Either confirm the target is the only MTK device in a flashable mode at that instant, or
   drive the flash through serial-gated adb/TWRP (`adb -s <serial>`). Same spirit as the
   existing "gate every flash on the serial" rule for adb.
+
+### Blocker 18: SF crash in GuiExtClient — our OWN Fence fix exposed it
+Subagent (cyan) traced the remaining SF SIGSEGV; I corrected its proposed fix.
+- **FACT (agent):** all 4 crashes are byte-identical — SIGSEGV at fault addr
+  `0xd65f03d0`, x8 = `0xd65f03c0` (that value is literally the AArch64 `RET` opcode,
+  i.e. a garbage vtable slot). Chain: `SurfaceFlinger::init` → `Composer::Composer` →
+  blob `HWCMediator::open` → `DisplayManager::init` → `HWCDispatcher::onPlugIn` →
+  `GuiExtClientConsumer::GuiExtClientConsumer` → `GuiExtClient::assertStateLocked` →
+  `IInterface::asBinder` → crash.
+- **FACT (agent):** `assertStateLocked()` only reaches the crashing
+  `asBinder(...)->linkToDeath(...)` when `checkService("GuiExtService")` SUCCEEDS; if
+  the service is absent it returns NAME_NOT_FOUND and SF continues fine. So the whole
+  thing is gated on whether `guiext-server` has registered yet — which explains both
+  the boot-to-boot variability AND the byte-identical repeats within one boot.
+- **FACT (agent):** no symbol gap this time — all ~184 UND symbols of
+  hwcomposer.mt6755.so resolve; this is a genuine logic bug, not a second Fence.
+- **INFERENCE (mine, and it closes the loop): our Fence shim CAUSED this exposure.**
+  Before the shim, guiext-server crash-looped on the missing dtor, so GuiExtService was
+  never registered and SF always took the safe path. Fixing the symbol let
+  guiext-server start for the first time → it registered → SF started crashing here.
+- **AGENT'S FIX REJECTED (my check):** it proposed `-DMTK_DO_NOT_USE_GUI_EXT` on the
+  `libgui_ext` module in `vendor/mediatek/libgem/Android.mk`. But the INSTALLED
+  `libgui_ext.so` is **byte-identical to the proprietary blob** (md5
+  `c0216f43578709e721b99d0cdea6db7a` == `vendor/meizu/m681/proprietary/vendor/lib64/`)
+  and there is **no `symbols/` entry** for it → it is NOT built from that source, so a
+  compile-time switch there would never reach the shipped library.
+- **FIX APPLIED instead:** commented out `start guiext-server` in the SHIPPED
+  `device/meizu/m681/rootdir/init.mt6755.rc:365` (trigger
+  `on property:init.svc.servicemanager=running`, a leftover from the 15.1 PQ-wait
+  experiments — its own comment says starting PQ early was "a runtime-unblock
+  experiment"). The service definition stays (`disabled`), so nothing else changes.
+  This restores the 15.1 state (that tree built/shipped no GuiExt at all and the
+  display worked) and is the only lever that reaches a blob.
+- Family: the agent notes meizu_m6/M6T also list `libgui_ext` and share
+  `vendor/mediatek/libgem`; they are equally exposed. Their start triggers live in
+  their own rc files — check when their turn comes.
