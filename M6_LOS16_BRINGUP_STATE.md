@@ -1109,3 +1109,46 @@ it needs a framebuffer HAL this vendor stack never shipped. Blob restored afterw
 success — the precondition it needs is inside the blob. Handed to the HWC subagent for
 disassembly (which field gates width/height, what populates it, and whether an explicit
 blank/setPowerMode/ioctl handshake is required first).
+
+### ★ Blocker 20 ROOT CAUSE FOUND: kernel DISP uapi ABI ≠ vendor blob ABI (2026-07-25)
+Chain of measurements (each a FACT):
+1. Subagent RE'd `hwcomposer.mt6755.so` in Ghidra (not stripped): geometry lives in a
+   0x60 per-display struct owned by `DisplayManager`; `HWCMediator::getAttributes`
+   gates on a READY flag at `+0x21` (returns -EINVAL when clear) and otherwise copies
+   width/height/dpi/vsync straight out. The ONLY writer is
+   `DisplayManager::setDisplayData(display, native_handle*)`, which for display 0
+   ignores the handle and fills the struct from `DispDevice::getOverlaySessionInfo()`
+   — i.e. from the kernel DISP session over `/dev/mtk_disp_mgr`. Nothing in
+   `hwc_open_1`/`DisplayManager::init()`/`HWCDispatcher::onPlugIn()` calls it.
+2. A bounded retry in the adapter (20 × 100 ms) proved nothing writes it
+   asynchronously either — 20/20 tries returned w=0 h=0. "Late async write" REFUTED.
+3. Called the blob's own writer directly (its symbols are exported;
+   `Singleton<DisplayManager>::getInstance` + `setDisplayData` via dlsym): afterwards
+   `getDisplayAttributes` returned **-22 (-EINVAL)**, i.e. the READY flag went to 0 —
+   the write DID happen and recorded "no valid data". So the kernel session query
+   itself comes back empty.
+4. **The kernel says why** (dmesg, MTK DISP driver):
+   `[DISP][session]ioctl not supported, 0x40484fd0` and `…, 0x40184fd5`.
+   Decoding (asm-generic): `0x40484fd0` = dir _IOW, type 'O', **nr 208**, size **72**
+   = `DISP_IOCTL_GET_SESSION_INFO`; `0x40184fd5` = _IOW, 'O', **nr 213**, size **24**
+   = `DISP_IOCTL_WAIT_FOR_VSYNC` (and the log tags the caller as `VSyncThread_0`).
+   Our kernel (`wt-camera` 4.4, `drivers/misc/mediatek/video/include/disp_session.h`)
+   declares `DISP_IOCTL_GET_SESSION_INFO DISP_IOW(208, struct disp_session_info)` and
+   `DISP_IOCTL_WAIT_FOR_VSYNC DISP_IOW(213, struct disp_session_vsync_config)` — same
+   numbers, same direction, **different struct sizes**: our `disp_session_vsync_config`
+   carries an extra `enum DISP_SESSION_USER user` field (32 B vs the blob's 24 B) and
+   our `disp_session_info` has extra trailing fields (physicalWidthUm/HeightUm,
+   updateFPS, is_updateFPS_stable, …) so it is larger than the blob's 72 B. The size is
+   part of the ioctl number, so the driver rejects both outright.
+   Corroborating: `[DISP]release_session_buffer: no session 196610 found!`.
+**Conclusion:** the display never comes up because OUR kernel's DISP uapi is from a
+newer MTK BSP than the vendor blobs. The blob is unfixable; the kernel is ours.
+**Fix direction (kernel-side, next session):** add compat handling in the DISP ioctl
+dispatcher for the blob-vintage encodings — old (smaller) `disp_session_info` (72 B)
+and `disp_session_vsync_config` (24 B) — mapping them onto the current internals, then
+rebuild the 4.4 kernel and reflash boot.img. Verify with
+`dmesg | grep "ioctl not supported"` (must be empty) and
+`dumpsys SurfaceFlinger | grep hwcId=0` (must show 1080x1920, not 1x1).
+NOTE: all adapter-side experiments (probe logging, retry loop, dlsym kick) are
+diagnostics that must be REVERTED before the production build; the only keeper from
+this lane is the analysis. The libbinder/audio/perms/xlog fixes remain valid.
