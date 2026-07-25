@@ -759,3 +759,40 @@ Subagent (cyan) traced the remaining SF SIGSEGV; I corrected its proposed fix.
 - Family: the agent notes meizu_m6/M6T also list `libgui_ext` and share
   `vendor/mediatek/libgem`; they are equally exposed. Their start triggers live in
   their own rc files — check when their turn comes.
+
+### 2026-07-25 — panel root cause CONFIRMED + driver ported; a SECOND blocker remains
+**Root cause of the 25 s WDT loop (FACT chain):**
+1. The unit's own bootloader atag: `atag,videolfb-lcmname = "ili9881c_hd_dsi_txd"`.
+2. Its working TWRP kernel logs (found in `expdb`): `[KERNEL/LCM]ili9881c_hd_dsi_txd
+   lcm_init… / lcm_resume`, and `[KERNEL/LCM]tps65132_iic_init/probe` — so the board bias
+   is the TPS65132 path. NB: the "successful 3888 s run" I first mistook for an Android
+   session is that TWRP session (processes `[231:recovery]`, `[347:recovery]`).
+3. Our kernel shipped `CONFIG_CUSTOM_KERNEL_LCM="ili9881p_hd_dsi_txd"` → wrong panel →
+   `[DISP]M6 DDP irq diag[…][rdma0]` then `BUG: failure at …/mt6755/ddp_manager.c` → WDT.
+   (The old, now-dead M6 unit had the ili9881p panel — hence the tree's default.)
+
+**Fix built (commit `9bf1df36cdf` in this repo):** new in-tree LCM driver
+`ili9881c_hd_dsi_txd` = ili9881p board/power code (TPS65132 + M6 GPIOs) + ILI9881C init
+table & DSI timings (SYNC_PULSE_VDO_MODE, vsa/vbp/vfp 4/16/40) taken from the in-tree
+ILITEK reference in `ili9881p_hd_dsi_txd_adaptation_refs/`; registered in
+`mt65xx_lcm_list.c`. Kernel builds clean → `Image.gz-dtb` 7 740 025 B
+sha256 `4f33db5216606f023870cdf4e19a22c1a24e7a7efaea3f01c620218727a1c950`.
+Repacked with our LOS ramdisk → `boot_M6_ili9881c.img` md5 `aa002c333e45b220fc0686f5f6435159`,
+flashed to p21 from TWRP, readback byte-exact.
+
+**Result — partial win:** the **25 s WDT reset loop is GONE** (display no longer kills the
+kernel). But the device now hangs **silently: no USB enumeration at all** for 7+ min — the
+same signature as the stock-kernel graft. So a SECOND blocker sits after the display stage.
+- Ruled out as the cause of the silence: no mtkclient/USB-holder process was running on west
+  (checked at the user's suggestion: 0 mtk processes, 0 `lsof /dev/bus/usb`, only the normal
+  adb fork-server).
+- Open question needing the screen (the one artifact not reachable over USB): black screen vs
+  Meizu logo vs bootanimation. That single observation splits "kernel still dies at panel
+  init" from "kernel is up, userspace hangs before the USB gadget is configured".
+- Next diagnostic when it is back in TWRP: read `/proc/last_kmsg` FIRST (MTK ram console;
+  it survives a WDT reset, and the cmdline has `mrdump_rsvmem`/`mrdump_ddr_reserve_ready=yes`
+  so a short power-off may still preserve it). Then decide.
+- If the grafted ILITEK init table turns out to be wrong for this TXD module, the proper fix
+  is RE-extracting the exact `ili9881c_hd_dsi_txd` tables from THIS unit's stock kernel
+  (`/home/gun/m6-backups/boot_stock_flyme6.2.0.0RU.img`) — same method the M6T lane used for
+  `hx83102b_hd_dsi_vdo_lide`.
