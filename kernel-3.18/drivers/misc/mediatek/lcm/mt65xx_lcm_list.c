@@ -17,6 +17,10 @@
 #include <platform/disp_drv_platform.h>
 #else
 #include <linux/delay.h>
+#if defined(ILI9881C_HD_DSI_TXD)
+extern LCM_DRIVER ili9881c_hd_dsi_txd_lcm_drv;
+#endif
+
 #if defined(ILI9881P_HD_DSI_TXD)
 extern LCM_DRIVER ili9881p_hd_dsi_txd_lcm_drv;
 #endif
@@ -37,6 +41,10 @@ LCM_DSI_MODE_CON lcm_dsi_mode;
 #endif
 
 LCM_DRIVER *lcm_driver_list[] = {
+#if defined(ILI9881C_HD_DSI_TXD)
+	&ili9881c_hd_dsi_txd_lcm_drv,
+#endif
+
 #if defined(ILI9881P_HD_DSI_TXD)
 	&ili9881p_hd_dsi_txd_lcm_drv,
 #endif
@@ -1050,6 +1058,7 @@ LCM_DRIVER *lcm_driver_list[] = {
 };
 
 unsigned char lcm_name_list[][128] = {
+	"ili9881c_hd_dsi_txd",
 	"ili9881p_hd_dsi_txd",
 
 #if defined(HX8392A_DSI_CMD)
