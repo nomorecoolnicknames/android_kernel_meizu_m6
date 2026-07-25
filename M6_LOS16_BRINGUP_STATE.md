@@ -1152,3 +1152,35 @@ rebuild the 4.4 kernel and reflash boot.img. Verify with
 NOTE: all adapter-side experiments (probe logging, retry loop, dlsym kick) are
 diagnostics that must be REVERTED before the production build; the only keeper from
 this lane is the analysis. The libbinder/audio/perms/xlog fixes remain valid.
+
+### Kernel DISP compat patch BUILT AND FLASHED (2026-07-25 18:30)
+Patch authored by the HWC subagent, reviewed and applied by me.
+`drivers/misc/mediatek/video/mt6755/videox/mtk_disp_mgr.c` (branch `final-converge`,
+HEAD 703cf3d4, tree `/home/n8n/mt6755-49/b-4.4/wt-camera`) — **additive only**:
+- `struct disp_session_info_legacy` (72 B) = current struct minus `isHwVsyncAvailable`
+  and `physicalWidthUm`/`physicalHeightUm`;
+- `struct disp_session_vsync_config_legacy` (24 B) = current minus `user`;
+- `DISP_IOCTL_{GET_SESSION_INFO,WAIT_FOR_VSYNC}_LEGACY` macros + two handlers that
+  translate to/from the full structs and call the SAME internals
+  (`disp_mgr_get_session_info()`, `primary_display_wait_for_vsync()`);
+- two extra `case` labels in `mtk_disp_mgr_ioctl()`. Existing cases untouched.
+**Verification of the layout was not hand arithmetic:** the agent compiled a standalone
+replica and read `sizeof`/`offsetof` from the compiler — sizes 72/24, and the resulting
+ioctl numbers computed with the kernel's own `_IOW` math come out **0x40484fd0** and
+**0x40184fd5**, byte-for-byte the two codes our dmesg rejects. I re-checked the field
+offsets independently: displayWidth +0x10, displayHeight +0x14, isConnected +0x2C —
+exactly where the blob's `setDisplayData()` reads them (Ghidra).
+Honest caveat carried from the agent: width/height/isConnected are FACT-level; the
+identity of a few middle fields (displayFormat/vsyncFPS/physical*) is INFERENCE — if
+wrong, the symptom would be wrong DPI/refresh reporting, not a return of the 0x0 bug.
+Build + flash (all verified):
+- incremental kernel build OK → `Image.gz-dtb` 7 788 014 B,
+  sha256 `18cbbd5968321670438eee0beadce07103c4d447ef80e36da4eca025355bcc7c`;
+- repacked with the device's LOS16 ramdisk → `boot-m681-los16-dispfix.img` 9 601 024 B,
+  md5 `10a572786695b7ea239425de52284341` (old kernel 7 787 132 → new 7 788 014,
+  ramdisk 1 808 398 preserved, page 2048, second=0);
+- flashed from TWRP to mmcblk0p22 (previous boot backed up as
+  `/tmp/p22_pre_dispfix.img`, md5 `1fff7ca1…`), **readback md5 == image md5**;
+- rebooted; verification pass measuring: `ioctl not supported` count (must be 0),
+  `dumpsys SurfaceFlinger hwcId=0` (must be 1080x1920, not 1x1), `rejecting buffer`
+  count, `sys.boot_completed`.
