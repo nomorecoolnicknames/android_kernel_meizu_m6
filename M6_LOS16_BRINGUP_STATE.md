@@ -292,3 +292,7 @@ Both confirmed (FACTs) and incorporated:
   original second_size=0 verified, page 2048, header/cmdline preserved).
   Flip to source in the ROM = overwrite prebuilt Image.gz-dtb with .forge-source and
   re-bacon, AFTER a bench flash proves the panel comes up.
+- **m681 zip uploaded to gdrive (FACT, 2026-07-25):** `gdrive:ReMeizu/M6-LOS16/
+  lineage-16.0-20260725-UNOFFICIAL-m681.zip` — 733 136 602 B, remote sha256
+  `bf388b42…d48987` == local == build (verified rclone hashsum + listing; folder
+  now 3 objects, 1.303 GiB). Zip only per user; M6T artifacts NOT uploaded.
