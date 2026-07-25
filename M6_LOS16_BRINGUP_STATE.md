@@ -545,3 +545,46 @@ Subagent (tracer) + my own byte-level verification:
 - Installed live via **`adb push`** (the correct method — adbd writes internally, no
   device-side exec; this lib is not a dependency of adbd/toolbox so the shell is never
   at risk), then rebooted for a fast verification cycle before a full ROM rebuild.
+
+### Fence shim VERIFIED ON DEVICE — primary blocker cleared (2026-07-25 15:06)
+Live test (shim libs `adb push`ed, reboot):
+- **`_ZN7android5FenceD1Ev` errors: 0** (were 43 + 43). `hwcomposer.mt6755.so` now
+  DLOPENS (it appears in a backtrace, i.e. it loaded and ran).
+- **surfaceflinger crashes this boot: 1** (was 43 and never-ending). The first
+  instance still aborted inside the blob at `HwcLoader::openDeviceWithAdapter`
+  (HWC1→HWC2 adapter path, pc +0x1b734 inside hwcomposer.mt6755.so); the RETRY
+  succeeded and **SF is stable** (same pid across 15 s), got the HWComposer service,
+  ConfigStore, and full GL/EGL extension init.
+- **system_server STARTED** (was never reached). Both zygotes `running`.
+- Boot still not `boot_completed` at 180 s (first boot after a data wipe, dex2oat) —
+  watcher running. The single early SF abort is a NEW, lower-priority item to chase
+  (self-healing on retry, so not a blocker).
+
+### Subagent reports folded in
+- **ART/patchoat (class 13): NOT a bug — fallout, CONFIRMED, no action.** The agent
+  proved patchoat's non-zero exit is recoverable (zygote prunes dalvik-cache and
+  retries; `ZygoteInit` starts every cycle) and that the collisions come from the
+  crash-restart loop. It ALSO proposed flipping m681 to `ro.zygote=zygote64` (as
+  m6/M6T do) on the HYPOTHESIS that app_process32 is broken here too, and supplied the
+  falsification test: "after the SF fix, check whether zygote_secondary still
+  restarts". **Test RUN, hypothesis REJECTED:** with SF fixed, `init.svc.zygote` and
+  `init.svc.zygote_secondary` are BOTH `running`. So m681 keeps 32-bit app support —
+  the one-line change was NOT applied. (Applying it blindly would have silently
+  dropped all 32-bit apps.) Its flagged doc contradiction
+  (`RUNTIME_BLOCKERS_AUDIT.md:7` "sys.boot_completed EMPTY" vs "m681 booted on 15.1")
+  is noted, unresolved, non-blocking.
+- **Permissions (class 14): real bug, root cause = orphaned init.rc import chain.**
+  device.mk ships the stock AOSP `/init.rc`, so `device/meizu/m681/rootdir/init.rc`
+  (and everything it imports) NEVER executes, though the files are in the ramdisk.
+  Consequences: `init.trace.rc`'s `chmod 0222 .../tracing/trace_marker` never ran →
+  79× `cutils-trace: Permission denied`; and the vibrator sysfs chowns (which live in
+  that orphaned init.rc:630/641) never ran → vibrator EACCES. SELinux REJECTED as the
+  cause (permissive; every avc line has `permissive=1`). Stale-AID sweep: clean, the
+  earlier `net_bt_stack`→`bluetooth` fix holds.
+  APPLIED to `device/meizu/m681/rootdir/init.mt6755.rc` (the file that IS imported):
+  `import /init.trace.rc`, plus a `post-fs-data` block chowning BOTH
+  `/sys/class/timed_output/vibrator/{enable,vibr_vol}` (the agent thought `enable` was
+  already handled in the shipped file — grep shows it was NOT; both were orphaned).
+  Agent also flags (HYPOTHESIS) that `init.m681_sensors.rc` / `init.m681_cameraserver.rc`
+  are orphaned the same way, and that m6/M6T share the pattern via
+  `mt6755-common/rootdir/init.mt6755.rc` — follow-ups, not done yet.
