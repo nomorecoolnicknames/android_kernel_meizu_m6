@@ -626,3 +626,24 @@ Kernel agent (evidence-backed):
   Agent dispatched.
 Fresh logs: west `/home/gun/m681-los16-logs2/`, local
 `/srv/forge/android/m681/logs-los16-boot2/m681-los16-logs2/`.
+
+### Layer-2 measurements (2026-07-25, uptime ~800 s, still no boot_completed)
+- **init is the honest witness** (kernel log): `Service 'audioserver' … exited with
+  status 1` and `Service 'vibrator-1-0' … exited with status 243`, both every ~5 s.
+  These two HAL loops are what keeps knocking system_server over (pid churns
+  3928→4423→…→7471, ~60 s cadence); surfaceflinger is now only an occasional casualty.
+- **Vibrator fix CONFIRMED LIVE:** applying the perms edit by hand on the device
+  (`chown system /sys/class/timed_output/vibrator/{enable,vibr_vol}` + 0660) →
+  `init.svc.vibrator-1-0 = running`, pid stable, exit counter stops growing.
+  Proves the perms agent's root cause (orphaned init.rc import chain) and validates
+  the tree edit already applied to `init.mt6755.rc`. NOTE: only the OWNER chown took
+  (`-rw-rw---- system root`) — the group chown returned "Read-only file system" on
+  sysfs; owner+mode was enough. The tree fix does it from init at post-fs-data, which
+  is the correct place.
+- **SPM firmware: no action needed (REJECTED as a 16.0 regression).** Both trees ship
+  the same 7 `pcm_*.bin` and list them in proprietary-files.txt; the kernel asks for
+  `_m`-suffixed names (`pcm_suspend_m.bin`) that no stock blob set contains — a
+  kernel-4.4-vs-3.18-blob naming mismatch that is identical on 15.1. Deep-idle only.
+- **REMAINING BLOCKER: the audio HAL.** `audioserver` exit-1 loop continues
+  (counter still incrementing). Subagent working the `audio_hw_device` offset
+  mismatch / MTK-vs-AOSP HIDL impl question.
