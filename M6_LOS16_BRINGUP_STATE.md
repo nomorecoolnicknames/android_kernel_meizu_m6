@@ -864,3 +864,22 @@ Artifacts this round: kernel `Image.gz-dtb` sha256 `2538c19a…` (c-table+force-
 `675ea732…` (p-table+force-reinit); boot images `aa51fb27…`, `3586d0b4…` (md5), all flashed
 with byte-exact readback. Device currently hangs silently (no USB) → needs a power-cycle and
 TWRP again for the next iteration.
+
+### FINAL ROM FLASHED (2026-07-25 16:46) — autoflash ran unattended, all gates passed
+Physical cause of the long USB outage: **the front-panel USB ports were bad**. Proof
+chain: our m681 failed to enumerate on hub ports 1-9.3 AND 1-9.4 with
+`device not accepting address … error -71` / `unable to enumerate USB device`, while
+the M6 (711HEBRN23L3N) enumerated fine on those very same ports — i.e. the fault
+travelled with the m681's front-port path, not with the hub. Moving the phone to a
+REAR motherboard port fixed it instantly. (Earlier "it's in fastboot" was also a
+misread caused by this: the port showed a stale `ff/42/01` descriptor.)
+
+`m681_autoflash.sh` fired by itself at 16:39:48 and completed at 16:46:35, every gate
+verified:
+- identity gate `ro.product.device=m681` + `twrp=yes` → passed
+- zip pushed (733 161 807 B, 158 s), **on-device md5 `20c9c6b9…` == host md5**
+- `twrp wipe cache/dalvik/data`, `twrp install` → `script succeeded: result was [1.000000]`
+- **boot partition readback `41d370de…` == built boot.img → BOOT VERIFIED**
+- rebooted to system; acceptance pass running.
+(The single harmless error in the log — `/sbin/sh: logcat: not found` — is just TWRP
+lacking logcat for the pre-reboot buffer clear.)
