@@ -1001,3 +1001,39 @@ Neither tree sets any `debug.sf.disable_hwc` / HWC board flags for m681 (checked
 system.prop and BoardConfig in both), so how 15.1 drove the display with the SAME blob
 is the key open comparison — dispatched to a subagent, with the fb0-adapter route as a
 second candidate to be judged on evidence, not adopted reflexively.
+
+### Blocker 20 investigation — the architectural difference, and a partial refutation
+Subagent (HWC lane) delivered the decisive structural FACT:
+- **15.1 never used this code path at all.** Its SurfaceFlinger builds the pre-Treble
+  HWC1 variant (`SurfaceFlinger_hwc1.cpp` + `HWComposer_hwc1.cpp`, selected by
+  `ifeq ($(TARGET_USES_HWC2),true)` … else, and `TARGET_USES_HWC2` is set NOWHERE for
+  m681 in either tree) and calls `hwc_open_1`/`getDisplayAttributes` in-process.
+  **Pie has no such fallback** — `frameworks/native/services/surfaceflinger/Android.bp`
+  has zero hits for HWComposer_hwc1/SurfaceFlinger_hwc1; it always goes HIDL
+  composer@2.1 passthrough → `HWC2On1Adapter`. Same blob (md5 `40ce3090…` identical in
+  both trees), structurally different caller. So "it worked on 15.1" does NOT transfer.
+- **Where the zeros are latched:** `HwcLoader::openDeviceWithAdapter` calls the blob's
+  `hwc_open_1()` and immediately wraps it in `HWC2On1Adapter`, whose
+  `Display::populateConfigs()` queries `getDisplayAttributes` **once, synchronously,
+  with no hotplug wait and no retry**. Whatever the blob has at that instant is final.
+  Width/height are true 0; vsyncPeriod is a small leftover (26) — a partially populated
+  config, not a scaling artifact.
+- Agent's lead: the blob exports `GuiExtClientConsumer::configDisplay(uint,bool,uint,
+  uint,uint)`, i.e. its display-config path runs through GuiExt IPC — and I had
+  DISABLED guiext-server. Its recommendation: restore the 15.1 combo
+  (guiext on, pq off).
+- **My correction to that recommendation:** the 15.1 combo's "provenness" was under the
+  HWC1 SurfaceFlinger, so it does not transfer either; and PQ is what stops the 60 s
+  `hwc_open_1` block. So I enabled BOTH.
+
+Live results (device, no reflash needed):
+- **`guiext-server` now RUNS and stays up** (pid stable; it used to die every 5 s) and
+  `GuiExtService` is registered in binder ⇒ **the libbinder asBinder fix covers the
+  GuiExtClient half too**, exactly as predicted. Both crash sites are closed by one fix.
+- **But restarting SurfaceFlinger with GuiExtService live did NOT fix the config** —
+  still `(1x1)`, `w=0 h=0`, 0 crashes. So "GuiExt starvation" is REFUTED for the
+  restart case. Remaining possibility: the blob populates its config only during early
+  boot, so the services must be up BEFORE SF's first `hwc_open_1`.
+- Now testing exactly that: both `start pq` and `start guiext-server` moved into
+  `/system/etc/init/forge-pq.rc` (fires on `init.svc.servicemanager=running`, i.e.
+  before SF opens the HWC), full reboot, measuring `Display device added`.
