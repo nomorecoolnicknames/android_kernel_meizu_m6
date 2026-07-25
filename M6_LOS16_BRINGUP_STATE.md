@@ -1236,3 +1236,30 @@ working — i.e. the device is grinding first-boot dexopt after the data wipe.
 **Fast iteration loop that works (user's suggestion, adopted):** no full bacon — build the
 single module (`mka libmtkshim_gui` ≈ 10 s), `adb root && mount -o rw,remount /system`,
 push the .so, reboot. `/system` remounts rw on this userdebug build.
+
+### 2026-07-25 — session end state (blocked on physical access)
+Last observed on device (uptime ~13 min): `surfaceflinger`/`zygote`/`bootanim` all
+`running` and stable, `system_server` alive 8:49 without restart, 30 services in
+`dumpsys -l`, load average ~13 with `installd` busy = first-boot dexopt after the wipe.
+`sys.boot_completed` had NOT flipped to 1 by then. The 30-minute watcher then lost adb at
+~12 min; a bus check shows **all three phones physically gone from west's USB** (ports 1-5,
+1-6, 1-8 no longer exist; a `USB DISK 3.0` appeared on 1-9.3) — i.e. the hub/cables were
+physically changed, not a device hang. Whether the boot completed after that is UNKNOWN.
+
+**User-visible display issues to fix next (their report + my measurements):**
+- Boot animation **rotated 180°**. Stock uses `ro.sf.hwrotation=0` / `ro.sf.lcd_density=320`
+  — the SAME values we ship, so the flip is kernel-side panel orientation, not a property.
+  **Ready to flash:** kernel rebuilt with `CONFIG_MTK_LCM_PHYSICAL_ROTATION="180"`
+  (`CONFIG_..._HW=y` was already set), `Image.gz-dtb` sha256
+  `8c2e89a9ef5bf5c794bb2f664b4c221f5456dab110f137655f8720136f3a4637`. This matches the
+  tree's historical note that HW 180 rotation "fixes upside-down logo+UI" on the M6.
+- Animation looks **oversized**. NOT a geometry error: SF reports the panel correctly
+  (720x1280, orientation 0, powerMode 2, rendering) and our driver's
+  `LCM_PHYSICAL_WIDTH/HEIGHT` = 68000/121000 um = **68x121 mm, identical to stock**
+  (stock writes 68/121 at its LCM_PARAMS offsets 996/1000; note our struct layout differs
+  by 12 bytes there — Honor BSP has extra dsi fields — so port such values BY NAME, not by
+  offset). Re-judge once the real UI is up rather than from the bootanimation.
+
+**Next actions:** reconnect the M6 → flash the rotation kernel → let the first boot finish →
+then wire `libmtkshim_audio` (audio HAL SIGSEGV), add `libsoftkeymaster.so`
+(goodixfingerprintd) and `libmtkshim_sensor` (MPED).
