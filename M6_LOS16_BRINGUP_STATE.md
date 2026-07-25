@@ -973,3 +973,31 @@ treating a symptom. Evidence chain:
   failed in TWRP (error 7), so the three files were pushed straight into the mounted
   /system with md5 verification on-device. Rebooted; verification pass running.
 - Reverted the unnecessary detour of building libgem/libgui_ext from source.
+
+### 2026-07-25 17:20 — libbinder fix VERIFIED on device; one blocker left
+Reboot with the fixed libbinder + `/system/etc/init/forge-pq.rc` (files pushed into
+the mounted /system in TWRP, md5-verified on-device):
+- **0 crashes for 11 minutes straight** (crash buffer empty). SF holds ONE pid (413)
+  the whole time, system_server stable (674), `init.svc.pq=running`.
+- `Waiting for service 'PQ'` occurrences: **0** (was a 60 s block).
+- **Audio HAL works** — `AudioFlinger: loadHwModule() Loaded primary audio interface`
+  + AudioALSASampleRateController activity ⇒ the `audio_hw_device` member-order fix is
+  CONFIRMED on hardware.
+- So blockers 11 (xlog), 14 (perms), 17 (audio ABI) and 19 (asBinder ABI) are all
+  verified fixed on the device; the GuiExt and PQ crashes were one and the same bug.
+
+**REMAINING (blocker 20): the MTK HWC returns an all-zero display config.**
+`DisplayManagerService: Display device added … "Built-in Screen" 0 x 0,
+supportedModes[{width=0, height=0, fps=3.846154E7}], presDeadline 26` → 415×
+`rejecting buffer … front.active{w=0,h=0}` → bootanimation can't draw a single frame,
+`sys.boot_completed` never set. fps 3.8e7 ⇒ vsyncPeriod ≈ 26 ns, i.e. EVERY attribute
+is zero/garbage, not just the size.
+**The kernel side is provably fine:** `/sys/class/graphics/fb0/modes` = `U:1080x1920p-0`,
+`virtual_size` 1088,5760 (triple-buffered), `bits_per_pixel` 32, `stride` 4352,
+`/dev/graphics/fb0` present as system:graphics. So the panel geometry is known to the
+kernel and the zeros come from `hwcomposer.mt6755.so` (HWC1 module driven through
+Pie's passthrough + HWC1→HWC2 adapter).
+Neither tree sets any `debug.sf.disable_hwc` / HWC board flags for m681 (checked
+system.prop and BoardConfig in both), so how 15.1 drove the display with the SAME blob
+is the key open comparison — dispatched to a subagent, with the fb0-adapter route as a
+second candidate to be judged on evidence, not adopted reflexively.
