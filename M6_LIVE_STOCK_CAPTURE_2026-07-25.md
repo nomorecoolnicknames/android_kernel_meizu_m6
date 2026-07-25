@@ -92,3 +92,30 @@ throwaway `fastboot boot <img>`. If LK still refuses writes, the lock is enforce
 - `/proc/driver/camsensor*` read back empty (only `camera_info` yields data).
 - No LCM lines in `dmesg` (ring already rotated at capture time, uptime long).
 - Camera clock table captured at IDLE only (see camera lane above).
+
+## 2026-07-25 — TWRP + pre-flash backups (M6 711HEBRN23L3N)
+- **TWRP was ALREADY flashed** (FACT): the recovery partition `mmcblk0p1` (32 MB) read back
+  byte-identical to `/srv/forge/android/meizu_m6/twrp_notneffos.img`
+  (md5 `f5acd829089aa26a82f3ad4bbd82d833`, sha256 `5c878da5b3569bad208aa64be2e161b67ce25367dca57850adca793bdb49f57a`).
+  → No write performed; writing identical bytes buys nothing and only spends flash wear.
+  Image header: `ANDROID!`, kernel 8 026 965 B @0x40080000, ramdisk 6 650 782 B @0x45000000,
+  page 2048, cmdline `bootopt=64S3,32N2,64N2` — matches M6 geometry.
+- Booted into it: **TWRP `3.2.3-by uznaikaz`**, build `meizu_m6-userdebug 6.0.1 MOB31K
+  eng.zedd.20180923`, recovery kernel `3.18.35+`, adb in recovery OK.
+- **Pre-flash backups on west `/home/gun/m6-backups/`:**
+  - `recovery_backup_pre_twrp.img` 33 554 432 B md5 `f5acd829…` (== the TWRP image).
+  - `boot_stock_flyme6.2.0.0RU.img` 16 777 216 B md5 `04845e4288712a8d5014b210b192d27d`
+    — **stock boot of THIS unit/firmware line (6.2.0.0RU)**, not previously archived
+    (memory's stock reference is the 7.1.2.0G line). Keep as the rollback + kernel reference.
+
+## xlog shim for the LOS 16.0 M6 build (user request after the m681 stall)
+- FACT: a **parallel agent** added the MTK xlog shim to the SHARED 16.0 tree
+  (`system/core/liblog/logger_write.c`, weak `__xlog_buf_printf` → `__android_log_vprint`,
+  gated by `ro.disable.xlog`; a port of 15.1 commits 54cf75f21/18c1e6798) and is running
+  its own `m681-rebuild3` in the same tree. Their edit is left untouched (uncommitted,
+  in-flight per CLAUDE.md §5); the M6 rebuild simply inherits it.
+- FACT: **M6 does NOT ship `guiext-server`** (absent from `vendor/meizu/meizu_m6`), so the
+  exact m681 crash-loop cannot occur on M6 — but the same undefined symbol is referenced by
+  other MTK blobs M6 DOES ship (hwcomposer.mt6755, libcam.*, libGLES_mali), so the shim is
+  wanted here too.
+- M6 zip `62563129…` (2026-07-24) predates the shim → rebuilding before flashing.
