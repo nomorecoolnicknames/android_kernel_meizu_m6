@@ -417,3 +417,32 @@ BLOCKED: m681 is off-USB in every mode; needs a physical force-off (Power 10-15 
 motherboard root-hub port (no power switching); the Genesys hub 1-9 on west DOES
 support ppps — moving the cable there would make future recoveries fully remote
 (uhubctl now installed).
+
+## 2026-07-25 — M6 FLASH LANE (stock Flyme 6.2.0.0RU → LOS 16.0, device 711HEBRN23L3N)
+Rebuilt WITH the xlog shim first (user: «не забудь добавить туда шимы»):
+- The shim came from a **parallel agent's** in-flight edit to the shared tree
+  (`system/core/liblog/logger_write.c`, weak `__xlog_buf_printf` → `__android_log_vprint`,
+  `ro.disable.xlog` escape hatch). Left untouched, inherited by the M6 build.
+- **Verified in the built artifacts (FACT):** `nm -D --defined-only` finds
+  `__xlog_buf_printf` in BOTH `system/lib/liblog.so` and `system/lib64/liblog.so`.
+- M6 does NOT ship `guiext-server` (that blob is m681-only), so the m681 crash-loop was
+  never going to hit M6 — but the same symbol is referenced by MTK blobs M6 does ship.
+- Rebuild 50:36 (contended with the other agent's m681 build on the same 8 cores) →
+  **`lineage-16.0-20260725-UNOFFICIAL-meizu_m6.zip`** 656 435 275 B,
+  sha256 `9052a1e9ad421f9f9911f0184fad465c689153f9caba20bbec4de5b77c4f9cc1`, unzip -t OK,
+  kernel pin unchanged (#209 `57a13343…`). Supersedes the 20260724 zip on gdrive.
+
+Flash protocol (all `adb -s 711HEBRN23L3N`, identity-gated on `ro.product.device=meizu_M6`):
+- **TWRP: no write needed** — recovery `p1` already byte-identical to `twrp_notneffos.img`
+  (md5 `f5acd829…`). Booted it: TWRP **3.2.3-by uznaikaz**.
+- Backups first: `recovery_backup_pre_twrp.img`, `boot_stock_flyme6.2.0.0RU.img`
+  (md5 `04845e42…`), and `/data/media` user files (110 MB, 150 files) → `/home/gun/m6-backups/`.
+- **TWRP 3.2.3 CLI traps (FACT, cost two rounds):** `twrp wipe data` reports success but
+  does NOTHING (stock /data dirs survived); `twrp format data` → `E:Unrecognized script
+  command: 'format'`. What works is the **path form `twrp wipe /data`** (left 3 entries).
+  On the m681 TWRP 3.7.0 the `wipe data` form did work — CLI differs per TWRP version.
+- Pushed zip to `/data/media` (md5 `d0dcddca…` == west copy), `twrp install` →
+  `script succeeded: result was [1.000000]`, `Updater process ended with RC=0`, radio images
+  written (md1rom/md1dsp/md3rom/md1arm7), target `meizu/lineage_meizu_m6/meizu_m6:9`.
+- **Post-flash `p21` readback == west boot.img** md5 `a2edabf5c64b5f48306ca0deb6433157` (byte-exact).
+- Rebooted to system; first boot after a data wipe (dex2oat) in progress — acceptance pending.
