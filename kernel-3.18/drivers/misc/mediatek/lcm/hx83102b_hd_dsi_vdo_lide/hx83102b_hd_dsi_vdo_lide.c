@@ -224,8 +224,12 @@ static struct LCM_setting_table init_setting[] = {
 	{ 0x11, 0x00, {} },
 	/* 0xB9: set power (SETPOWER, 3 params 0x83 0x10 0x2B) */
 	{ 0xB9, 0x03, { 0x83, 0x10, 0x2B } },
-	/* 0xB1: set osc (0x04 0x04 0x2A 0x2B 0x2B) */
-	{ 0xB1, 0x04, { 0x04, 0x04, 0x2A, 0x2B, 0x2B } },
+	/* 0xB1: set osc — 4 params.  The Stage-1 note recorded five bytes
+	 * (a duplicated leading 0x04) against count=0x04, so push_table would
+	 * have sent {04,04,2A,2B} instead of the stock {04,2A,2B,2B}.
+	 * Re-decoded from stock vmlinux rodata @0xffffffc001173a88 entry 2
+	 * (stride 0x48, u32 cmd / u8 count / u8 para[64]). */
+	{ 0xB1, 0x04, { 0x04, 0x2A, 0x2B, 0x2B } },
 	/* delay 120 ms */
 	{ REGFLAG_DELAY, 0x78, {} },
 	/* 0x29: display-on */
@@ -300,25 +304,40 @@ static void lcm_get_params(LCM_PARAMS *params)
 	params->dsi.packet_size = 256;
 	params->dsi.PS = LCM_PACKED_PS_24BIT_RGB888;
 
-	/* M6T 720x1440 timing — recovered straight from the stock
-	 * lcm_get_params body, NOT the M6 ili9881p template: verticals
-	 * differ because the panel's physical row count is different. */
+	/* M6T 720x1440 timing.
+	 *
+	 * Re-derived 2026-07-25 by disassembling the stock lcm_get_params
+	 * @0xffffffc0004e71e8 and resolving every store offset against
+	 * offsetof(LCM_PARAMS, ...) compiled from this tree's lcm_drv.h
+	 * (sizeof(LCM_PARAMS) == 1040).  The previous values were shifted by
+	 * one field vertically and had the horizontal porches set to the
+	 * active-pixel counts (720/1440 instead of 30/30), which would have
+	 * stretched the line period ~3x and produced no usable image.
+	 *
+	 *   [520] vertical_sync_active     = 2
+	 *   [524] vertical_backporch       = 15
+	 *   [528] vertical_frontporch      = 200
+	 *   [536] vertical_active_line     = 1440
+	 *   [540] horizontal_sync_active   = 20
+	 *   [544] horizontal_backporch     = 30
+	 *   [548] horizontal_frontporch    = 30
+	 *   [556] horizontal_active_pixel  = 720
+	 */
 	params->dsi.vertical_sync_active   = 2;
-	params->dsi.vertical_backporch     = 2;
-	params->dsi.vertical_frontporch    = 15;
+	params->dsi.vertical_backporch     = 15;
+	params->dsi.vertical_frontporch    = 200;
 	params->dsi.vertical_active_line   = FRAME_HEIGHT;
-	params->dsi.vertical_frontporch_for_low_power = 200;
 
 	params->dsi.horizontal_sync_active  = 20;
-	params->dsi.horizontal_backporch    = 720;
-	params->dsi.horizontal_frontporch    = 1440;
-	params->dsi.horizontal_active_pixel  = FRAME_WIDTH;
+	params->dsi.horizontal_backporch    = 30;
+	params->dsi.horizontal_frontporch   = 30;
+	params->dsi.horizontal_active_pixel = FRAME_WIDTH;
 
+	/* [656] PLL_CLOCK = 250, [676] ssc_range = 5, [684] cont_clock = 1.
+	 * Stock leaves ssc_disable ([672]) at 0, i.e. SSC stays ENABLED. */
 	params->dsi.PLL_CLOCK = 250;
-	params->dsi.PLL_CK_CMD = 250;
-	params->dsi.PLL_CK_VDO = 250;
-	params->dsi.ssc_disable = 1;
-	params->dsi.clk_lp_per_line_enable = 0;
+	params->dsi.ssc_range = 5;
+	params->dsi.cont_clock = 1;
 
 	/* ESD recovery hits the same ddp_dsi_config "goto done" path as
 	 * the M6 ili9881p panel did — turn it off until the bring-up
