@@ -264,3 +264,31 @@ Full bacon 2:44:57 (out=/src/out-m6t). ZERO extra blockers (как и m681).
 
 m6 uploaded to gdrive:ReMeizu/M6-LOS16/. m681/M6T zips NOT uploaded yet.
 Nothing flashed yet (human-confirmed gate). Sources/patches NOT pushed yet.
+
+## 2026-07-25 — kernel refresh round (user: «у M6T новое ядро, у m681 доработки — проверь»)
+Both confirmed (FACTs) and incorporated:
+
+- **m681: pin updated to the converged `out-connfix` kernel.** The 4.4 lane moved past
+  our Jul-17 `out-local` pin: `out-connfix` Image.gz-dtb (md5 `46e1fb64…` — matches the
+  identity gate in `allbaked1/PACK_allbaked1.sh`; sha256 `fe027c5a…867e`) =
+  "final-converge @703cf3d4: consys 3-fix + EMI remap + audio". Swapped into
+  `device/meizu/m681/prebuilt-kernel/` on west, incremental bacon 04:24 →
+  **`lineage-16.0-20260725-UNOFFICIAL-m681.zip`** 733 136 602 B, sha256
+  `bf388b4204078d3371fe12cc1147aa963ee178a967b38ba281439d2b14d48987`, unzip -t OK,
+  kernel-in-boot == connfix pin (verified), boot-in-zip == loose boot.img.
+  The 20260724 m681 zip (old kernel) is superseded.
+
+- **M6T: source-built kernel staged, zip left on stock (rollback-safe).** The kernel-RE
+  lane (see `/srv/forge/android/meizu_m6t/KERNEL_REVERSE_HANDOFF.md`) produced a
+  source-built `Image.gz-dtb` incl. the Stage-1 RE-ported REAL panel driver
+  `hx83102b_hd_dsi_vdo_lide` (built Jul 24 17:07, 7 759 202 B, sha256 `5ffd9688…f539`).
+  It is NOT hardware-validated yet (their Stage 3 pending; no M6T on the bench), so:
+  (a) the 16.0 zip keeps the STOCK kernel `e45de551…` (unchanged);
+  (b) the source kernel is staged in-tree as
+  `device/meizu/M6T/prebuilt-kernel/Image.gz-dtb.forge-source` (their Layer-2 convention);
+  (c) built a bench-flash artifact **`/home/gun/boot-M6T-16.0-sourcekernel.img`**
+  (9 564 160 B, sha256 `0df0f0494a1fc5d7cf7be0068e3ebdf7ee75ec7f31dddae62efb5345cc8a0d46`)
+  = source kernel + our LOS 16.0 M6T ramdisk (python repack of the green boot.img;
+  original second_size=0 verified, page 2048, header/cmdline preserved).
+  Flip to source in the ROM = overwrite prebuilt Image.gz-dtb with .forge-source and
+  re-bacon, AFTER a bench flash proves the panel comes up.
