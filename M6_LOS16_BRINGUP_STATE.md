@@ -647,3 +647,36 @@ Fresh logs: west `/home/gun/m681-los16-logs2/`, local
 - **REMAINING BLOCKER: the audio HAL.** `audioserver` exit-1 loop continues
   (counter still incrementing). Subagent working the `audio_hw_device` offset
   mismatch / MTK-vs-AOSP HIDL impl question.
+
+### Blocker 17: audio HAL — Pie inserted a struct member MID-STRUCT (root cause PROVEN)
+Subagent report + my own header verification:
+- **FACT: the blob was never recompiled** — `audio.primary.mt6755.so` is byte-identical
+  between the 15.1 and 16.0 vendor trees (md5 `c2739e1d…` 32-bit / `56d4c66d…` 64-bit).
+- **FACT: Pie/LOS16 `hardware/libhardware/include/hardware/audio.h` inserts
+  `get_microphones` BETWEEN `close_input_stream` and `dump`**, not at the tail
+  (verified by me directly: 16.0 order 727 close_input_stream → 745 get_microphones →
+  750 dump → 756 set_master_mute → 765 get_master_mute → 774 create_audio_patch;
+  15.1 order 679 → 683 dump → 689 → 698 → 707, no get_microphones at all). Every member
+  after it shifts by one pointer slot for a blob compiled against the old header.
+- **FACT: that is exactly the observed crash** —
+  `Device::getMasterMute` (`hardware/interfaces/audio/core/all-versions/default/…/
+  Device.impl.h:108-112`, an unguarded `mDevice->get_master_mute != NULL` call) reads
+  the shifted slot, which holds the blob's real `create_audio_patch` pointer, and calls
+  it with the wrong arguments → SIGSEGV inside `AudioALSAHardware::createAudioPatch+272`
+  on every one of the 7+ respawns, with identical PC offsets (deterministic ⇒ compile-time
+  offset bug, not corruption).
+- Subagent's H1 (my framing: "16.0 regressed to the AOSP impl, 15.1 used MTK's") was
+  **REJECTED with evidence**: both trees ship the same pair (`…@2.0-impl` +
+  `…@2.0-service.mtk`, device.mk:440-441 identical) and the MTK-named
+  `…@2.0-impl.mtk` module is built in NEITHER tree. Good catch — my lead was wrong.
+- **FIX APPLIED:** moved `get_microphones` to the END of `struct audio_hw_device` in
+  `hardware/libhardware/include/hardware/audio.h`, restoring the pre-P prefix layout.
+  Safe because nothing in this tree defines `audio_hw_device` from source (grep: zero
+  in-tree initialisers; only prebuilt blobs populate it), and for an old blob the new
+  trailing slot reads NULL so the framework's `!= NULL` guard just reports "no
+  microphone info". Rebuilt `android.hardware.audio@2.0-impl` (29 s, both arches) and
+  pushed live via `adb push`, then rebooted.
+  ⚠ `hardware/libhardware` is a SHARED top-level project → this also fixes m6/M6T in
+  advance; it must be re-applied if that project is ever re-synced/rebased (candidate
+  for the forge-build patches overlay alongside the two lineage patches and the
+  system/core legacy-symbol port).
