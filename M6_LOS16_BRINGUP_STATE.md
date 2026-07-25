@@ -329,3 +329,20 @@ Flash protocol executed (all `adb -s 91HEBNL163XD`):
 - p22 post-flash readback md5 == west boot.img `d151db2e…` (byte-exact).
 - Rebooted to system; awaiting first-boot acceptance (crash_dump flat, policy md5,
   stpbt perms from boot, wifi driver status) per gw_verify_allbaked1.sh pattern.
+11. **FIRST BOOT STUCK (m681, LOS16): zygote cycles, SF never starts.** FACTS:
+   crash_dump=0 (storm fix HOLDS), zygote PID churns every ~10 s, `pidof
+   surfaceflinger` empty, crash buffer: `guiext-server` linker-fatal every 5 s —
+   `cannot locate symbol "__xlog_buf_printf"`. ROOT CAUSE: the 15.1 lane carried
+   system/core commits `54cf75f21`+`18c1e6798` (liblog `__xlog_buf_printf` weak
+   shim + map export; libcutils `legacy_atomic.c` with the FULL android_atomic_*
+   family — live-proven needs of pre-L MTK blobs: hwcomposer.mt6755, libGLES_mali,
+   guiext-server, libcam.*). The 16.0 system/core has neither → the whole MTK
+   graphics stack fails to link → SF dead → boot never completes.
+   FIX: hand-ported both (git apply failed on Pie divergence): legacy_atomic.c
+   verbatim + Android.bp srcs entry; xlog shim appended to Pie logger_write.c
+   (guarded includes) + `__xlog_buf_printf` in LIBLOG_O map node. Rebuild #3 running.
+   ⚠ CONSEQUENCE FOR THE FAMILY: patch lives in SHARED system/core → the m6 zip
+   `62563129…` (incl. the gdrive copy) and M6T zip `0f332e7c…` were built WITHOUT
+   it and would hit the same SF death — REBUILD both before any flash.
+   These two system/core commits + kernel.mk/BoardConfigKernel patches = the LOS16
+   patches overlay set (reproducibility TODO).
