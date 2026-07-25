@@ -398,3 +398,22 @@ Plan on return: fastboot → flash TWRP (recovery or boot) → TWRP `adb push` t
 liblog.so (or install the fixed zip) → restore proper boot.img.
 If it stays absent it needs a physical force-off (hold Power ~10-15 s) / replug,
 which also puts MTK into preloader where mtkclient can flash.
+
+### FIXED m681 zip READY (waiting on the device, 2026-07-25)
+Rebuild #3 (45:49, full re-link after the system/core change) →
+`lineage-16.0-20260725-UNOFFICIAL-m681.zip` 733 140 237 B, sha256
+`880528ae3413c0cfcb79d111348b0a5ab211c85821c92cb14f5e91067c5cf525`, unzip -t OK.
+Verified IN THE BUILT SYSTEM TREE (note: a Pie LOS zip is a BLOCK OTA —
+system.new.dat — so `unzip -p system/...` is meaningless, verify $OUT/system/):
+- `__xlog_buf_printf` exported by liblog.so — BOTH lib64 and lib (1 each).
+- `android_atomic_*` exported by libcutils.so — BOTH arches (2 matches each).
+- `/vendor/etc/seccomp_policy/mediacodec.policy` md5 `75bbf8a7…` (storm guard).
+- ramdisk `ueventd.mt6755.rc`: `/dev/stpbt 0660 bluetooth bluetooth` (BT perms).
+- boot.img kernel == connfix `fe027c5a…`.
+Supersedes `e3b8f55e…` (flashed, SF-dead) and `bf388b42…` (on gdrive) — re-upload
+the winner after the device accepts it.
+BLOCKED: m681 is off-USB in every mode; needs a physical force-off (Power 10-15 s)
++ replug. Watcher armed on west. NOTE for the bench: the phone sits in a
+motherboard root-hub port (no power switching); the Genesys hub 1-9 on west DOES
+support ppps — moving the cable there would make future recoveries fully remote
+(uhubctl now installed).
