@@ -296,3 +296,36 @@ Both confirmed (FACTs) and incorporated:
   lineage-16.0-20260725-UNOFFICIAL-m681.zip` — 733 136 602 B, remote sha256
   `bf388b42…d48987` == local == build (verified rclone hashsum + listing; folder
   now 3 objects, 1.303 GiB). Zip only per user; M6T artifacts NOT uploaded.
+
+## 2026-07-25 — m681 FLASH LANE (LOS 15.1 → 16.0 on device 91HEBNL163XD)
+Handoff consumed: `/srv/forge/android/m681/docs/M681_HANDOFF_TO_LOS16.md` (container
+228 dead; m681 now on west hub with 2 foreign phones — every command serial-gated).
+
+Pre-flash fixes (found by inspecting OUR zip against the handoff's known traps —
+both were present in the 16.0 build):
+9. **mediacodec.policy MISSING in the 16.0 vendor** (identical to the 15.1 trap:
+   omx pselect6→SIGSYS→crash_dump storm→OOM). FIX at the source: policy file
+   (md5 75bbf8a7, from allbaked ramdisk-overlay) → `device/meizu/m681/seccomp/` +
+   explicit PRODUCT_COPY_FILES → `/vendor/etc/seccomp_policy/mediacodec.policy`.
+   Verified in built system tree post-rebuild.
+10. **`net_bt_stack` group all over the m681 rootdir** (Pie dropped the group →
+   ueventd rejects the /dev/stpbt line → root:root 0600 → BT HAL EACCES). FIX:
+   sed net_bt_stack→bluetooth across ALL device/meizu/m681/rootdir files
+   (ueventd.mt6755.rc, ueventd.rc, init.connectivity.rc, init.project.rc,
+   init.nvdata.rc, init.rc — grep-clean after).
+- Rebuild #2 (04:24) → FINAL zip `lineage-16.0-20260725-UNOFFICIAL-m681.zip`
+  733 101 167 B sha256 `e3b8f55eef068c09a0ff26da9423a8c2ce04c99e8620fc9bc830c279da7f8431`
+  (supersedes the gdrive-uploaded `bf388b42…` — re-upload after device acceptance).
+  Kernel in boot still connfix `fe027c5a…` (verified).
+
+Flash protocol executed (all `adb -s 91HEBNL163XD`):
+- Identity gate: ro.product.device=m681, lineage=15.1-20260712 (pre-flash), serial OK.
+- p22 readback backup → `/home/gun/m681-work/p22_backup_pre16-20260725.img`;
+  head -c 9730048 md5 == `1083ff05` == boot_44_allbaked1 (FACT: device ran allbaked1).
+- zip pushed to /sdcard (md5 ff2b5d20 == west copy), `adb reboot recovery` →
+  **TWRP 3.7.0_9-0** (kernel 3.10.72), `twrp wipe cache/dalvik/data` (major bump,
+  bench device, no SIM; internal storage preserved), `twrp install` →
+  script result 1.000000, Updater RC=0, target meizu/lineage_m681/m681:9.
+- p22 post-flash readback md5 == west boot.img `d151db2e…` (byte-exact).
+- Rebooted to system; awaiting first-boot acceptance (crash_dump flat, policy md5,
+  stpbt perms from boot, wifi driver status) per gw_verify_allbaked1.sh pattern.
