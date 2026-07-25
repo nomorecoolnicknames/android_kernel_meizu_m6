@@ -796,3 +796,31 @@ same signature as the stock-kernel graft. So a SECOND blocker sits after the dis
   is RE-extracting the exact `ili9881c_hd_dsi_txd` tables from THIS unit's stock kernel
   (`/home/gun/m6-backups/boot_stock_flyme6.2.0.0RU.img`) — same method the M6T lane used for
   `hx83102b_hd_dsi_vdo_lide`.
+
+### FINAL m681 zip built; flashing blocked on a flaky USB transport (2026-07-25 15:38)
+**`lineage-16.0-20260725-UNOFFICIAL-m681.zip`** — 733 161 807 B, sha256
+`61cf74b22895755194f5edf76e1159b75c31a2e98612ab86af75075f065a40c5`
+(incremental bacon 05:20). All six fixes VERIFIED IN THE BUILT TREE (not assumed):
+`init.trace.rc` import present, 3 vibrator chown/chmod lines, `#start guiext-server`
+commented, `FenceD1Ev`+`FenceD2Ev` exported by libmtkshim_gui.so, audio impl relinked
+15:23 (after the 15:22 audio.h edit), mediacodec.policy + `bluetooth` stpbt group.
+
+**USB transport trouble (device-side, not build-side).** After the audio-fix reboot the
+phone stopped answering: on OUR port (1-8) sysfs shows a single interface `ff/42/01`
+(= adb; fastboot would be `ff/42/03`, which is why `fastboot` sits in
+`< waiting for … >` and is NOT a usable channel), no driver bound, node chmod 666,
+`gun` in plugdev, targeted kernel-level `unbind/bind` of port 1-8 tried — the adb
+server still won't claim it; it flickered into the list once as `offline` and vanished.
+The shared adb server was deliberately NOT restarted: another agent's M6
+(711HEBRN23L3N) is sitting in recovery on it. It also briefly appeared in BROM on
+port 1-8 earlier (identified by PORT, since BROM exposes no serial).
+⚠ Bench note: mode must be identified by OUR port's interface triple, never by the
+global `fastboot devices`/`adb devices` list — this hub carries two foreign phones.
+
+**Armed `/home/gun/m681_autoflash.sh`** (log `/home/gun/m681-autoflash.log`): waits up
+to 40 min for the serial in any usable state, heals an `offline` transport with
+`adb reconnect offline` (never kill-server), HARD-GATES on
+`ro.product.device == m681` and on TWRP being present, then pushes the zip, verifies
+md5 on-device, wipes cache/dalvik/data, `twrp install`, verifies the boot partition
+readback against `boot.img`, and reboots. Stops with a labelled exit code instead of
+guessing if anything is off. Needs one physical cable replug to trigger.
