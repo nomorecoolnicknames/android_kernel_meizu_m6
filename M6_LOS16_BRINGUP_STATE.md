@@ -446,3 +446,20 @@ Flash protocol (all `adb -s 711HEBRN23L3N`, identity-gated on `ro.product.device
   written (md1rom/md1dsp/md3rom/md1arm7), target `meizu/lineage_meizu_m6/meizu_m6:9`.
 - **Post-flash `p21` readback == west boot.img** md5 `a2edabf5c64b5f48306ca0deb6433157` (byte-exact).
 - Rebooted to system; first boot after a data wipe (dex2oat) in progress — acceptance pending.
+
+### BROM recovery executed — TWRP now in the boot partition (2026-07-25)
+The watcher caught the phone in **BROM/preloader** (t=1590 s into the watch).
+mtkclient on west (`/home/gun/mtkclient`, `.venv` deps OK) handshook, loaded the DA
+(EMMC USER 0x3a3e00000), and **wrote `m681_twrp_44kernel.img` (md5 `9b1a2069…`,
+16 MB = exact partition size) to the `boot` partition** — sector 1447936, 32768
+sectors, ~9 MB/s, "Wrote ... " confirmed. Rationale: a TWRP in `boot` boots
+deterministically without depending on lk's `reboot recovery` (which did NOT stick
+earlier) or the BCB.
+`mtk reset` was then sent; mtkclient reports *"Reset command was sent. Disconnect
+usb cable to power off"* — the DA halts the phone and it is off USB again.
+It should come up as TWRP on the next power-on (charging boot / replug). Watcher armed.
+⚠ The LOS16 boot.img (`d151db2e`) is currently OVERWRITTEN by TWRP — restore it from
+TWRP (`dd` of the pushed boot.img) or via fastboot after the ROM install.
+Full remaining sequence once TWRP is up (all remote):
+`adb push` fixed zip `880528ae…` → `twrp install` → push+`dd` boot.img to
+/dev/block/mmcblk0p22 → reboot → acceptance (crash_dump flat, SF alive, stpbt perms).
