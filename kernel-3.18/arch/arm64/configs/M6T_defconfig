@@ -270,6 +270,12 @@ CONFIG_MTK_AUTO_DETECT_ALSPS=y
 CONFIG_MTK_AUTO_DETECT_MAGNETOMETER=y
 CONFIG_CUSTOM_KERNEL_ACCELEROMETER=y
 CONFIG_MTK_BMA253=y
+# M6T: the stock kernel compiles bma250 (18 syms) + kxtj2_1009 (28 syms) as its
+# accelerometer pair, not bma253. The in-tree bma250e driver is the SAME driver
+# (bma250_i2c_probe / bma250_init_client / bma250_i2c_remove all match the stock
+# symbol names), so enable it alongside; AUTO_DETECT_ACCELEROMETER picks whichever
+# probe succeeds, exactly like the multi-vendor panel and camera slots.
+CONFIG_MTK_BMA250E=y
 CONFIG_MTK_KXTJ2_1009_NEW=y
 CONFIG_CUSTOM_KERNEL_ALSPS=y
 CONFIG_MTK_LTR578=y

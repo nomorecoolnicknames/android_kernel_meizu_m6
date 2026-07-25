@@ -112,15 +112,20 @@
 	};
 /*  start sensor */
 	cust_accel {
-		/* M6T: stock kallsyms shows bma250 AND kxtj2_1009 drivers both
-		 * compiled in (auto-detect). Exact chip on gsensor@0x68 slot per
-		 * dumped DTS — fallback to bma253 until the M6T specific accel is
-		 * confirmed at runtime; CONFIG_MTK_AUTO_DETECT_ACCELEROMETER=y
-		 * lets the framework pick whichever driver's probe succeeds. */
+		/* M6T: stock compiles bma250 (18 syms) AND kxtj2_1009 (28 syms);
+		 * CONFIG_MTK_BMA250E=y now gives us the bma250 half too, and
+		 * AUTO_DETECT_ACCELEROMETER picks whichever probe succeeds.
+		 *
+		 * direction: was <2>, inherited from meizu_m6.dts. The stock M6T
+		 * DTB's cust_accel says direction = <0x00>. This node supplies the
+		 * mount orientation to whichever accel driver probes, so the value
+		 * is a property of the M6T board rather than of the chip, and the
+		 * stock value wins over M6's. A wrong direction leaves the sensor
+		 * working but with rotated axes (auto-rotate/tilt misbehave). */
 		compatible = "mediatek,bma253";
 		i2c_num = <1>;
 		i2c_addr = <0x18 0 0 0>;
-		direction = <2>;
+		direction = <0>;
 		power_id = <0xffff>;
 		power_vol = <0>;
 		firlen = <16>;

@@ -179,7 +179,14 @@ static struct GSENSOR_VECTOR3D gsensor_gain;
 #define GSE_LOG(fmt, args...)    pr_debug(GSE_TAG fmt, ##args)
 /*----------------------------------------------------------------------------*/
 
-struct acc_hw accel_cust;
+/* M6T: was a NON-static `accel_cust`, which collides at link time with the
+ * identically-named global in KXTJ2_1009-new/kxtj2_1009.c as soon as two accel
+ * drivers are built together ("multiple definition of `accel_cust'").  M6T
+ * enables bma250e + kxtj2 + bma253 for auto-detect, so they now coexist.
+ * bma253-new hit the same problem earlier and was fixed by renaming; nothing
+ * outside this file ever referenced the symbol, so making it static is the
+ * cleaner form of the same fix and cannot collide again. */
+static struct acc_hw accel_cust;
 static struct acc_hw *hw = &accel_cust;
 
 static struct data_resolution bma250_data_resolution[1] = {
