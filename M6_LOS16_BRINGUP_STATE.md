@@ -1076,3 +1076,36 @@ init on its own. Rebuilt properly instead: kernel copied into
 (1:03) → `boot.img` md5 **`d3c486ee5e2a795bd913dc7b5615899c`**, fstab verified inside the
 built ramdisk. **Staged, not yet flashed** — device is hung off-bus awaiting a power-cycle
 into TWRP.
+
+### Blocker 20 — measured, three hypotheses REFUTED, one hard fact isolated
+Instrumented `HWC2On1Adapter::Display::populateConfigs()` (probe build pushed to the
+device) to see what the blob actually answers:
+- `getDisplayConfigs hwc1Id=0 ret=0 numConfigs=1 first=0` — one config, success.
+- `getDisplayAttributes(WITH_COLOR) ret=0 values=[26 0 0 0 0 0]` — **returns SUCCESS**,
+  so the adapter never tries the WITHOUT_COLOR fallback list.
+- Per-attribute queries (one attribute + terminator each, all ret=0):
+  VSYNC_PERIOD → 25, WIDTH → 0, HEIGHT → 0, DPI_X → 0, DPI_Y → 0.
+  The VSYNC value VARIES run to run (30, 26, 25); geometry is always 0.
+- Re-query after 300 ms: identical. Re-enumerate configs: identical.
+**REFUTED (each by a direct test):**
+1. "Adapter asks before callbacks are installed" — I moved `registerProcs()` BEFORE
+   `populatePrimary()` (restoring the canonical HWC1 order that 15.1's
+   HWComposer_hwc1.cpp:112/148/187 used: open → registerProcs → query). Rebuilt,
+   pushed, restarted SF: **no change**.
+2. "GuiExt/PQ starvation" — `guiext-server` now runs and stays up, `GuiExtService`
+   and `PQ` are both registered in binder (the libbinder asBinder fix revived
+   guiext-server exactly as predicted), tested both via SF restart and a fresh boot
+   with both services started early from /system/etc/init: **still 0x0**.
+3. "Missing/permission-broken device nodes" — `/dev/mtk_disp_mgr` (244,0
+   system:graphics), `/dev/graphics/fb0` (29,0 system:graphics), `/dev/ion`,
+   `/dev/mali0`, `/dev/sw_sync` all present with sane ownership.
+**Also tested and REJECTED as an escape route:** removing the MTK HWC so Pie uses its
+own `HWC2OnFbAdapter` — it opens the framebuffer through **gralloc's**
+`framebuffer_open()`, and MTK's gralloc.mt6755 does not implement that device:
+`ComposerHal: falling back to gralloc module` → `failed to open framebuffer device:
+Invalid argument` → SF fatal. So the fb route is not simply "GPU-only composition";
+it needs a framebuffer HAL this vendor stack never shipped. Blob restored afterwards.
+**Isolated fact:** hwcomposer.mt6755.so itself reports geometry 0 while claiming
+success — the precondition it needs is inside the blob. Handed to the HWC subagent for
+disassembly (which field gates width/height, what populates it, and whether an explicit
+blank/setPowerMode/ioctl handshake is required first).
