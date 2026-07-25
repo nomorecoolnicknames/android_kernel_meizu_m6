@@ -932,3 +932,44 @@ set by our driver) — the obvious next lead:
 transition timings, ESD/te parameters).
 Kernel artifacts: `Image.gz-dtb` sha256 for the stock-table build `d14d721d…`, for the
 stock-params build see `boot_M6_stockparams.img` above.
+
+### Blocker 19 — THE REAL ROOT: LineageOS's legacy asBinder() shim is 32-bit-only
+Chased the "frozen boot logo" and found that my earlier GuiExt conclusion was
+treating a symptom. Evidence chain:
+- After the flash the boot got much further: **no crash loops at all** (crash buffer
+  empty), audio-hal + vibrator `running`, SF and system_server stable, bootanimation
+  running — but 229× `SurfaceFlinger: [BootAnimation#0] rejecting buffer …
+  front.active{w=0,h=0}` and `DisplayManagerService: Display device added:
+  "Built-in Screen" … **0 x 0**, supportedModes[{width=0,height=0,fps=3.7e7}]`.
+- Cause of the 0x0: the log shows 60 s of `ServiceManager: Waiting for service 'PQ'`
+  — the MTK HWC blocks in `hwc_open_1` until the `PQ` binder service exists, then
+  times out and reports a null display config. `pq` is declared `disabled` in
+  init.mt6755.rc and nothing started it (the historic trigger only started
+  guiext-server, which I had disabled).
+- Started `pq` by hand → PQService registered → SF got further and **SIGSEGV'd**:
+  `#00 libbinder.so IInterface::asBinder() const+80` ←
+  `#01 libpqservice.so PQClient::assertStateLocked()+304` ← DpBlitStream ←
+  hwcomposer BliterHandler ← HWCDispatcher::onPlugIn ← DisplayManager::init.
+  **Same shape as the GuiExt crash, same fault address** — one bug, two callers.
+- **ROOT CAUSE (FACT, instruction-level):**
+  `frameworks/native/libs/binder/IInterface.cpp` declares the legacy compat symbols as
+  `void _ZNK7android10IInterface8asBinderEv(void *retval, void *self)` — that is the
+  **32-bit ARM** convention (r0 = hidden return slot, r1 = this). On AArch64 the
+  caller passes `this` in x0 and the return slot in x8. Disassembly of the shipped
+  64-bit libbinder.so: `mov x20, x1` (self ← x1, WRONG), `mov x19, x0`,
+  `ldr x8,[x20]`, `ldr x8,[x8,#16]` ← faults; and the tombstone's
+  `x8 = 0xd65f03c0` is literally the AArch64 encoding of `ret`, i.e. a word read out
+  of executable code, with fault addr `0xd65f03d0` == x8+0x10. Exact match.
+  The file is BYTE-IDENTICAL in the 15.1 tree — 15.1 never hit it because those paths
+  ran in 32-bit processes there (and PQ/HWC were deliberately left out).
+- **FIX:** give the shims a real return type and one argument so the compiler emits
+  the correct ABI on both arches (+ a local `-Wreturn-type-c-linkage` pragma, since we
+  intentionally export C++ return types under C linkage to match the blobs' mangled
+  names). Rebuilt libbinder; disassembly now reads `mov x20, x0` / `mov x19, x8` — correct.
+- **PQ re-enabled**: `start pq` added to init.mt6755.rc, and for the live test a
+  `/system/etc/init/forge-pq.rc` (Pie's init parses that dir, so no boot.img repack).
+- Delivered as a **1.1 MB patch zip** instead of a 733 MB ROM (user's call):
+  `/home/gun/m681-los16-fix-binder-pq.zip` (md5 `a49e6c14…`). Its edify mount step
+  failed in TWRP (error 7), so the three files were pushed straight into the mounted
+  /system with md5 verification on-device. Rebooted; verification pass running.
+- Reverted the unnecessary detour of building libgem/libgui_ext from source.
