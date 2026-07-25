@@ -824,3 +824,43 @@ to 40 min for the serial in any usable state, heals an `offline` transport with
 md5 on-device, wipes cache/dalvik/data, `twrp install`, verifies the boot partition
 readback against `boot.img`, and reboots. Stops with a labelled exit code instead of
 guessing if anything is off. Needs one physical cable replug to trigger.
+
+### 2026-07-25 (evening) — display hand-over is THE blocker; two fixes in, table still missing
+On-screen evidence from the user (the artifact I cannot read over USB) drove this round:
+1. **Hung on an UPSIDE-DOWN bootloader logo** with the ili9881c driver → the panel was lit by
+   LK, the kernel was alive but never repainted. `last_kmsg` (271 KB, preserved across the
+   WDT reset) showed: `M6L02 skip-power`, `M6L03 skip-init` (`enter f=0 i=1`), `cfg-begin`,
+   `cfg-done`, then an endless `edge-1/2/4/8/16/33 ms` wait ladder, log ends at ~2.5 s.
+   FACT from source: `primary_display.c:3947` takes `disp_lcm_init(plcm, 0)` when
+   `is_lcm_inited` — that branch also skips the `dpmgr_path_trigger()` that starts the video
+   path. On this unit the LK hand-over state does not match what the kernel programs.
+2. **Fix applied (kernel):** `#define FORGE_M6_FORCE_LCM_REINIT 1` in `primary_display.c` —
+   always take the full re-init branch (power+init+trigger) instead of trusting LK.
+   **Result: the display came ALIVE** — `last_kmsg` now 282 KB with `FRAME_DONE`,
+   `rdma_sof=1 dsi0_sof=1 dsi0_eof=1`, real frames; boot advanced **2.5 s → 32.8 s**.
+   User saw **garbage/black fill** instead of a frozen logo = the kernel is painting, but the
+   panel is programmed with the wrong sequence.
+3. **Where it now dies (FACT, lockdep dump at the 30 s watchdog):**
+   `3 locks held by swapper/0/1 … #2: (&(pgc->lock)) at disp_sw_mutex_lock` — the driver-probe
+   thread is stuck **inside display init while holding the display global lock**; between
+   4.4 s and 31 s the only other log line is `random: nonblocking pool is initialized`, then
+   `BUG at aee/common/wdt-atf.c:508` (the AEE watchdog handler itself).
+4. Tried `CONFIG_CUSTOM_KERNEL_LCM=ili9881p_hd_dsi_txd` **with** the force-reinit patch
+   (same TXD module vendor, different controller revision): also hangs, no USB.
+
+**Conclusion (INFERENCE, well supported):** the remaining blocker is the panel programming
+itself — we do not have the real `ili9881c_hd_dsi_txd` init table / DSI params for this
+module. Both stand-ins fail: the generic ILITEK reference paints garbage, the ili9881p table
+wedges.
+**Next step = RE the real thing** from this unit's own stock kernel, exactly like the M6T lane
+did for `hx83102b_hd_dsi_vdo_lide`:
+- stock kernel already extracted: `/srv/forge/android/meizu_m6/re-stock-lcm/stock_Image`
+  (19 207 240 B, decompressed from `boot_stock_flyme6.2.0.0RU.img`), the driver's strings are
+  at file offset ~15 210 400 (`[KERNEL/LCM]ili9881c_hd_dsi_txd lcm_init…`, `tps65132_*`).
+- naive byte-pattern search for the init table failed (the `FF 00 00 00 03` hits at 0xbdde5c
+  etc. are a different table) → use ghidra-headless: locate `ili9881c_hd_dsi_txd_lcm_drv`
+  via a pointer to the name string, then decode `init`/`get_params`.
+Artifacts this round: kernel `Image.gz-dtb` sha256 `2538c19a…` (c-table+force-reinit),
+`675ea732…` (p-table+force-reinit); boot images `aa51fb27…`, `3586d0b4…` (md5), all flashed
+with byte-exact readback. Device currently hangs silently (no USB) → needs a power-cycle and
+TWRP again for the next iteration.

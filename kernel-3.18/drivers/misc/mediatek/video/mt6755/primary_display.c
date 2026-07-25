@@ -3944,7 +3944,14 @@ int primary_display_init(char *lcm_name, unsigned int lcm_fps, int is_lcm_inited
 	if (lcm_param->type == LCM_TYPE_DSI)
 		primary_m6_takeover_marker("primary-before-disp-lcm-init",
 			is_lcm_inited, use_cmdq);
-	if (is_lcm_inited) {
+	/* forge 2026-07-25 (M6 unit 711HEBRN23L3N, ili9881c_hd_dsi_txd panel): trusting the
+	 * LK hand-off wedges this unit — last_kmsg shows skip-power/skip-init, cfg-begin,
+	 * cfg-done and then an endless edge-1/2/4/8/16/33ms wait ladder with the boot stuck
+	 * on the (upside-down) bootloader logo. The is_lcm_inited branch also skips the
+	 * dpmgr_path_trigger() that starts the video path. Force the full re-init branch so
+	 * the kernel programs the panel itself and kicks the path. */
+#define FORGE_M6_FORCE_LCM_REINIT 1
+	if (is_lcm_inited && !FORGE_M6_FORCE_LCM_REINIT) {
 		ret = disp_lcm_init(pgc->plcm, 0);	/* no need lcm power on,because lk power on lcm */
 	} else {
 		ret = disp_lcm_init(pgc->plcm, 1);
