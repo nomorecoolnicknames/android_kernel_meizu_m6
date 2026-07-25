@@ -1184,3 +1184,55 @@ Build + flash (all verified):
 - rebooted; verification pass measuring: `ioctl not supported` count (must be 0),
   `dumpsys SurfaceFlinger hwcId=0` (must be 1080x1920, not 1x1), `rejecting buffer`
   count, `sys.boot_completed`.
+
+### 2026-07-25 (late night) — M6 REACHES ANDROID: SF + zygote stable, bootanimation playing
+After the fstab fix the device **boots into Android userspace with working adb**. The
+remaining failures were pure MTK-blob-vs-Pie symbol breaks, all fixed by wiring machinery
+that already existed in the tree but was never enabled.
+
+**Fixes applied on west (`/home/gun/m6rom16/rom`, plain dirs — NOT under git there):**
+1. `device/meizu/m3_meizu_m6-common/rootdir/fstab.mt6755` — all 11 entries
+   `11240000.msdc1` (SD slot!) → `11230000.msdc0` (this device's eMMC).
+   *Root cause of "no adb": init could not mount /system, so userspace never started.*
+2. `device/meizu/meizu_m6/device_meizu_m6.mk` — `PRODUCT_PACKAGES += libmtkshim_gui
+   libmtkshim_ui libmtkshim_icu`. The shims were declared in
+   `vendor/mediatek/symbols/Android.mk` but never in PRODUCT_PACKAGES, so every
+   `TARGET_LD_SHIM_LIBS` entry pointed at a library that did not exist.
+3. `device/meizu/meizu_m6/BoardConfig.mk` — added
+   `/system/vendor/lib{,64}/hw/hwcomposer.mt6755.so|/system/vendor/lib{,64}/libmtkshim_gui.so`
+   to TARGET_LD_SHIM_LIBS. NOTE: the shim map is compiled INTO the linker
+   (`vendor/lineage/build/soong/soong_config.mk`: `Target_shim_libs`), so changing it
+   requires shipping the rebuilt `/system/bin/linker64`, not just a config file.
+4. `vendor/mediatek/symbols/gui.cpp` — the existing Fence **destructor** shim was not
+   enough; hwcomposer also imports the **constructors**. Added
+   `_ZN7android5FenceC1Ev/C2Ev/C1Ei/C2Ei` (mCount=0, mFenceFd=-1/fd), and hoisted
+   `ForgeLegacyFence` out of the anonymous namespace.
+5. `vendor/meizu/meizu_m6/meizu_m6-vendor-blobs.mk` — restored the **32-bit**
+   `vendor/lib/libnvram.so` copy (my own regression from the soong-module fix; 32-bit
+   `mnld` could not link without it).
+6. `system/core` — applied the `libnetutils` hunk of
+   `vendor/mediatek/patches/system_core.patch` (`ifc_set_txq_state`, `ifc_ccmni_md_cfg`),
+   without which `/system/vendor/bin/thermal` and `rild` cannot link.
+7. `hardware/interfaces/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp` —
+   wrapped an earlier forge diagnostic block (hardcodes `/vendor/lib64/...`) in
+   `#if defined(__LP64__)`; enabling the shims pulled in the 32-bit variant, which failed
+   to compile.
+
+**Verified on device (FACT):** `_ZN7android5FenceD1Ev` errors gone after fix 4a, then the
+ctor error gone after 4b; `init.svc.surfaceflinger = running` and `init.svc.zygote =
+running` stable for 8+ minutes (previously both `restarting` in a tight loop);
+`init.svc.bootanim = running`, `servicemanager`/`vold`/media services up, 30 services in
+`dumpsys -l`, `system_server` alive 8:49 without restart, load average 13.5 with `installd`
+working — i.e. the device is grinding first-boot dexopt after the data wipe.
+`sys.boot_completed` not yet 1 at ~9 min uptime; watch continues.
+
+**Still crash-looping (non-fatal, next round):**
+- `/vendor/bin/hw/android.hardware.audio@2.0-service.mtk` — SIGSEGV. `libmtkshim_audio`
+  exists in `symbols/Android.mk` but is behind the `MTK_SYMBOLS_GUI_ONLY` guard and is not
+  installed; wire it next.
+- `/system/bin/goodixfingerprintd` — `libsoftkeymaster.so` not found (missing blob).
+- `/vendor/bin/MPED` — `SensorEventQueue::enableSensor` symbol (needs libmtkshim_sensor).
+
+**Fast iteration loop that works (user's suggestion, adopted):** no full bacon — build the
+single module (`mka libmtkshim_gui` ≈ 10 s), `adb root && mount -o rw,remount /system`,
+push the .so, reboot. `/system` remounts rw on this userdebug build.
