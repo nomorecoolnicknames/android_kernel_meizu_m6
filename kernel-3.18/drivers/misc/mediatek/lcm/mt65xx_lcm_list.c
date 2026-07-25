@@ -29,6 +29,15 @@ extern LCM_DRIVER ili9885_fhd_dsi_vdo_txd_lcm_drv1;
  * See /srv/forge/android/meizu_m6t/KERNEL_REVERSE_HANDOFF.md §Stage-1. */
 extern LCM_DRIVER hx83102b_hd_dsi_vdo_lide_lcm_drv;
 #endif
+#if defined(FT8613_HD_DSI_VDO_TCL)
+/* M6T panel vendor variant 2 of 3 — see the file header for why all
+ * three stock names must be present (LK matches lcm_drv->name). */
+extern LCM_DRIVER ft8613_hd_dsi_vdo_tcl_lcm_drv;
+#endif
+#if defined(NT36525_HD_DSI_VDO_DJN)
+/* M6T panel vendor variant 3 of 3. */
+extern LCM_DRIVER nt36525_hd_dsi_vdo_djn_lcm_drv;
+#endif
 /* #include <mach/mt_gpio.h> */
 #endif
 LCM_DSI_MODE_CON lcm_dsi_mode;
@@ -48,6 +57,16 @@ LCM_DSI_MODE_CON lcm_dsi_mode;
 LCM_DRIVER *lcm_driver_list[] = {
 #if defined(ILI9881P_HD_DSI_TXD)
 	&ili9881p_hd_dsi_txd_lcm_drv,
+#endif
+/* M6T: keep the stock registration order — the recovered stock image has
+ * lcm_count=3 @0xffffffc00116cf38 and lcm_driver_list @0xffffffc00116cf40
+ * as { ft8613_hd_dsi_vdo_tcl, nt36525_hd_dsi_vdo_djn,
+ *      hx83102b_hd_dsi_vdo_lide }. */
+#if defined(FT8613_HD_DSI_VDO_TCL)
+	&ft8613_hd_dsi_vdo_tcl_lcm_drv,
+#endif
+#if defined(NT36525_HD_DSI_VDO_DJN)
+	&nt36525_hd_dsi_vdo_djn_lcm_drv,
 #endif
 #if defined(HX83102B_HD_DSI_VDO_LIDE)
 	&hx83102b_hd_dsi_vdo_lide_lcm_drv,

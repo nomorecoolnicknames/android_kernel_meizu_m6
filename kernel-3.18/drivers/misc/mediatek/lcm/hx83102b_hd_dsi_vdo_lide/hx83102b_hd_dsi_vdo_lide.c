@@ -133,7 +133,12 @@ struct tps65132_dev {
 struct i2c_client *tps65132_i2c_client;
 EXPORT_SYMBOL(tps65132_i2c_client);
 
-static int tps65132_write_bytes(unsigned char addr, unsigned char val)
+/* Global, not static: this translation unit owns the board's single
+ * TPS65132 bias i2c_driver and the other two M6T panel drivers
+ * (ft8613_hd_dsi_vdo_tcl, nt36525_hd_dsi_vdo_djn) call into it.  This
+ * mirrors stock, where tps65132_write_bytes is one global symbol at
+ * 0xffffffc0004e6bcc shared by all three LCM drivers. */
+int tps65132_write_bytes(unsigned char addr, unsigned char val)
 {
 	int ret = 0;
 	struct i2c_client *client = tps65132_i2c_client;
