@@ -588,3 +588,41 @@ Live test (shim libs `adb push`ed, reboot):
   Agent also flags (HYPOTHESIS) that `init.m681_sensors.rc` / `init.m681_cameraserver.rc`
   are orphaned the same way, and that m6/M6T share the pattern via
   `mt6755-common/rootdir/init.mt6755.rc` — follow-ups, not done yet.
+
+### Kernel/netd report (class 15) + onion layer 2 (2026-07-25)
+Kernel agent (evidence-backed):
+- **dummy0 = kernel-side gap, FACT:** `CONFIG_DUMMY is not set` in
+  `/home/n8n/mt6755-49/b-4.4/out-connfix/.config:1627`, and that .config provably
+  belongs to the pinned artifact (its Image.gz-dtb sha256 == `fe027c5a…` in
+  BoardConfig). No m681 4.4 defconfig lineage ever set it. Fix = `CONFIG_DUMMY=y` in
+  `wt-camera/arch/arm64/configs/m681_defconfig` (source tree = `wt-camera`, branch
+  `final-converge`, HEAD 703cf3d4 — identified via `__FILE__` paths baked in WARN
+  traces) + kernel rebuild + re-pin. DEFERRED: needs a kernel build cycle, severity
+  LOW, and see the cascade finding below.
+- **Display: kernel is CLEAN** — `disp_probe DONE`, LCM `ili9885_fhd_dsi_vdo_txd1`
+  probed, `mtkfb_probe: register_framebuffer r=0` (fb0 created). Confirms the failure
+  was purely the userspace HAL/ABI layer — consistent with the Fence fix working.
+- Every other dmesg WARN/error is baked into the SAME pinned binary that booted on
+  15.1 (icm20608 duplicate sysfs, ioremap WARNs, M4U sample, msdc1 CMD52 pre-power-on,
+  absent-sensor probes) → REJECTED as 16.0 regressions.
+- New-but-cosmetic: SPM sleep-PCM firmware blobs (`pcm_suspend_m.bin`,
+  `pcm_sodi_*`, `pcm_deepidle_*`) fail to load — affects deep-idle only; check
+  `vendor/meizu/m681/proprietary-files.txt` for them (TODO).
+- **Cascade hypothesis CONFIRMED by test after the Fence fix:** `dummy0` errors
+  70+ → **0**; `wificond is starting up` 70+ → **4**. Most of that spam was init
+  restarting service classes behind the SF crash loop, exactly as predicted.
+
+**Onion layer 2 (current state, uptime 255 s, still no boot_completed):**
+- surfaceflinger: 4 crashes (was 43+, non-recovering) — now dies only sometimes,
+  inside the blob at `DisplayManager::init()` ← `HWCMediator::open()` ←
+  `HwcLoader::openDeviceWithAdapter` (the HWC1→HWC2 adapter path), and RECOVERS on
+  retry. New sub-class, agent dispatched.
+- **NEW dominant loop: `android.hardware.audio@2.0-service` SIGSEGV every ~5 s.**
+  Backtrace shows the Pie HIDL impl calling `Device::getMasterMute` but landing inside
+  the blob's `AudioALSAHardware::createAudioPatch` → classic `audio_hw_device_t`
+  member-offset mismatch (Nougat blob vs Pie header). Prime lead: the 15.1 lane shipped
+  MTK's own `vendor/mediatek/hidl/audio` service (ported here in the 3361-line patch),
+  while the device is running the AOSP `android.hardware.audio@2.0-impl.so`.
+  Agent dispatched.
+Fresh logs: west `/home/gun/m681-los16-logs2/`, local
+`/srv/forge/android/m681/logs-los16-boot2/m681-los16-logs2/`.
