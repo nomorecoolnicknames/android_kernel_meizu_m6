@@ -482,3 +482,38 @@ Executed in TWRP 3.7.0_9-0 (`ro.product.device=m681` gated):
   boot, so the TWRP-in-boot was replaced by the proper LOS16 boot automatically).
 - Rebooted; first-boot acceptance in progress.
 NOTE: rebuild #3's boot.img md5 is `adb4f53a…` (not `d151db2e…` = rebuild #2).
+
+## 2026-07-25 — m681 LOS16 first-boot ERROR INVENTORY (fixed ROM installed)
+Boot does NOT complete. Logs captured and kept:
+west `/home/gun/m681-los16-logs/`, local
+`/srv/forge/android/m681/logs-los16-firstboot/m681-los16-logs/`
+(logcat main/crash/system, dmesg 1.6 MB, getprop, ps).
+
+**Blocker 11 (xlog) is CONFIRMED FIXED** — no `__xlog_buf_printf` failures anywhere in
+this boot; that class is gone. crash_dump=0 → the omx storm guard also HOLDS.
+The boot now dies one layer deeper. Distinct classes (deduped by signature):
+
+12. **PRIMARY: surfaceflinger abort loop (43×)** — `Abort message: 'failed to get
+    hwcomposer service'`, `Hwc2::impl::Composer::Composer` → `SurfaceFlinger::init`.
+    Chain: `HAL: dlopen failed: cannot locate symbol "_ZN7android5FenceD1Ev"
+    referenced by /system/vendor/lib64/libgui_ext.so` → hwcomposer.mt6755.so never
+    loads → `ComposerHal: falling back to gralloc module` → `failed to open
+    framebuffer device: Invalid argument` → fatal. Same symbol also kills
+    `/system/vendor/bin/guiext-server` every 5 s (43×). `android::Fence::~Fence()` is
+    the Pie-vs-Nougat libui ABI gap — the 15.1 lane solved this class with the
+    DISPLAY_SHIM_CASCADE (libmtkshim_gui/ui + TARGET_LD_SHIM_LIBS).
+13. **ART/patchoat**: `Could not create image space … Failed to mmap at expected
+    address … overlaps with existing map (/data/dalvik-cache/arm64/system@framework@
+    boot.art)`, plus the arm (32-bit) `boot-core-libart.oat` reservation failure and
+    `Dex file fallback disabled, cannot continue without image.`
+14. **DAC/permission cluster**: `cutils-trace: Error opening trace file: Permission
+    denied (13)` (79×), `vibrator@1.0-service.mtk: Failed to open
+    /sys/class/timed_output/vibrator/vibr_vol (13): Permission denied`. Suspected same
+    root class as the stpbt fix (Pie dropped legacy users/groups named in ueventd rc).
+15. **netd**: `cannot find interface dummy0` (kernel CONFIG_DUMMY / userspace setup).
+16. Fallout (to be confirmed, not chased directly): `BatteryNotifier: batterystats
+    service unavailable!` (48×), `crash_dump64: unable to connect to activity manager`.
+
+Dispatched 4 parallel tracer subagents (one per class 12/13/14/15) with the logs, both
+trees (15.1 working reference + 16.0), and strict evidence rules; build+flash stay with
+me. Reports to be folded back here.
