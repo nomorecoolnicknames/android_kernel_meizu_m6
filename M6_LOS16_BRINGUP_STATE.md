@@ -346,3 +346,22 @@ Flash protocol executed (all `adb -s 91HEBNL163XD`):
    it and would hit the same SF death — REBUILD both before any flash.
    These two system/core commits + kernel.mk/BoardConfigKernel patches = the LOS16
    patches overlay set (reproducibility TODO).
+
+### m681 post-flash acceptance (2026-07-25, partial — device boots but framework stalls)
+GOOD (both pre-flash fixes verified ON DEVICE):
+- `crash_dump = 0`, procs ~260 → **the omx/seccomp storm is GONE**;
+  `/vendor/etc/seccomp_policy/mediacodec.policy` md5 `75bbf8a7…` present on /vendor (fix #9 works).
+- Boots into 16.0: `ro.lineage.version = 16.0-20260725-UNOFFICIAL-m681`, adb up, zygote running.
+
+BLOCKER (FACT, `logcat -b crash`): **`/system/vendor/bin/guiext-server` crash-loops every ~5 s**
+— `CANNOT LINK EXECUTABLE … cannot locate symbol "__xlog_buf_printf"` (the MTK xlog symbol
+is gone from Pie's liblog/libcutils). Alongside it `init.svc.surfaceflinger = restarting`,
+`init.svc.bootanim` empty, `sys.boot_completed` never set (still empty at ~860 s uptime).
+- INFERENCE (needs confirming): the SF restart loop is downstream of the guiext-server
+  linker failure; disconfirm by disabling the guiext-server service alone and re-checking SF.
+- Fix candidates for the next round: (a) add `__xlog_buf_printf` to the existing MTK symbol
+  shim lane (`vendor/mediatek/symbols/*.cpp` — same pattern already used for
+  binder/icu/gui/camera), or (b) drop/disable the optional `guiext-server` service on 16.0.
+- Device left ON in this state (no rollback flashed). Rollback if needed:
+  `/home/gun/m681-work/p22_backup_pre16-20260725.img` (head 9 730 048 B == allbaked1 `1083ff05`).
+- Consequence: the 20260725 zip on gdrive is NOT yet device-accepted — do not publish as good.
