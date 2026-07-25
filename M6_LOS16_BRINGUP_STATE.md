@@ -680,3 +680,46 @@ Subagent report + my own header verification:
   advance; it must be re-applied if that project is ever re-synced/rebased (candidate
   for the forge-build patches overlay alongside the two lineage patches and the
   system/core legacy-symbol port).
+
+## 2026-07-25 — M6 does NOT boot LOS 16.0 + a cross-device INCIDENT (disclosure)
+
+### Boot failure evidence (M6 711HEBRN23L3N)
+- With OUR boot.img (#209 kernel 3.18.140): device **WDT-resets every ~25 s**, never reaches
+  Android. USB shows `MT65xx Preloader` (0e8d:2000) for ~3 s per cycle, no Android VID.
+- **LK/preloader are NOT at fault (FACT):** `expdb` (dumped via mtkclient, 10 MB) contains our
+  kernel's banner `Linux version 3.18.140 (n8n@n8nagent) … Sun Jun 21 04:41:49 CDT 2026`
+  plus a full early-boot log (8 CPUs up, initcalls, uart, accdet) → LK loads and starts our
+  kernel correctly. Flashing a Flyme-7 LK (the idea on the table) would NOT have helped.
+- **Battery is NOT at fault (FACT):** 50 % in TWRP.
+- **REJECTED — the `ddp_manager.c` assert as root cause.** `BUG: failure at …
+  drivers/misc/mediatek/video/mt6755/ddp_manager.c` (preceded by `[DISP]M6 DDP irq diag
+  [2][rdma0]`) fires in the crashing boots, BUT the same assert also appears at t=1.51 s in an
+  expdb segment whose boot then ran **3888 s** — so it is survivable on this unit, not the killer.
+- Real mismatch still on the table (HYPOTHESIS): kernel is built with
+  `CONFIG_CUSTOM_KERNEL_LCM="ili9881p_hd_dsi_txd"` while THIS unit's live atag reports
+  **`ili9881c_hd_dsi_txd`**. The in-tree `ili9881c_*` drivers are the ones the M6T lane
+  documented as broken (undefined `lcdkit_info`/`POWER_CTRL_BY_GPIO`).
+- **Experiment run:** hybrid boot.img = stock kernel of THIS unit (from
+  `boot_stock_flyme6.2.0.0RU.img`) + our LOS 16.0 ramdisk, our header/cmdline
+  (9 832 448 B, flashed to p21, readback md5 `8a386bc5…` verified byte-exact).
+  Result: the 25 s WDT loop STOPS, but the device goes **silent — no USB enumeration at all**
+  for 6+ min (no adb, no preloader). It now needs a physical power-cycle to expose a
+  preloader window again. Rollback assets ready on west: our LOS boot.img, the stock boot,
+  TWRP-flashable, plus BCB blob `/home/gun/bcb_boot_recovery.bin`.
+- Useful技: writing BCB `boot-recovery` into `para` via mtkclient reliably lands the device in
+  TWRP on the next reset — that is how we regained adb once already.
+
+### INCIDENT — device-agnostic mtkclient grabbed the WRONG phone (my error)
+I armed `mtk.py w boot,para <M6 images>` in a wait loop so it would fire on the next preloader
+window. **mtkclient binds to whatever MediaTek device appears**, and the hub is shared with
+the m681 (other agent) and a Nubia. It attached to the **m681's** port (1-8) instead.
+- **Nothing was written (FACT, audited):** the log ends at `Preloader - Error on DA_Send cmd`
+  → `DAXFlash - Error on sending DA` → `DaHandler - Failed to upload da`; there is not a single
+  write/`Wrote` line in `/home/gun/m6-mtk-restore.log`. No partition on the m681 was touched.
+- **Side effect:** the m681 was left in **BROM mode** (`0e8d:0003` on 1-8) — mtkclient drops the
+  preloader to BROM to load its DA. Non-persistent: a power-cycle returns it to normal boot.
+- Process killed; no mtkclient runs now.
+- **RULE going forward (hard):** never arm an unbound/waiting mtkclient on this shared hub.
+  Either confirm the target is the only MTK device in a flashable mode at that instant, or
+  drive the flash through serial-gated adb/TWRP (`adb -s <serial>`). Same spirit as the
+  existing "gate every flash on the serial" rule for adb.
