@@ -1698,3 +1698,54 @@ error, reproducibly `index=7 opcode=0xfc22 status=1` (an MTK vendor opcode) whil
 neighbours succeed. Handed back to the wireless lane, with the m681 `LANE_BT_BLE_EXTFEAT`
 notes and the wpa_supplicant lesson to check first: the shared tree may already carry the
 fix while the binaries installed here predate it.
+
+### 22. Bluetooth is ON — and it took two more defects above the transport
+The kernel `.write_iter` fix got HCI packets through, but the adapter still looped in
+`BLE_TURNING_ON`. Two further defects, each found by following the log rather than guessing:
+
+**(a) Stale `libbluetooth.so` — the wpa_supplicant lesson, again.** The tree carries
+`system/bt` commits `b6e2301` (2026-07-28) and `3a24f62` (2026-07-29), both titled
+"tolerate / restore BLE on a controller that refuses extended features page 1". The
+installed `libbluetooth.so` was built **2026-07-25**, before either. Of the seven BT stack
+artifacts compared out-vs-device, **only `libbluetooth.so` differed** — everything else was
+byte-identical, so only that one was pushed. Effect: `address:` went from `null` to a real
+`00:00:46:03:26:01`, `btm_decode_ext_features_page: feature page 1 ignored` appeared (the
+fix doing its job), and the adapter reached `OFF` instead of hanging in `BLE_TURNING_ON`.
+
+**(b) The vendor firmware wait outlived the framework's patience.** With the stack current,
+the remaining loop had one cause, and the log stated it outright:
+
+    wait_for_fw_cmd_status: M2NOTE_BT_FW_WAIT_TIMEOUT_TRACE index=7 opcode=0xfc22 rc=110 timeout_sec=5
+
+`rc=110` is `ETIMEDOUT`. **FACT:** the controller answers every command it implements in
+~8-10 ms, but never answers MTK vendor opcode `0xfc22` — and the *send* succeeds
+(`M2NOTE_BT_VENDOR_SEND_RET_TRACE opcode=0xfc22 sent=10 expected=10 success=1`), so this is
+not a transport problem. The init script already treats that step as `fail_continue`, so the
+failure was harmless; the **wait** was not. `AdapterState` allows BLE start 4 s
+(enable `07:21:58.752` → `BLE_TURNING_ON : BLE_START_TIMEOUT` `07:22:02.757`), so a single
+unanswered command overran it on its own, the adapter fell back to `OFF`, and
+BluetoothManagerService restarted the entire stack every ~7 s. The late status event then
+arrived with nothing to match it — which is exactly the
+`filter_incoming_event command status event with no matching command. opcode: 0xfc22`
+warning that first drew attention.
+
+**Fix:** `M2NOTE_BT_FW_CMD_TIMEOUT_SEC` 5 → 1 in `vendor/mediatek/hidl/bluetooth/radiomod.c`.
+One second is ~100x the observed answer time, so it cannot cut off a healthy command, and
+the worst case (`M2NOTE_BT_FW_MAX_STEP_FAILURES` = 3 unanswered steps) stays at 3 s, inside
+the 4 s budget.
+
+**Verified on device (FACT, 2026-08-03 07:25+):**
+`dumpsys bluetooth_manager` → `enabled: true`, `state: ON`, `address: 00:00:46:03:26:01`,
+`name: Meizu M6`, `ScanMode: SCAN_MODE_CONNECTABLE`, **"Bluetooth crashed 0 times"**, and the
+Enable log holds a **single** `SYSTEM_BOOT` entry instead of a restart every 7 s. Firmware
+step failures in the window: **0**. HAL pid 376 unchanged across three samples.
+**Wi-Fi runs at the same time** — `wlan0` present, "Wi-Fi is enabled", supplicant running —
+and both chip-assert counters (`hcit_mtk_stp.c #2171`, `coredump mode`) read 0.
+
+Discovery was not exercised (`Discovering: false`); the adapter is on and connectable, but
+pairing with a real peer is still unverified.
+
+**Pattern worth carrying forward:** three separate defects in this device's bring-up were
+"the fix is already in the source, the installed binary predates it" — wpa_supplicant
+(CFI), libbluetooth (BLE page 1), and before them the shim libraries. On a tree this old,
+comparing artifact dates against commit dates is cheaper than reading code.
