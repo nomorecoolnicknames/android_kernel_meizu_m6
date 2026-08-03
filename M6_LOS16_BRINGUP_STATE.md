@@ -1562,3 +1562,31 @@ is what would let it run).
 `init_setting_source_port[]` that DOES write MADCTL on page 0 (`0x36 = 0x48`) and a different
 page-3 GIP value. It is behind `#if 0`, but enabling it "to try" would mirror the image on X
 and change the GIP scan. Commented as such so nobody switches tables by accident.
+
+### 17. RESOLVED — rotation. `_HW` was causing the flip, not fixing it
+**FACT (user-confirmed on device, 2026-08-03):** with a kernel built from the same source but
+`# CONFIG_MTK_LCM_PHYSICAL_ROTATION_HW is not set` and
+`CONFIG_MTK_LCM_PHYSICAL_ROTATION="0"`, the UI is **upright**. Artifact identity checked
+before asking: `/proc/version` on the running system reads
+`Linux version 3.18.140 (n8n@n8nagent) … #1 SMP PREEMPT Mon Aug 3 13:00:47 MSK 2026`,
+matching the `out-rot0` build; `Image.gz-dtb` sha256
+`daf1d3f70c50c007d36ce651d81943906a0e55a314c5995fb44ca8920ebd88a7`, boot.img md5
+`3e7ec9a9e4e9406bbc97f4d82e4805eb`, flashed from TWRP with a readback match, and
+`ro.sf.hwrotation` reads `0` live.
+
+So the display note this tree carried since 2026-06-21 was **backwards**: `_HW=y` does not fix
+an upside-down UI here, it produces one. It compensates a 180°-mounted panel, and this body's
+panel is not mounted that way (this is not the original M6 body, and the panel we drive is the
+ili9881c variant while the canonical M6 defconfig targets ili9881p). The old comment in
+`device/meizu/meizu_m6/BoardConfig.mk` has been corrected in place, and the previous kernel is
+kept beside the prebuilt as `Image.gz-dtb.rot_hw_backup`.
+
+Note for whoever reads the boot sequence next: the **LK-phase logo stays inverted**, and that
+is expected rather than a regression — LK software-rotates when it blits for a 180-mounted
+panel, and nothing in the kernel undoes that now. Stock covered it by repainting through
+`boot_logo_updater` (declared at `m3_meizu_m6-common/rootdir/init.mt6755.rc:1133`); the
+libshowlogo shims in §5/§11 are what would let that service run on LOS.
+
+**Method note worth keeping:** `screencap` is useless for judging this class of bug. It
+captures the SurfaceFlinger framebuffer *before* the OVL hardware flip, so it looks correct in
+both configurations — the only instrument that discriminates is a human looking at the panel.
