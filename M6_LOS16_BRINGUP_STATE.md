@@ -1370,3 +1370,130 @@ module's `LOCAL_SHARED_LIBRARIES` for `Mutex`.
   and a full ROM rebuild will label them correctly.
 - The west tree (`/home/gun/m6rom16/rom`) is plain directories, not git — the makefile and
   shim edits above exist only there and in this document.
+
+---
+
+## 2026-08-03 (part 2) — crash storm killed, WiFi chain traced to its last link
+
+All installs in this section went through **TWRP** (`/system` = `/dev/block/mmcblk0p28`),
+md5-verified per file, `chcon u:object_r:system_file:s0`. Live pushes into the booted system
+are not trustworthy on this device (see part 1).
+
+### 7. The UI lag was a crash storm, and it had a single root
+**FACT:** at `up=471` the load average was 14.79 while the CPU was **756 % idle** — nothing
+was computing, processes were being spawned and killed. `logcat -b crash` showed
+`/vendor/bin/hw/android.hardware.bluetooth@1.0-service.mtk` SIGABRT-ing every ~5 s,
+`Abort message: 'OnDataReady: Read packet type error: Socket operation on non-socket'`,
+each cycle also killing `com.android.bluetooth` and writing a tombstone. 213 of the last
+2000 log lines were `droid.bluetooth`, 139 were `DEBUG` (tombstone dumps).
+
+**FACT — why BT fails:** `GORM_FW_Init_Thread: M2NOTE_BT_FW_STEP_TRACE stage=done index=0
+opcode=0x0c03 status=1`. Opcode `0x0c03` is HCI_Reset and status 1 is "Unknown HCI Command",
+i.e. the controller rejects the very first firmware-init command. The BT stack reports
+`chip=0x337 script=generic_gorm` while WMT reads `chipId=0x0326` — that mismatch is the
+lead to follow. NVRAM is **not** the problem any more: after adding `net_bt_stack` to the
+service's groups the log shows a real `nvram_addr=…` instead of
+`bt_read_nvram: Open BT NVRAM fails errno 13` (`/data/nvram/APCFG/APRDEB/BT_Addr` is
+`0660 root:3008`, and 3008 = AID_NET_BT_STACK).
+
+**FACT — BT was also killing WiFi.** Each BT restart drove the connsys firmware into
+`<ASSERT> system/transport/hcit_mtk_stp.c #2171`, then `opfunc_pwr_sv(1468): read SLEEP_EVT
+fail(-1) … host trigger firmware assert` and a whole-chip reset. `wlan0` did not exist at
+all while that ran. After `setprop ctl.stop bluetooth-1-0` + `echo 1 > /dev/wmtWifi` the
+chip came straight up: `wmt_func_wifi_on: wmt call wlan probe ok`, and `wlan0` appeared with
+`Driver mt-wifi` and a real MAC. **Decision:** the BT HAL is marked `disabled` in its rc
+(reason recorded in the rc itself) until BT firmware bring-up is done — a crash-looping HAL
+that corrupts the shared combo chip is worse than no Bluetooth.
+
+**Result (FACT):** after the round-2 install, `getprop | grep init.svc | grep -v running`
+returns **nothing** — no service is restarting; CPU 763 % idle.
+
+### 8. Vibrator — a missing sysfs node treated as fatal
+**FACT:** `Failed to open /sys/class/timed_output/vibrator/vibr_vol (13): Permission denied`
+every 5 s. The M6 kernel exposes only `enable` (system:system) and `vibr_on` in that
+directory; `vibr_vol` does not exist, and the directory is `root:root 0755`, so opening the
+missing node for write returns EACCES rather than ENOENT.
+**Fix:** `vendor/mediatek/hidl/vibrator/service.cpp` now warns instead of returning, and
+`Vibrator::supportsAmplitudeControl()` returns `mAmplitude.is_open()` instead of a flat
+`true`. `init.svc.vibrator-1-0 = running` afterwards.
+
+### 9. Camera provider — two missing libraries, in sequence
+`Could not get passthrough implementation for ICameraProvider/legacy/0` →
+`camera.device@1.0-impl.so not found` → `libyuv.so not found`. Added
+`android.hardware.camera.provider@2.4-impl`, `camera.device@1.0-impl`,
+`camera.device@3.2-impl` and `libyuv` to `PRODUCT_PACKAGES`; note `libyuv` is a
+`cc_library`, so the shared object has to be taken from
+`obj{,_arm}/SHARED_LIBRARIES/libyuv_intermediates/libyuv.so` — the module install only drops
+the static `.a`. `init.svc.vendor.camera-provider-2-4 = running` afterwards (capture itself
+not yet exercised).
+
+### 10. WiFi — four separate defects, three fixed
+1. **`inet` group missing.** `android.hardware.wifi@1.0-service.rc` granted `wifi gps`, but
+   the M6 kernel has `CONFIG_ANDROID_PARANOID_NETWORK=y`, which gates AF_INET socket
+   creation on AID_INET. FACT: `Failed to open socket to set up/down state (Permission
+   denied)` → `Failed to set WiFi interface up` → `Failed to start legacy HAL: UNKNOWN` →
+   `WifiVendorHal: Failed to create STA iface`. Fixed by
+   `group wifi gps inet net_admin net_raw`; the socket errors disappeared.
+2. **`WIFI_DRIVER_STATE_CTRL_PARAM` never defined.** `frameworks/opt/net/wifi/libwifi_hal`
+   compiles the `/dev/wmtWifi` write only when the board defines it
+   (`libwifi_hal/Android.mk:53`). m681 has the block
+   (`device/meizu/m681/BoardConfig.mk:75-77`), m6 had only the `FW_PATH` variables. Added
+   `WIFI_DRIVER_STATE_CTRL_PARAM := /dev/wmtWifi`, `_ON := 1`, `_OFF := 0`, plus
+   `WIFI_DRIVER_OPERSTATE_PATH` and the retry knobs.
+   **Trap:** the code lives in `libwifi-hal.so` (`/system/vendor/lib*/`), *not* in the
+   service binary — pushing only `android.hardware.wifi@1.0-service` changes nothing.
+3. **A stale forge workaround defeated the load.** `m3_meizu_m6-common/rootdir/init.mt6755.rc`
+   carried `on property:service.wcn.driver.ready=yes / setprop wlan.driver.status ok`, written
+   for the Oreo HAL. On Pie `wifi_load_driver()` starts its `WIFI_DRIVER_STATE_CTRL_PARAM`
+   branch with `if (is_wifi_driver_loaded()) return 0;`, and with `WIFI_DRIVER_MODULE_PATH`
+   undefined `is_wifi_driver_loaded()` is *pure property trust*
+   (`wifi_hal_common.cpp:164 #else return 1;`). So the property said "loaded" before anything
+   loaded and the write never happened. FACT: `wlan.driver.status=ok` with zero wlan
+   interfaces at boot. Removed the bridge from the rc, and hardened the early return to also
+   require the interface to exist (`stat(WIFI_DRIVER_OPERSTATE_PATH)`).
+   **Verified (FACT):** the HAL now opens and writes `/dev/wmtWifi`
+   (`avc: granted { open } for path="/dev/wmtWifi"`), the chip powers on, and the HAL logs
+   `Adding interface handle for wlan0` / `Configured chip in mode 0` / `Wifi HAL started`,
+   with `WifiScanningService: wifi driver loaded with scan capabilities: max buckets=127`.
+4. **STILL OPEN — supplicant has no HIDL identity.**
+   `hwservicemanager: getTransport: Cannot find entry
+   android.hardware.wifi.supplicant@1.0::ISupplicant/default in either framework or device
+   manifest` → `SupplicantStaIfaceHal` cannot bind → `WifiNative: Failed to connect to
+   supplicant` → `Failed to start supplicant` → ClientMode unwinds and the chip is powered
+   back off. Two things are missing: the `android.hardware.wifi.supplicant@1.0` entry in
+   `device/meizu/meizu_m6/manifest.xml`, and an `interface
+   android.hardware.wifi.supplicant@1.0::ISupplicant default` line on the wpa_supplicant
+   service, which is declared the MTK-legacy way in the **ramdisk**
+   (`root/init.mt6750.rc:1270`). The rc lives in boot.img, so this needs a boot.img re-cut —
+   next cycle. Also note `wpa_supplicant` cannot see wlan0 until the driver is loaded, so it
+   must not be started before the HAL does that.
+
+### 11. boot_logo_updater
+The first shim moved it past `setDisplayProjection` to the next O-era symbol,
+`GraphicBuffer::GraphicBuffer(ANativeWindowBuffer*, bool)` (dropped in P). A forwarder to the
+surviving field-wise ctor (`ui/GraphicBuffer.h:133`) is in `gui.cpp`; note the
+`-Wno-return-type-c-linkage` in `LOCAL_CFLAGS` does **not** reach this TU, so the
+`createSurface` forwarder needs a local `#pragma clang diagnostic ignored`. This is a
+one-shot service and never contributed to the lag.
+
+### 12. Rotation — still open
+The 180° flip is unchanged, including the LK boot logo, while `screencap` of the live UI is
+right-side-up. `CONFIG_MTK_LCM_PHYSICAL_ROTATION="180"` is therefore not the lever. Analysis
+of how m681 orients its panel is in flight.
+
+### Tree changes made on west (`/home/gun/m6rom16/rom`, plain dirs — not git)
+- `device/meizu/meizu_m6/device_meizu_m6.mk` — light pair, vibrator service, camera provider
+  impl, `camera.device@{1.0,3.2}-impl`, `libyuv`
+- `device/meizu/meizu_m6/BoardConfig.mk` — `WIFI_DRIVER_STATE_CTRL_PARAM`/`_ON`/`_OFF`,
+  `WIFI_DRIVER_OPERSTATE_PATH`, retry knobs
+- `device/meizu/m3_meizu_m6-common/rootdir/init.mt6755.rc` — stale `wlan.driver.status`
+  bridge removed
+- `hardware/interfaces/wifi/1.2/default/android.hardware.wifi@1.0-service.rc` — `inet`
+  `net_admin` `net_raw` groups
+- `frameworks/opt/net/wifi/libwifi_hal/wifi_hal_common.cpp` — driver-loaded check now
+  requires the interface to exist
+- `vendor/mediatek/hidl/vibrator/{service.cpp,Vibrator.cpp}` — amplitude node optional
+- `vendor/mediatek/hidl/bluetooth/android.hardware.bluetooth@1.0-service.mtk.rc` — extra
+  groups, then `disabled`
+- `vendor/mediatek/symbols/{gui.cpp,Android.mk}` — five global-transaction forwarders, the
+  GraphicBuffer wrapper ctor, `libutils`
