@@ -1263,3 +1263,110 @@ physically changed, not a device hang. Whether the boot completed after that is 
 **Next actions:** reconnect the M6 → flash the rotation kernel → let the first boot finish →
 then wire `libmtkshim_audio` (audio HAL SIGSEGV), add `libsoftkeymaster.so`
 (goodixfingerprintd) and `libmtkshim_sensor` (MPED).
+
+---
+
+## 2026-08-03 — M6 BOOTS TO ANDROID (`sys.boot_completed=1`), setup wizard on screen
+
+Device moved to **container 228** (Tailscale): `ssh -i ~/.ssh/id_ed25519_m681forge -p 2222
+claude@100.97.162.119`, serial `711HEBRN23L3N`. That container runs **several adb servers**
+(5037/5038/5039/5040/5041) and the phone re-attaches to whichever one grabs it after a USB
+re-enumeration, so every script here re-discovers the owning port before each phase.
+
+### 1. Live pushes into a running Android are NOT reliable — flash/push from TWRP
+**FACT (user report + measurement).** Files pushed to `/system` from the booted system
+reported success but were absent afterwards: `libmtkshim_sensor.so` and
+`libsoftkeymaster.so` came back `MISS` on re-check, and `/system/bin/linker` (32-bit) did
+not exist on the partition at all (`cp: can't stat '/system/bin/linker'` in TWRP, while
+`/system/bin/linker_asan -> linker` was a dangling symlink). Re-doing the same pushes from
+**TWRP** (`/dev/block/mmcblk0p28` mounted rw) landed all 8 files with matching md5 and the
+right SELinux label. **Rule (user, standing): always flash/push from TWRP.**
+
+Working recipe: mount `/system` in TWRP → `adb push` → verify on-device `md5sum` against the
+source → `chmod`/`chown 0.0`/`chcon u:object_r:system_file:s0` → retry the whole step while
+the md5 differs (this is what survives the adb-server hopping).
+
+### 2. Root cause of "boots but never finishes": the light HAL was a PHANTOM package
+**FACT (logcat, boot 2026-08-03 08:48, pid 750 tid 815 `android.display`):**
+`W ServiceManagement: Waited one second for android.hardware.light@2.0::ILight/default.
+Waiting another...` repeating forever; `sys.boot_completed` never set.
+**FACT:** `/vendor/manifest.xml` declares `android.hardware.light@2.0::ILight/default` as
+hwbinder, but `/vendor/bin/hw` contained **no light service binary** at all.
+**FACT:** `device/meizu/meizu_m6/device_meizu_m6.mk` named
+`android.hardware.light@2.0-service.mtk`, and `vendor/mediatek/hidl/light/Android.bp` is a
+comment-only file pointing at `device/meizu/m2note/light`, which is not checked out — so the
+module was never built or installed.
+
+This is **the identical bug m681 hit and documented on 2026-07-27**
+(`device/meizu/m681/device.mk:433-453`) — the user's pointer to "look at what was fixed on
+m681" was exactly right.
+
+**Fix (landed in `device/meizu/meizu_m6/device_meizu_m6.mk`):** replace the phantom with the
+generic AOSP pair — BOTH are required, the `-service` binary is only
+`defaultPassthroughServiceImplementation<ILight>()` so it dlopens the `-impl.so` at runtime:
+
+    PRODUCT_PACKAGES += \
+        android.hardware.light@2.0-service \
+        android.hardware.light@2.0-impl
+
+The impl wraps the legacy `lights.mt6750.so` that already ships in `/system/vendor/lib*/hw`.
+Same commit also adds `android.hardware.vibrator@1.0-service.mtk` (no HIDL backing at all)
+and `android.hardware.camera.provider@2.4-impl` + `camera.device@1.0-impl` +
+`camera.device@3.2-impl` (the provider service was crash-looping on
+`Could not get passthrough implementation for ICameraProvider/legacy/0`, then on
+`dlopen failed: library "camera.device@1.0-impl.so" not found`).
+
+**Verified on device (FACT):** after installing the light pair from TWRP,
+`init.svc.vendor.light-hal-2-0 = running`, the ServiceManagement wait disappeared, and
+system_server walked the whole startup — `MakeDisplayReady`, `StartStorageManagerService`,
+`AppDataPrepare took 51120ms` (first-boot data prep), `StartWifi`, … — reaching
+**`sys.boot_completed=1` and `service.bootanim.exit=1` at ~4 min uptime**.
+`dumpsys activity` top = `org.lineageos.setupwizard/.LocationSettingsActivity`.
+
+### 3. The other two crash-loopers are fixed
+**FACT:** with `libmtkshim_sensor.so` and `libsoftkeymaster.so` finally on the partition,
+`init.svc.MPED = running` and `init.svc.goodixfp = running` (both were crash-looping on
+`SensorEventQueue::enableSensor` and `library "libsoftkeymaster.so" not found`).
+The audio HAL SIGSEGV stayed fixed by the `FORGE_MTK_NO_MASTER_MUTE` patch in
+`hardware/interfaces/audio/core/all-versions/default/include/core/all-versions/default/Device.impl.h`.
+
+### 4. Display geometry is CORRECT — the "oversized UI" was a bootanimation artifact
+**FACT:** `dumpsys window displays` → `init=720x1280 320dpi cur=720x1280 app=720x1280`;
+`wm size` = 720x1280, `wm density` = 320; `ro.sf.hwrotation=0`. A `screencap` of the running
+setup wizard renders **right-side-up and correctly scaled**. So the framebuffer content is
+fine and only the panel-side scan direction is inverted — the 180° flip is below SF (panel /
+LK hand-over), not a density or geometry problem.
+
+### 5. `boot_logo_updater` — full UND audit, five Oreo-era symbols
+**FACT:** `CANNOT LINK EXECUTABLE "/vendor/bin/boot_logo_updater": cannot locate symbol
+"_ZN7android21SurfaceComposerClient20setDisplayProjection..." referenced by
+"/system/vendor/lib/libshowlogo.so"`.
+**FACT:** an ELF UND-vs-image audit of `libshowlogo.so` (77 UND symbols against a
+209 479-symbol pool from the built `system/lib*` + `vendor/lib*`) reports exactly five
+missing, all the pre-Pie global-transaction API:
+`SurfaceComposerClient::{openGlobalTransaction,closeGlobalTransaction(bool),
+setDisplayProjection(sp<IBinder> const&,uint32_t,Rect const&,Rect const&),
+createSurface(String8 const&,uint32_t,uint32_t,PixelFormat,uint32_t)}` and
+`SurfaceControl::setLayer(uint32_t)`.
+**FACT:** `setDisplayProjection` is still *declared* at
+`frameworks/native/libs/gui/include/gui/SurfaceComposerClient.h:293` but has **no definition**
+in `SurfaceComposerClient.cpp`, so `libgui.so` never exported it.
+**Fix:** forwarders added to `vendor/mediatek/symbols/gui.cpp` (libmtkshim_gui is already
+attached to `libshowlogo.so` via `TARGET_LD_SHIM_LIBS`,
+`device/meizu/meizu_m6/BoardConfig.mk:77`), emulating the O global transaction with a
+process-global `SurfaceComposerClient::Transaction` (open/close bracket, apply on close, and
+apply-immediately when a setter is called outside a bracket). `libutils` added to that
+module's `LOCAL_SHARED_LIBRARIES` for `Mutex`.
+
+### 6. Open items
+- 180° panel flip: `CONFIG_MTK_LCM_PHYSICAL_ROTATION="180"` is set in the flashed kernel
+  (`Image.gz-dtb` sha256 `8c2e89a9…`, boot.img md5 `f8f5d6d5d3e31982b6e3f962d39c3fe9`) and
+  the flip is STILL present, including the LK boot logo — so that config is not the right
+  lever. Under analysis: compare with how m681 orients its panel (MADCTL `0x36` in the LCM
+  init table vs. kernel config vs. LK).
+- `init.svc.vibrator-1-0 = restarting` — installed but exiting; not yet diagnosed.
+- SELinux labels of the hand-installed HAL files are `system_file` rather than
+  `hal_light_default_exec`/`vendor_configs_file`; harmless while the build is permissive,
+  and a full ROM rebuild will label them correctly.
+- The west tree (`/home/gun/m6rom16/rom`) is plain directories, not git — the makefile and
+  shim edits above exist only there and in this document.
