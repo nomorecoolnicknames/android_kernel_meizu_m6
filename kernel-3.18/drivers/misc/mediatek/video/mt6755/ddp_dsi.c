@@ -14,6 +14,7 @@
 #define LOG_TAG "DSI"
 
 #include <linux/delay.h>
+#include <linux/moduleparam.h>
 #include <linux/time.h>
 #include <linux/string.h>
 #include <linux/mutex.h>
@@ -317,7 +318,24 @@ static DEFINE_SPINLOCK(m6_dsi_wrtrace_lock);
 static struct m6_dsi_wrtrace_entry m6_dsi_wrtrace[M6_DSI_WRTRACE_MAX];
 static unsigned int m6_dsi_wrtrace_count;
 static unsigned int m6_dsi_wrtrace_dropped;
-static unsigned int m6_dsi_wrtrace_enabled = 1;
+/* M6 2026-08-03: the DSI bring-up instrumentation below prints at DISPERR level
+ * (never filtered) from the per-frame path -- dsi_m6_dump_snapshot fires with
+ * tags start-before/start-after/after-1vsync on every frame from the
+ * surfaceflinger context, several ~400-character lines each. That is a printk
+ * storm inside frame submission, and the user sees it as scroll and animation
+ * stutter (report 2026-08-03; dmesg shows the storm at ~60 fps while DSI STA
+ * underrun=0 and ESD recovery count=0, i.e. the panel path itself is healthy).
+ * Keep every probe -- they earned their place during panel bring-up -- but
+ * default them OFF and allow flipping at runtime:
+ *   echo 1 > /sys/module/ddp_dsi/parameters/m6_dsi_diag_enabled
+ */
+static unsigned int m6_dsi_diag_enabled;
+module_param(m6_dsi_diag_enabled, uint, 0644);
+MODULE_PARM_DESC(m6_dsi_diag_enabled, "M6: verbose DSI bring-up tracing (default off)");
+
+static unsigned int m6_dsi_wrtrace_enabled;
+module_param(m6_dsi_wrtrace_enabled, uint, 0644);
+MODULE_PARM_DESC(m6_dsi_wrtrace_enabled, "M6: DSI register write tracing (default off)");
 
 static char dsi_m6_wrtrace_classify(unsigned long addr, unsigned int *off)
 {
@@ -412,6 +430,9 @@ void dsi_m6_wrtrace_dump(unsigned int limit)
 	unsigned int enabled;
 	unsigned int i;
 
+	if (!m6_dsi_diag_enabled)
+		return;
+
 	spin_lock_irqsave(&m6_dsi_wrtrace_lock, flags);
 	count = m6_dsi_wrtrace_count;
 	dropped = m6_dsi_wrtrace_dropped;
@@ -438,6 +459,9 @@ void dsi_m6_wrtrace_dump(unsigned int limit)
 static void dsi_m6_dump_irq_decode(const char *tag, uint32_t start, uint32_t status,
 				   uint32_t inten, uint32_t intsta)
 {
+	if (!m6_dsi_diag_enabled)
+		return;
+
 	DISPERR("M6 DSI irq_decode[%s]: START dsi/sleep/skew/vmcmd=%u/%u/%u/%u STA underrun/esc_entry/esc_sync/ctrl/content=%u/%u/%u/%u/%u INTEN rd/cmd/te/vm/frame/vmcmd/sleep/te_to/vbp/vact/vfp/skew=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u INTSTA rd/cmd/te/vm/frame/vmcmd/sleep/te_to/vbp/vact/vfp/skew/busy=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u raw=0x%x/0x%x/0x%x/0x%x\n",
 		tag,
 		(start & BIT(0)) ? 1 : 0, (start & BIT(2)) ? 1 : 0,
@@ -474,6 +498,9 @@ static void dsi_m6_clkstate_marker(const char *tag, DISP_MODULE_ENUM module)
 	unsigned int dig_p = 0xffffffff;
 	unsigned int mtcmos_e = 0xffffffff;
 	unsigned int mtcmos_p = 0xffffffff;
+
+	if (!m6_dsi_diag_enabled)
+		return;
 
 	if (count >= 192)
 		return;
@@ -2215,6 +2242,9 @@ static void dsi_m6_dump_snapshot(const char *tag, DISP_MODULE_ENUM module, void 
 	uint32_t state8;
 	uint32_t state9;
 
+	if (!m6_dsi_diag_enabled)
+		return;
+
 	if (module != DISP_MODULE_DSI0 || DSI_REG[0] == NULL)
 		return;
 
@@ -2402,6 +2432,9 @@ static void dsi_m6_dump_snapshot_limited(const char *tag, DISP_MODULE_ENUM modul
 					 void *cmdq, unsigned int *count,
 					 unsigned int limit)
 {
+	if (!m6_dsi_diag_enabled)
+		return;
+
 	if (*count >= limit)
 		return;
 

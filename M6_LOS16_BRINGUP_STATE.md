@@ -1590,3 +1590,83 @@ libshowlogo shims in §5/§11 are what would let that service run on LOS.
 **Method note worth keeping:** `screencap` is useless for judging this class of bug. It
 captures the SurfaceFlinger framebuffer *before* the OVL hardware flip, so it looks correct in
 both configurations — the only instrument that discriminates is a human looking at the panel.
+
+---
+
+## 2026-08-03 (part 4) — Wi-Fi works; the stutter was our own debug output
+
+### 18. Wi-Fi is UP — the last blocker was CFI, and the fix was already in the tree
+After the manifest entry and the two ramdisk fixes went in, `wpa_supplicant` finally
+*started* — and then died immediately. Its own log named the cause:
+
+    driver_i.h:569:9: runtime error: control flow integrity check for type
+    'int (void *, char *, char *, unsigned long)' failed during indirect function call
+
+**FACT:** `driver_cmd` resolves into `lib_driver_cmd_mt66xx`
+(`vendor/mediatek/wlan/wpa_supplicant_8_lib`), a static library the build does not
+sanitize, while the binary linking it is CFI-instrumented — an indirect call cannot cross
+that boundary. **The fix was already committed in this tree** by the m681 lane on
+2026-07-28: `__attribute__((no_sanitize("cfi")))` on `wpa_drv_driver_cmd`
+(`external/wpa_supplicant_8/wpa_supplicant/driver_i.h`), with the alternative
+(`LOCAL_SANITIZE := cfi` on the static lib) measured and REJECTED there — AOSP Make does
+not honour it on a static library. The binary on the device was simply **older than the
+fix** (built Jul 25, fix landed Jul 28). Rebuilding `wpa_supplicant` and installing it was
+the whole remedy.
+
+**Verified on device (FACT):** `init.svc.wpa_supplicant = running`, `wlan0` up with
+`Driver mt-wifi` and MAC `2c:57:31:c8:26:1e`, `dumpsys wifi` → **"Wi-Fi is enabled"**, and
+`wifi2agps: scan result, found 30 APs`. Wi-Fi went from "cannot be enabled at all" to
+scanning in one cycle.
+
+Worth keeping: this was **four independent defects stacked** — missing `inet` group under
+`CONFIG_ANDROID_PARANOID_NETWORK`, an undefined `WIFI_DRIVER_STATE_CTRL_PARAM`, a stale
+Oreo-era `wlan.driver.status` bridge, and a stale binary missing a CFI fix. Each one alone
+produced the same user-visible symptom ("Wi-Fi won't turn on"), so fixing three of them
+looked like no progress at all. The log line that discriminated each step was different
+every time, which is the only reason the stack came apart.
+
+### 19. The scroll stutter was our own instrumentation
+**User report:** image intact, but scrolling and animations jerk. That answer alone ruled
+out the m681 gray-stripes class (panel/PMIC), which corrupts the image rather than its
+timing.
+
+**FACT (dmesg on the running system):** `dsi_m6_dump_snapshot` fires with tags
+`start-before` / `start-after` / `after-1vsync` on **every frame from the surfaceflinger
+context**, each emitting several ~400-character lines through `DISPERR` — an error-level
+printk, so nothing filters it. At ~60 fps that is a printk storm inside frame submission.
+Meanwhile DSI `STA underrun=0` on every sample and the ESD recovery count is 0, i.e. the
+panel path itself is healthy — the cost was ours.
+
+**Fix:** every probe is kept (they earned their place during panel bring-up) but gated on a
+new `m6_dsi_diag_enabled`, default off, flippable live:
+
+    echo 1 > /sys/module/ddp_dsi/parameters/m6_dsi_diag_enabled
+
+`m6_dsi_wrtrace_enabled` likewise now defaults to 0. **Verified:** `dmesg | grep -c 'M6 DSI'`
+dropped from a per-frame flood to 28 lines for a whole boot, and both toggles are present
+under `/sys/module/ddp_dsi/parameters/`.
+Kernel `Image.gz-dtb` sha256 `e70854445d07a4063af52df08aa53a35ae5a92676521fa0de42fed9f17f3b8ca`,
+boot.img md5 `f43e2e92f4e1b4369e370ad916c7cb37`, flashed from TWRP with a readback match.
+
+**Second lever, same symptom:** SurfaceFlinger reported `[sf DISABLE_TRIPLE_BUFFERING …]`.
+That is **not** a build flag in this tree — nothing consumes `TARGET_DISABLE_TRIPLE_BUFFERING`
+(I added it first, measured that it changed nothing, and removed it rather than leave a
+comment claiming a fix it did not deliver). It is the runtime property
+`ro.sf.disable_triple_buffer`, read at `SurfaceFlinger.cpp:349` with a default of `"1"`.
+Set to `0` in `device/meizu/meizu_m6/system.prop`; **verified** — the
+`DISABLE_TRIPLE_BUFFERING` token is gone from SF's build-configuration line and
+`getprop ro.sf.disable_triple_buffer` reads `0`.
+
+The two fixes are deliberately separable: the kernel one has a live toggle, so their
+contributions can still be told apart without a reflash.
+
+### 20. Open
+- Smoothness itself is a human call — `screencap` cannot measure it; awaiting the user's eye.
+- `mbackd` is `running`; thresholds (250 ms / 500 ms) were validated with synthetic events
+  only, real presses still unverified.
+- A stale "Android System: There's an internal problem with your device" dialog was on the
+  lock screen with **no** matching entry in the crash buffer, no dropbox entry and no service
+  restarting — unexplained, not reproduced, recorded rather than guessed at.
+- Bluetooth stays `disabled` in its rc; the kernel `.write_iter` fix is now flashed, so
+  re-enabling it is a one-file change whenever we want to test it.
+- Telephony is untouched: the lock screen reads "No service".
