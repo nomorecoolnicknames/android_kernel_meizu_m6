@@ -1670,3 +1670,31 @@ contributions can still be told apart without a reflash.
 - Bluetooth stays `disabled` in its rc; the kernel `.write_iter` fix is now flashed, so
   re-enabling it is a one-file change whenever we want to test it.
 - Telephony is untouched: the lock screen reads "No service".
+
+### 21. Bluetooth re-enabled — the kernel fix is confirmed on hardware
+`disabled` removed from `android.hardware.bluetooth@1.0-service.mtk.rc` (the stale
+"TEMPORARILY not auto-started" paragraph was rewritten rather than left contradicting the
+new one), installed from TWRP, rebooted. Note the first boot afterwards sat in adb
+`offline` for several minutes before completing — slow, not wedged.
+
+**Measured on device (FACT, 2026-08-03 07:04, boot.img `f43e2e92…`, kernel
+`e70854445d07a406`):**
+- HAL stable: `bluetooth@1.0-service.mtk` pid **367 unchanged across three samples 12 s
+  apart**, `init.svc.bluetooth-1-0 = running` (was: SIGABRT respawn every ~5 s).
+- `logcat -b crash -t 60` — **empty**.
+- `dmesg | grep -cE 'hcit_mtk_stp.c #2171|coredump mode'` = **0**: no firmware assert, no
+  whole-chip reset.
+- **Wi-Fi survived Bluetooth coming up** — `wlan0` present, "Wi-Fi is enabled",
+  `init.svc.wpa_supplicant = running`. This is the direct confirmation of the wireless
+  lane's inference that one kernel defect explained both the BT crash loop and the dead
+  Wi-Fi.
+- Firmware init now walks its command list: `BT_FW_STEP_TRACE stage=done` for index 0..9,
+  almost all `status=0` (previously it died at index 0).
+
+**Still open, one level up:** `dumpsys bluetooth_manager` reports `enabled: false`,
+`state: BLE_TURNING_ON`, `address: null`, with "Enabled due to RESTARTED by android" every
+~7 s — the stack loops without completing. Four firmware commands in the window returned an
+error, reproducibly `index=7 opcode=0xfc22 status=1` (an MTK vendor opcode) while its
+neighbours succeed. Handed back to the wireless lane, with the m681 `LANE_BT_BLE_EXTFEAT`
+notes and the wpa_supplicant lesson to check first: the shared tree may already carry the
+fix while the binaries installed here predate it.
