@@ -25,6 +25,7 @@
 #include <linux/poll.h>
 #include <linux/time.h>
 #include <linux/delay.h>
+#include <linux/uio.h>
 #if WMT_CREATE_NODE_DYNAMIC
 #include <linux/device.h>
 #endif
@@ -99,6 +100,18 @@ static DECLARE_WAIT_QUEUE_HEAD(BT_wq);
 static INT32 flag;
 /* Reset flag for whole chip reset senario */
 static volatile INT32 rstflag;
+/* M6/LOS16 2026-08-03: on a whole-chip reset the legacy BT_read returned the
+ * made-up code -88, which userspace sees as errno 88 = ENOTSOCK ("Socket
+ * operation on non-socket") -- the exact LOG_ALWAYS_FATAL abort message of
+ * the Pie BT HAL's H4 reader, giving a SIGABRT respawn loop every ~5 s.
+ * Instead deliver ONE well-formed HCI Hardware Error event (H4 type 0x04,
+ * event 0x10, plen 1, code 0), honouring the caller's count, so the stack
+ * can shut BT down cleanly. Same design the m681 4.4 tree ships (their
+ * commits 1ca10c80/41e1e628). rst_evt_pos is a cursor into the event;
+ * "fully delivered" (== sizeof) means nothing pending.
+ */
+static const UINT8 HCI_EVT_HW_ERROR[] = {0x04, 0x10, 0x01, 0x00};
+static size_t rst_evt_pos = sizeof(HCI_EVT_HW_ERROR);
 
 static VOID bt_cdev_rst_cb(ENUM_WMTDRV_TYPE_T src,
 			   ENUM_WMTDRV_TYPE_T dst, ENUM_WMTMSG_TYPE_T type, PVOID buf, UINT32 sz)
@@ -117,6 +130,8 @@ static VOID bt_cdev_rst_cb(ENUM_WMTDRV_TYPE_T src,
 			if (rst_msg == WMTRSTMSG_RESET_START) {
 				BT_INFO_FUNC("BT reset start!\n");
 				rstflag = 1;
+				/* Arm the one-shot Hardware Error event */
+				rst_evt_pos = 0;
 				wake_up_interruptible(&inq);
 
 			} else if (rst_msg == WMTRSTMSG_RESET_END) {
@@ -157,7 +172,13 @@ unsigned int BT_poll(struct file *filp, poll_table *wait)
 	if (mtk_wcn_stp_is_rxqueue_empty(BT_TASK_INDX)) {
 		poll_wait(filp, &inq, wait);
 
-		if (!mtk_wcn_stp_is_rxqueue_empty(BT_TASK_INDX) || rstflag)
+		/* On a whole-chip reset, stay readable only while the one-shot
+		 * Hardware Error event has not been fully delivered; a
+		 * permanently-readable fd whose read() then fails is what
+		 * drove the HAL's poll->read->SIGABRT loop.
+		 */
+		if (!mtk_wcn_stp_is_rxqueue_empty(BT_TASK_INDX) ||
+		    (rstflag && rst_evt_pos < sizeof(HCI_EVT_HW_ERROR)))
 			/* BT Rx queue has valid data, or whole chip reset occurs */
 			mask |= POLLIN | POLLRDNORM;	/* Readable */
 	} else {
@@ -170,11 +191,28 @@ unsigned int BT_poll(struct file *filp, poll_table *wait)
 	return mask;
 }
 
+/* Common send tail of BT_write/BT_write_iter.
+ * Caller must hold wr_mtx and have staged the payload in o_buf.
+ */
+static ssize_t bt_send_locked(size_t count)
+{
+	INT32 written;
+
+	written = mtk_wcn_stp_send_data(&o_buf[0], count, BT_TASK_INDX);
+	if (0 == written) {
+		/* No space is available, native program should not call BT_write with no delay */
+		BT_ERR_FUNC
+		    ("Packet length %zd, sent length %d, retval = %d\n",
+		     count, written, -ENOSPC);
+		return -ENOSPC;
+	}
+	return written;
+}
+
 ssize_t BT_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
 	INT32 retval = 0;
 	INT32 write_size;
-	INT32 written = 0;
 
 	down(&wr_mtx);
 
@@ -203,20 +241,64 @@ ssize_t BT_write(struct file *filp, const char __user *buf, size_t count, loff_t
 			goto OUT;
 		}
 
-		written = mtk_wcn_stp_send_data(&o_buf[0], write_size, BT_TASK_INDX);
-		if (0 == written) {
-			retval = -ENOSPC;
-			/* No space is available, native program should not call BT_write with no delay */
-			BT_ERR_FUNC
-			    ("Packet length %zd, sent length %d, retval = %d\n",
-			     count, written, retval);
-		} else {
-			retval = written;
-		}
+		retval = bt_send_locked(write_size);
 
 	} else {
 		retval = -EFAULT;
 		BT_ERR_FUNC("Packet length %zd is not allowed, retval = %d\n", count, retval);
+	}
+
+OUT:
+	up(&wr_mtx);
+	return retval;
+}
+
+/* M6/LOS16 2026-08-03: the Pie BT HAL (vendor/mediatek/hidl/bluetooth
+ * h4_protocol.cc) sends every HCI packet as ONE writev() with a 2-entry
+ * iovec: [H4 type byte][payload]. Without .write_iter the VFS falls back
+ * to do_loop_readv_writev() (fs/read_write.c) and calls BT_write once per
+ * segment, so the firmware sees a 1-byte STP packet carrying a lone H4
+ * type byte and dies in its transport parser
+ * ("<ASSERT> system/transport/hcit_mtk_stp.c #2171"), taking WiFi down
+ * with the whole-chip reset. Gathering the full iovec restores the
+ * atomicity the caller asked for. Same-class fix device-proven on the
+ * m681 4.4 tree (commit 8b7ed757 there).
+ */
+static ssize_t BT_write_iter(struct kiocb *iocb, struct iov_iter *from)
+{
+	size_t count = iov_iter_count(from);
+	ssize_t retval = 0;
+
+	down(&wr_mtx);
+
+	BT_DBG_FUNC("%s: count %zd\n", __func__, count);
+	if (rstflag) {
+		if (rstflag == 1) {	/* Reset start */
+			retval = -88;
+			BT_INFO_FUNC("%s: detect whole chip reset start\n", __func__);
+		} else if (rstflag == 2) {	/* Reset end */
+			retval = -99;
+			BT_INFO_FUNC("%s: detect whole chip reset end\n", __func__);
+		}
+		goto OUT;
+	}
+
+	if (count > 0) {
+		if (count > BT_BUFFER_SIZE) {
+			count = BT_BUFFER_SIZE;
+			BT_ERR_FUNC("%s: count > BT_BUFFER_SIZE\n", __func__);
+		}
+
+		if (copy_from_iter(&o_buf[0], count, from) != count) {
+			retval = -EFAULT;
+			goto OUT;
+		}
+
+		retval = bt_send_locked(count);
+
+	} else {
+		retval = -EFAULT;
+		BT_ERR_FUNC("Packet length %zd is not allowed, retval = %zd\n", count, retval);
 	}
 
 OUT:
@@ -233,6 +315,24 @@ ssize_t BT_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos
 
 	BT_DBG_FUNC("%s: count %zd pos %lld\n", __func__, count, *f_pos);
 	if (rstflag) {
+		/* Deliver the pending Hardware Error event first, honouring
+		 * the caller's count (the H4 reader asks for 1 byte at a
+		 * time); only fall back to the legacy codes once it is out.
+		 */
+		if (rst_evt_pos < sizeof(HCI_EVT_HW_ERROR) && count > 0) {
+			size_t evt_left = sizeof(HCI_EVT_HW_ERROR) - rst_evt_pos;
+			size_t n = (count < evt_left) ? count : evt_left;
+
+			if (copy_to_user(buf, &HCI_EVT_HW_ERROR[rst_evt_pos], n)) {
+				retval = -EFAULT;
+			} else {
+				rst_evt_pos += n;
+				retval = n;
+				BT_INFO_FUNC("%s: chip reset, HW error event %zu/%zu delivered\n",
+					     __func__, rst_evt_pos, sizeof(HCI_EVT_HW_ERROR));
+			}
+			goto OUT;
+		}
 		if (rstflag == 1) {	/* Reset start */
 			retval = -88;
 			if ((chip_reset_count%500) == 0)
@@ -350,6 +450,7 @@ static int BT_open(struct inode *inode, struct file *file)
 
 	BT_INFO_FUNC("WMT turn on BT OK!\n");
 	rstflag = 0;
+	rst_evt_pos = sizeof(HCI_EVT_HW_ERROR);	/* No reset event pending */
 
 	if (mtk_wcn_stp_is_ready()) {
 
@@ -399,6 +500,7 @@ const struct file_operations BT_fops = {
 	.release = BT_close,
 	.read = BT_read,
 	.write = BT_write,
+	.write_iter = BT_write_iter,
 	/* .ioctl = BT_ioctl, */
 	.unlocked_ioctl = BT_unlocked_ioctl,
 	.compat_ioctl = BT_compat_ioctl,
