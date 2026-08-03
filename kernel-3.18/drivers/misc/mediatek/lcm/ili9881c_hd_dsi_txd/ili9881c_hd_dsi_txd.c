@@ -304,6 +304,17 @@ static struct LCM_setting_table lcm_suspend_setting[] = {
 	{REGFLAG_DELAY, 120, {} },
 };
 
+/*
+ * DONOR TABLE - KEEP DISABLED. This is the source-port (Honor 6C Pro) sequence,
+ * not the M6's. It writes MADCTL on page 0 (0x36 = 0x48) and a different page-3
+ * GIP value (0x36 = 0x05), so switching to it "just to try" mirrors the image on
+ * X and changes the GIP scan direction. The M6's own stock sequence -- reverse
+ * engineered from both the stock kernel and stock LK, and byte-identical between
+ * them -- is init_setting[] below; it never touches MADCTL on page 0 at all
+ * (its 0x36 write is inside page 3, where 0x36 is a GIP register, not MADCTL).
+ * Panel orientation on this device is NOT set at the panel level, exactly as on
+ * stock and on m681.
+ */
 #if 0
 static struct LCM_setting_table init_setting_source_port[] = {
 	{ 0xFF, 0x03, {0x98, 0x81, 0x03} },

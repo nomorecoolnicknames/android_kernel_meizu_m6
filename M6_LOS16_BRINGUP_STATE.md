@@ -1497,3 +1497,68 @@ of how m681 orients its panel is in flight.
   groups, then `disabled`
 - `vendor/mediatek/symbols/{gui.cpp,Android.mk}` — five global-transaction forwarders, the
   GraphicBuffer wrapper ctor, `libutils`
+
+---
+
+## 2026-08-03 (part 3) — the rotation "fix" never changed anything
+
+A dedicated analysis pass compared the M6 against m681 and against stock. It overturned the
+premise this lane was working from.
+
+### 13. REJECTED — `CONFIG_MTK_LCM_PHYSICAL_ROTATION="180"` was never the lever
+**FACT** (`drivers/misc/mediatek/video/common/color20/Makefile:63-67`): `-DLCM_PHYSICAL_ROTATION_180`
+is added when the string is `"180"` **or** when `CONFIG_MTK_LCM_PHYSICAL_ROTATION_HW=y`. That
+define's only consumer is the PQ window correction in `ddp_color.c:2484-2491`.
+**FACT:** the actual 180° rotation is `CONFIG_MTK_LCM_PHYSICAL_ROTATION_HW`, and in this tree
+it gates real hardware work — `ddp_ovl.c:603` (per-layer rotate + inverted layer offset +
+`VIRTICAL_FLIP|HORI_FLIP` in L_CON + fetch address from the end of the buffer),
+`primary_display.c:5165` (RDMA bypass off) and `mtk_disp_mgr.c:1400`
+(`caps_info.is_output_rotated`). Touch follows the same gate
+(`GT1151/include/gt1x_tpd_common.h:82`), so display and touch stay consistent.
+**Therefore:** `_HW=y` was ALREADY set before this lane started, and flipping the *string*
+from `"0"` to `"180"` produced a kernel that is functionally identical. The
+`8c2e89a9…` "rotation kernel" and its predecessor differ in nothing that affects
+orientation — which is exactly why the user kept reporting "still upside down".
+The user's own instinct ("мне кажется это неправильно") was right for a better reason than
+either of us had at the time.
+
+### 14. What stock actually does (new facts, from the stock artifacts)
+- **FACT:** stock LK (`stock-flyme-7.1.2.0G/lk.bin`) carries exactly two panel drivers,
+  `ili9881c_hd_dsi_txd` and `ili9881p_hd_dsi_txd`.
+- **FACT:** the stock ILI9881C init table was decoded straight out of LK
+  (`re-stock/lk_raw_arm32.bin` @0x5b0d4, `{u32 cmd; u8 count; u8 para[64]}`, stride 72):
+  page order 3 → 4 → 1 → 0, with `0x36 = 0x03` at index 54 **inside page 3**. It is
+  byte-for-byte the same sequence we reverse engineered from the stock kernel
+  (`re-stock-lcm/init_setting_stock.c`).
+- **REJECTED — "the `{0x36,1,{0x03}}` entry is a MADCTL orientation command."** On ILI9881C
+  `0x36` is MADCTL only on page 0; this write is on page 3, where it is a GIP register.
+  Neither stock table (ili9881c or ili9881p) writes MADCTL on page 0 at all. **Stock does not
+  set orientation at the panel level, and neither does m681.**
+- **FACT:** the stock `logo.bin` stores the logo the right way up (img0 decoded as 720x1280
+  BGRA), and stock `build.prop` has `ro.sf.hwrotation=0`.
+- **FACT:** m681's working recipe is `_HW=y` + `ro.sf.hwrotation=0` + no MADCTL, and its
+  panel driver contains no orientation command either (`0x36` appears only as an ESD read).
+  m681 documented that `hwrotation=180` gives a double flip and an upside-down UI.
+- **INFERENCE:** on a stock M6 the panel is mounted 180° and the compensation is
+  compositional, not panel-level — LK rotates when it blits, the kernel rotates in DISP, SF
+  does nothing.
+
+### 15. The contradiction that decides it
+`_HW` is a real hardware flip, so toggling it MUST change what the screen shows. On this unit
+the UI is upside down **with** `_HW=y`, and `ro.sf.hwrotation` reads `0` live (FACT, `getprop`
+on the running system), so the Android-side double-flip trap that bit m681 is ruled out here.
+The remaining possibility is that this unit does not have the stock 180° panel mounting that
+`_HW=y` compensates for — plausible, since this is not the original M6 body and the panel we
+drive is the ili9881c variant while the canonical M6 defconfig targets ili9881p.
+**Test in flight:** kernel built from the same source with
+`# CONFIG_MTK_LCM_PHYSICAL_ROTATION_HW is not set` and `CONFIG_MTK_LCM_PHYSICAL_ROTATION="0"`
+(out dir `out-rot0`). If the UI comes up right side up, that is the answer and the LK-phase
+logo stays inverted as harmless cosmetics (stock hid that with `boot_logo_updater`, which
+`m3_meizu_m6-common/rootdir/init.mt6755.rc:1133` already declares — our shim work in §5/§11
+is what would let it run).
+
+### 16. Hazard marked in the panel driver
+`ili9881c_hd_dsi_txd.c` carries a disabled donor (Honor 6C Pro) table
+`init_setting_source_port[]` that DOES write MADCTL on page 0 (`0x36 = 0x48`) and a different
+page-3 GIP value. It is behind `#if 0`, but enabling it "to try" would mirror the image on X
+and change the GIP scan. Commented as such so nobody switches tables by accident.
