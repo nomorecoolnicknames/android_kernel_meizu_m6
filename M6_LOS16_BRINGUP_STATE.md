@@ -1828,3 +1828,67 @@ cm-14.1 tree on `forge/adapt-meizu_M6-cm-14.1` and is not that home.
 note recorded the live M6 as `711HECRN25ULN`. The doc trail is newer and self-consistent, so it
 is treated as ground truth here, but the next time the phone enumerates, `adb devices -l` settles
 it before anything is written.
+
+### 24. The 20260806 ROM on hardware — three lanes land, camera moves one level up
+Flashed 2026-08-06 23:4x MSK from TWRP 3.2.3 on `711HEBRN23L3N`, the device attached to west
+as USB `1-8` (`18d1:4ee2`, `SerialNumber: 711HEBRN23L3N`, `Product: meizu_m6` — the USB
+descriptor settles the identity question raised in §23). Guarded protocol: `boot` resolved
+through `/dev/block/platform/mtk-msdc.0/11230000.msdc0/by-name/boot` → `mmcblk0p21` (16 MiB) on
+this unit; the outgoing partition was dumped first and kept at
+`/home/gun/m6-flash-20260806/boot-before-20260806.img`, sha256
+`981d2812a9cb89acd3e58ad89a6898c8b2c62b6f6b0c4521b43a7bedb29e47b4`. What it replaced:
+`16.0-20260803` with the lane files hand-pushed on top.
+
+Zip verified on the device before install (`md5 d56e5a19…`, identical to the built artifact),
+installed with `twrp install`, `script succeeded: result was [1.000000]`, RC=0.
+
+**Readback (FACT):** `mmcblk0p21`, first 9547776 bytes, sha256
+`417f9e72a470bd1cd9061ed2fd0a277efd7a9ee3a3f5972d044eccec6a1bd792` — byte-for-byte the built
+`boot.img`. `/system`: `ro.lineage.version=16.0-20260806-UNOFFICIAL-meizu_m6`,
+`vendor/lib{,64}/libskia.so` are symlinks to `libskia_m6_stub.so`, `manifest.xml` `40f0ce82`,
+`libbluetooth.so` `620424fe`, `mbackd` + `.rc` + `.kl` present.
+
+**Markers after reboot (FACT, `sys.boot_completed=1`):**
+
+| Lane | Marker | Result |
+|---|---|---|
+| HWC | `ro.hardware.hwcomposer`, `dumpsys SurfaceFlinger` | `mt6755`, `h/w composer enabled` |
+| Wireless | `Cannot find entry …ISupplicant/default` | **0 occurrences** — the §-wireless blocker is gone |
+| Wireless | `init.svc.wpa_supplicant`, `wlan0` | `running`, interface up, `Wi-Fi is enabled`, state DISCONNECTED (no AP joined yet) |
+| BT | `dumpsys bluetooth_manager` | `enabled: true`, `state: ON`, `address: 00:00:46:03:26:01`, **crashed 0** |
+| Camera | `getPlatform` / `No Platform` | **0 occurrences** — the libskia stub did its job |
+| mBack | `init.svc.mbackd` | `running` |
+
+Three lanes are therefore closed on hardware, and Bluetooth reproduced §22 from a clean flash
+rather than from a hand-patched system.
+
+**Camera: the old blocker is gone and a new one is underneath it.** The app shows
+"Camera error / Can't connect to the camera" (screencap `cam_test3.png`), `dumpsys media.camera`
+reports 2 devices, and `MtkCam/Utils/Profile` shows the sensor HAL actually initialising — none
+of which was possible when `getPlatform` failed with `-38`. What happens instead: the camera
+provider dies on a native fault and respawns, which the app sees as
+`CameraDeviceState: Cannot call capture while in state: 0` every ~4 s. Tombstone (`logcat -b crash`):
+
+    #00 pc c714a0c2  <unknown>
+    #01 pc 0001e14d  /system/vendor/lib/libcam.client.so
+                     NSDisplayClient::StreamImgBuf::StreamImgBuf(...)
+    #02 …            NSDisplayClient::DisplayClient::dequePrvOps(...)
+    #03/#04 …        prepareOneTodoBuffer / prepareAllTodoBuffers
+    #05-#07 …        DisplayClient::onThreadLoop → DisplayThread::threadLoop
+
+**HYPOTHESIS (H-CAM-1), the leading one:** frame #00 is a jump to an unmapped address from the
+`StreamImgBuf` constructor, and the library that just became loadable is our *empty* stub — a
+lazily-bound call into a skia symbol the stub does not implement would look exactly like this.
+Falsify it by giving the stub a real (even trivial) implementation of the symbols
+`libcam.client.so` imports from `libskia.so` (`readelf -r`/`nm -D` the pair) and re-running: if
+the fault address changes or moves out of `StreamImgBuf`, the stub is implicated; if the same
+`c714a0c2` recurs, it is not.
+**H-CAM-2:** the `camera_compat` GLConsumer shim (`libm6_camera_glconsumer_compat.cpp`, already
+in the tree) is not being preloaded into the provider on Pie — check `TARGET_LD_SHIM_LIBS`.
+**H-CAM-3:** genuine DisplayClient/`IImgBufQueue` ABI mismatch between this vendor blob and Pie's
+`native_handle` layout, in which case no stub fixes it and the path is the HIDL provider.
+The older rear-black clock/DTB hypotheses stay REJECTED-for-now: preview never runs long enough
+to be black.
+
+**Still unverified:** the physical mBack button (needs a human press — `mbackd` is running but no
+key event has been observed), Wi-Fi association to a real AP, and BT pairing with a peer.
