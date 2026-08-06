@@ -1839,6 +1839,13 @@ this unit; the outgoing partition was dumped first and kept at
 `981d2812a9cb89acd3e58ad89a6898c8b2c62b6f6b0c4521b43a7bedb29e47b4`. What it replaced:
 `16.0-20260803` with the lane files hand-pushed on top.
 
+Side effect worth recording, because another lane was blocked on it: `/proc/partitions` gives
+`mmcblk0p21` `16384` 1K-blocks = **16777216 B**, and the build log agrees
+(`boot size (9547776) is 56.91% of limit (16777216)`). That is the first on-hardware confirmation
+that the boot partition really is 16 MB. The M6-on-kernel-4.4 lane
+(`/home/n8n/mt6755-49/M6_ON_4.4_PROGRESS.md`) had this as an explicit unverified assumption and
+kept its flash candidate at the conservative 9025536 B because of it.
+
 Zip verified on the device before install (`md5 d56e5a19…`, identical to the built artifact),
 installed with `twrp install`, `script succeeded: result was [1.000000]`, RC=0.
 
