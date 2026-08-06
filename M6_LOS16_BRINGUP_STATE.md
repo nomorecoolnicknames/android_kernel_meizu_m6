@@ -1749,3 +1749,82 @@ pairing with a real peer is still unverified.
 "the fix is already in the source, the installed binary predates it" — wpa_supplicant
 (CFI), libbluetooth (BLE page 1), and before them the shim libraries. On a tree this old,
 comparing artifact dates against commit dates is cheaper than reading code.
+
+### 23. First full ROM carrying all four lanes — build 2026-08-06, RC=0
+Built on west in `androidforge/build-env:android-8.1`, `/home/gun/m6rom16/rom` → `/home/gun/m6-out16`,
+under `flock /home/gun/.m6build.lock`; the nubia_z17/LOS17 build shared the same 8 cores, so it
+took `02:05:43` instead of the usual `1:45`.
+
+**Artifact identity (FACT, `m6-out16/target/product/meizu_m6/`):**
+
+| Artifact | Size | md5 |
+|---|---|---|
+| `lineage-16.0-20260806-UNOFFICIAL-meizu_m6.zip` | 658017731 | `d56e5a19de37f81b971131e81b126fcd` |
+| `boot.img` (56.91% of the 16 MiB limit) | 9547776 | `27b1e2f019f6abfa4b63c79e6feca0e0` |
+| `kernel` (= `prebuilt-kernel/Image.gz-dtb`) | 7740671 | `d3b00bb01ff4f364860538f2e5ab36ca` |
+
+`boot.img` sha256 `417f9e72a470bd1cd9061ed2fd0a277efd7a9ee3a3f5972d044eccec6a1bd792`;
+log `/home/gun/m6-out16/build-m6-16-20260806-174546.log:104857` `#### build completed successfully
+(02:05:43 (hh:mm:ss)) ####`, `RC=0` at `2026-08-06T19:51:43Z`.
+
+**Lane payload verified inside the image, not assumed (FACT):**
+* `system/vendor/lib/libskia.so` and `lib64/libskia.so` are symlinks to `libskia_m6_stub.so`
+  (`bb36bb66164d1e0fe85587f35bbaee7f` / `4d1afe820e186a20059762731c1a46ab`) — the camera lane's
+  stub is installed under the name the loader asks for, which the loose `/home/gun/m6cam-out/`
+  artifacts could not show.
+* `system/vendor/manifest.xml` `40f0ce823d8dcc5d3ab0f37f6abb9943` — 3 `supplicant` hits
+  (wireless lane, `ISupplicant` 1.1) and 2 `graphics.composer` hits (hwc lane, 2.1) in one file.
+* `root/init.mt6755.rc` `5f18bfc68bc0228fd1d089b5f0af0f9b` — in the **ramdisk**, so the
+  `wpa_supplicant.conf` seeding (`:264-266` copy + `chown wifi` + `chmod 0660`) and the
+  `1.0/1.1` interface lines ship with `boot.img`, not with `system`.
+* `system/bin/mbackd` `8385d3be94f32834e00d69e45c948ffa` (byte-identical to the `/data/local/tmp`
+  binary that passed the synthetic `sendevent` test), `system/etc/init/mbackd.rc`,
+  `system/usr/keylayout/Vendor_4642_Product_0001.kl` `1bc84d302c922e6c3b3349201e495ba9`.
+* `system/lib/libbluetooth.so` `67be86a6b394f9c591e20a1fd70dcd86`, `lib64` `620424feff5dbd278039027c62476902`
+  — compiled in this run, so the "installed binary predates the fix" trap from §22(a) cannot
+  apply to this zip.
+
+**The kernel in this zip is the 2026-08-03 prebuilt, NOT a source build (FACT).**
+`device/meizu/meizu_m6/BoardConfig.mk:110` `M6_KERNEL_FROM_SOURCE ?= false` selects the prebuilt
+branch, so `PRODUCT_COPY_FILES` copies `device/meizu/meizu_m6/prebuilt-kernel/Image.gz-dtb`
+verbatim: out `kernel` md5 `d3b00bb0…` == prebuilt md5 `d3b00bb0…` == local
+`kernel-3.18/out-rot0/arch/arm64/boot/Image.gz-dtb` (sha256 `e70854445d07a406…`, built 2026-08-03).
+
+Consequence, stated plainly because it is easy to get wrong: today's sync of `stp_chrdev_bt.c`
+into the west tree (local `30661b5af93849d788084df641a3c8fa` pushed over west's `397b5d8a…` of
+May 13) **had no effect on this image**. It only matters for a future `M6_KERNEL_FROM_SOURCE=true`
+build, and it removes a real regression risk: until today the west copy had no `.write_iter` at
+all, so the first source build there would have silently undone §21.
+
+The `.write_iter` fix does ship here, by the other route: `out-rot0/System.map` carries
+`BT_write_iter` and `…/linux/stp_chrdev_bt.o`, and that build *is* the prebuilt. So this zip
+carries the kernel-side BT transport fix **and** the two userspace halves (current
+`libbluetooth.so`, `radiomod.c` 1 s vendor timeout).
+
+**Not verified, and not claimable until a flash:** nothing in this section was observed on
+hardware. `711HEBRN23L3N` was offline for the whole session (`lsusb` shows no `18d1:d001` adb and
+no `0e8d:2000` preloader on any of `5037-5041`); nothing was flashed, no `adb` write of any kind
+was issued.
+
+**Next capture must run, in this order:**
+1. `getprop ro.hardware.hwcomposer` → `mt6755`; `dumpsys SurfaceFlinger | grep 'h/w composer'` → enabled.
+2. `logcat | grep -E 'getPlatform|No Platform'` → gone; `dumpsys media.camera` → 2 devices; then open the camera and `screencap`.
+3. `hwservicemanager` no longer logs `Cannot find entry android.hardware.wifi.supplicant@1.0::ISupplicant/default`; `getprop init.svc.wpa_supplicant` → `running`; `dumpsys wifi` scan results.
+4. `logcat -s mbackd` while pressing the physical button: `tap → BACK`, `click → HOME`, `hold ≥500 ms → APP_SWITCH`.
+5. `dumpsys bluetooth_manager` → `state: ON`, `crashed 0`, then actually pair a peer (`Discovering:` was never exercised).
+
+**Open risk, unrelated to any lane: the LOS 16.0 device trees are not under version control.**
+`/home/gun/m6rom16/rom/device/meizu/meizu_m6` and `…/m3_meizu_m6-common` have no `.git` and are
+not `repo` projects (`.repo/projects/device/meizu/` does not exist). Every artifact this section
+verifies — `shims/skia.cpp`, `mback/`, `manifest.xml`, `BoardConfig.mk`, `init.mt6755.rc` — exists
+only as loose files on one machine. `vendor/mediatek` *is* a git project and its BT half is now
+committed (`d0bf803`, `radiomod.c` + the HAL service `.rc`); its `hidl/vibrator/*` and
+`symbols/{Android.mk,gui.cpp}` edits are someone else's in-flight work and were deliberately left
+uncommitted. The device trees still need a home. The local `android_device_meizu_m6` repo is the
+cm-14.1 tree on `forge/adapt-meizu_M6-cm-14.1` and is not that home.
+
+**Device identity, contradiction noted:** this document and the 2026-07-25 flash lane use
+`711HEBRN23L3N` (6 mentions, identity-gated on `ro.product.device=meizu_M6`); an older session
+note recorded the live M6 as `711HECRN25ULN`. The doc trail is newer and self-consistent, so it
+is treated as ground truth here, but the next time the phone enumerates, `adb devices -l` settles
+it before anything is written.
