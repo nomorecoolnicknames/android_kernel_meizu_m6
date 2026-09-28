@@ -1,0 +1,13 @@
+/*
+ * U20 hq6755_66_1ma_m stock-proven charger resources.
+ * No board includes this fragment yet. Keep the node disabled until the
+ * BQ24196 driver, MT6351 charger policy and battery policy pass the U20 gates.
+ * The spelling "swithing" is the actual stock DT ABI, not a typo to fix.
+ */
+&i2c1 {
+	u20_bq24196: swithing_charger@6b {
+		compatible = "mediatek,swithing_charger";
+		reg = <0x6b>;
+		status = "disabled";
+	};
+};
