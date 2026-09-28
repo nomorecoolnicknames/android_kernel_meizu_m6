@@ -1,0 +1,207 @@
+diff --git a/Documentation/remeizu/U10_STOCK_RESOURCE_PORT.md b/Documentation/remeizu/U10_STOCK_RESOURCE_PORT.md
+index a33514ed..558952d2 100644
+--- a/Documentation/remeizu/U10_STOCK_RESOURCE_PORT.md
++++ b/Documentation/remeizu/U10_STOCK_RESOURCE_PORT.md
+@@ -75,3 +75,62 @@ from own stock or verified source before enabling this resource profile.
+ FT/Goodix dual-source linking, panel selection, regulator registration, callback
+ configuration, gestures/suspend and input calibration remain separate gates.
+ Do not turn this source checkpoint into a ready target or a flash candidate.
++
++## Payload gate update — second PROPER-FIX checkpoint
++
++Hypothesis: inherited m681 calibration and embedded firmware remain wrong even
++once U10 GPIO and power wiring is corrected. FACT: own stock `gtp_init_panel`
++ffffffc000816d78 copies one 186-byte group at ffffffc000c005f8; groups1..5 are
++empty, and the own probe calls no m681 cover-configuration path. Its dimensions
++are 720x1280. Donor group0 is 1080x1920 and has different bytes. Own config SHA256
++`5b18a65bd909dfba3eab28e3a0c888f39cb78c82c7c97470f839e9b7f8afcfe1`;
++version0x4c, checksum8=0, fresh flag1. Own code retains the config's dimensions
++rather than applying the donor GTP_CUSTOM_CFG override.
++
++FACT: U10 `gup_init_update_proc` ffffffc00081bdc8 starts
++`gup_update_proc(NULL)`; that function ffffffc000819ee0 reads embedded firmware
++at ffffffc0010e8a88: 14-byte header plus 0x16000 data bytes. Total90126,
++SHA256 `52eb3e6d0985c4568677833d7bd09580d276650832e65bee064ec8196667f1f2`,
++PID915L, VID header bytes3007, big-endian data-word sum16=0. The donor header
++contains90126 different bytes (SHA256
++`fd9a82fe019316a5d1e9d387730cc8976118b7a42c38f8c65c6ea6e388e88c4a`).
++
++Evidence: private receipts `u10-cfg-gtp-init-panel-mcp.json`,
++`u10-cfg-gup-update-proc-mcp.json`, `u10-cfg-gup-init-update-proc-mcp.json`,
++`u10-cfg-config-read-memory-mcp.json`,
++`u10-cfg-firmware-read-memory-mcp.json`, all under the durable private directory
++above. Full MCP reads of both payloads match their raw-kernel slices exactly.
++No payload bytes or reconstructed firmware are committed or redistributed.
++
++Files/why: GT9XX_MZ Makefile requires both privately generated headers via
++`GT9XX_U10_PRIVATE_INCLUDE` for U10 and fails if absent. The custom header
++selects the private config and excludes the donor config pool; own U10 uses
++config dimensions and omits the unsupported donor cover-table callback.
++The updater selects the private firmware header with no donor fallback.
++Kconfig also pins MT6755 and the MT6353 new-architecture PMIC owner.
++
++Generation and checks from the fleet export directory:
++`PYTHONDONTWRITEBYTECODE=1 python3 tools/extract_u10_goodix_private.py`
++`PYTHONDONTWRITEBYTECODE=1 python3 tools/validate_u10_profile.py kernel-checkout`
++
++FACT: extractor verifies kernel SHA, full MCP byte equality, both payload
++SHAs/checksums and config dimensions before emitting private headers. Existing
++private output may only be reused byte-for-byte. Preprocessing verifies exact
++selected config/FW array hashes, absence of donor dimensions/cover callback,
++and unchanged default driver/updater tokens. Makefile dry parsing fails on
++missing private path/header and passes with validated private inputs. These
++checks do not compile or run kernel code.
++
++Expected next marker: after own DT and remaining callback gates, a source build
++must select the exact private CFG/FW hashes above; a later authorized runtime
++capture should show own GT915L/config identity and720x1280 coordinates. Rollback
++if either source selection uses donor bytes, raw/MCP identity differs, or the
++legacy profile changes. The private firmware is controller data referenced by
++custom source, not a stock kernel/prebuilt image.
++
++Remaining gates: no own U10 DTS/DCT/build selection yet; FT/Goodix coexistence,
++MT6353 rail registration, source firmware-update policy/algorithm equivalence,
++gesture/suspend callbacks and all non-touch drivers still require validation.
++The source profile remains default off and no defconfig enables it. Earlier
++paragraphs listing unresolved CFG/FW *addresses and bytes* are superseded by
++this update; they do not imply that the complete driver or board now works.
+diff --git a/drivers/input/touchscreen/mediatek/GT9XX_MZ/Makefile b/drivers/input/touchscreen/mediatek/GT9XX_MZ/Makefile
+index 4af3f495..48aaaab7 100755
+--- a/drivers/input/touchscreen/mediatek/GT9XX_MZ/Makefile
++++ b/drivers/input/touchscreen/mediatek/GT9XX_MZ/Makefile
+@@ -9,6 +9,20 @@ ccflags-y += -I$(srctree)/drivers/input/touchscreen/mediatek/GT9XX_MZ/
+ ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/
+ ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/$(MTK_PLATFORM)/include/
+ 
++ifeq ($(CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES),y)
++# Own payloads are generated privately after exact stock/MCP hash validation.
++ifeq ($(strip $(GT9XX_U10_PRIVATE_INCLUDE)),)
++$(error U10 requires GT9XX_U10_PRIVATE_INCLUDE; donor Goodix payloads are forbidden)
++endif
++ifeq ($(wildcard $(GT9XX_U10_PRIVATE_INCLUDE)/gt9xx_u10_stock_config.h),)
++$(error Missing private U10 Goodix configuration header)
++endif
++ifeq ($(wildcard $(GT9XX_U10_PRIVATE_INCLUDE)/gt9xx_u10_stock_firmware.h),)
++$(error Missing private U10 Goodix firmware header)
++endif
++ccflags-y += -I$(GT9XX_U10_PRIVATE_INCLUDE)
++endif
++
+ ccflags-$(CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES) += -I$(srctree)/drivers/misc/mediatek/pmic/include/mt6353
+ 
+ obj-y	+=  gt9xx_driver.o
+diff --git a/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_driver.c b/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_driver.c
+index d02bf9ae..8e925456 100755
+--- a/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_driver.c
++++ b/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_driver.c
+@@ -1712,6 +1712,7 @@ Input:
+ Output:
+     Executive outcomes.0---succeed.
+ *******************************************************/
++#if GTP_COVER_CONTROL
+ static s32 gtp_cover_panel(struct i2c_client *client)
+ {
+     s32 ret = 0;
+@@ -1957,6 +1958,7 @@ static s32 gtp_cover_panel(struct i2c_client *client)
+     msleep(10);
+     return 0;
+ }
++#endif /* GTP_COVER_CONTROL */
+ 
+ static s8 gtp_i2c_test(struct i2c_client *client)
+ {
+diff --git a/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_update.c b/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_update.c
+index a994e197..a470e39f 100755
+--- a/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_update.c
++++ b/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_update.c
+@@ -35,8 +35,15 @@
+ #include "tpd_custom_gt9xx.h"
+ 
+ #if ( (GTP_AUTO_UPDATE && GTP_HEADER_FW_UPDATE) || GTP_COMPATIBLE_MODE )
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++    #include <gt9xx_u10_stock_firmware.h>
++    #if GT9XX_U10_STOCK_FIRMWARE_BYTES != 90126
++    #error "U10 requires the verified 90126-byte own firmware"
++    #endif
++#else
+     #include "gt9xx_firmware.h"
+ #endif
++#endif
+ 
+ #define GUP_REG_HW_INFO             0x4220
+ #define GUP_REG_FW_MSG              0x41E4
+diff --git a/drivers/input/touchscreen/mediatek/GT9XX_MZ/tpd_custom_gt9xx.h b/drivers/input/touchscreen/mediatek/GT9XX_MZ/tpd_custom_gt9xx.h
+index aa5949ec..6ef538db 100755
+--- a/drivers/input/touchscreen/mediatek/GT9XX_MZ/tpd_custom_gt9xx.h
++++ b/drivers/input/touchscreen/mediatek/GT9XX_MZ/tpd_custom_gt9xx.h
+@@ -131,7 +131,12 @@ extern s32 i2c_read_dbl_check(struct i2c_client *client, u16 addr, u8 *rxbuf, in
+ extern s32 gtp_i2c_read_dbl_check(struct i2c_client *client, u16 addr, u8 *rxbuf, int len);
+ 
+ //***************************PART1:ON/OFF define*******************************
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++/* Stock U10 retains resolution/trigger from its own configuration bytes. */
++#define GTP_CUSTOM_CFG 0
++#else
+ #define GTP_CUSTOM_CFG        1
++#endif
+ #define GTP_DRIVER_SEND_CFG   1       // driver send config to TP in intilization
+ #define GTP_HAVE_TOUCH_KEY    0
+ #define GTP_POWER_CTRL_SLEEP  0       // turn off/on power on suspend/resume
+@@ -152,7 +157,12 @@ extern s32 gtp_i2c_read_dbl_check(struct i2c_client *client, u16 addr, u8 *rxbuf
+ 
+ #define GTP_GESTURE_WAKEUP    1 
+ 
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++/* Stock U10 probe initializes one group and has no donor cover-table path. */
++#define GTP_COVER_CONTROL 0
++#else
+ #define GTP_COVER_CONTROL      1
++#endif
+ /* m681 3.18 graft: GTP_P_GESTURE_CONTROL is used in #if but was never defined
+  * by stock (relied on implicit 0). -Werror=undef rejects that; define it 0. */
+ #define GTP_P_GESTURE_CONTROL  0
+@@ -201,6 +211,12 @@ extern s32 gtp_i2c_read_dbl_check(struct i2c_client *client, u16 addr, u8 *rxbuf
+ #define GTP_DEBUG_FUNC_ON     0
+ 
+ //***************************PART2:TODO define**********************************
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++#include <gt9xx_u10_stock_config.h>
++#if GT9XX_U10_STOCK_CONFIG_BYTES != 186
++#error "U10 requires the verified 186-byte own configuration"
++#endif
++#else
+ //STEP_1(REQUIRED):Change config table.
+ // Sensor_ID Map:
+ /* sensor_opt1 sensor_opt2 Sensor_ID 
+@@ -360,6 +376,8 @@ extern s32 gtp_i2c_read_dbl_check(struct i2c_client *client, u16 addr, u8 *rxbuf
+ }
+ 
+ 
++#endif /* own U10 vs legacy board configuration */
++
+ // STEP_2(REQUIRED): Customize your I/O ports & I/O operations here
+ //#define TPD_POWER_SOURCE_CUSTOM     MT65XX_POWER_LDO_VGP4      // define your power source for tp if needed
+ #define TPD_POWER_SOURCE_CUSTOM    PMIC_APP_CAP_TOUCH_VDD
+diff --git a/drivers/input/touchscreen/mediatek/Kconfig b/drivers/input/touchscreen/mediatek/Kconfig
+index 0c52bfcb..551c0c17 100755
+--- a/drivers/input/touchscreen/mediatek/Kconfig
++++ b/drivers/input/touchscreen/mediatek/Kconfig
+@@ -222,14 +222,16 @@ config TOUCHSCREEN_MTK_GT9XX_MZ
+ config TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
+ 	bool "U10 stock DT and MT6353 resources for GT9XX_MZ"
+ 	depends on TOUCHSCREEN_MTK_GT9XX_MZ && OF && REGULATOR
++	depends on ARCH_MT6755 && MTK_PMIC_NEW_ARCH = y
+ 	depends on MTK_PMIC_CHIP_MT6353 = y
+ 	default n
+ 	help
+ 	  Use the U10 Goodix DT client (mediatek,cap_touch_gt), logical
+ 	  touch pinctrl states and the MT6353 VLDO28 API recovered from
+ 	  the U10 stock kernel. Requires the U10 touch DT and vtouch supply.
+-	  This selects resource wiring only; panel configuration/firmware
+-	  and the complete U10 board port require separate validation.
++	  Requires privately generated own U10 configuration and firmware
++	  headers via GT9XX_U10_PRIVATE_INCLUDE. There is no donor fallback.
++	  The complete U10 board port still requires separate validation.
+ 	  Do not enable for M3s, U20, or the existing m681 resource profile.
+ 
+ config TOUCHSCREEN_UNIFIED_DRIVER_4
