@@ -1,0 +1,359 @@
+diff --git a/Documentation/remeizu/U10_STOCK_RESOURCE_PORT.md b/Documentation/remeizu/U10_STOCK_RESOURCE_PORT.md
+new file mode 100644
+index 00000000..a33514ed
+--- /dev/null
++++ b/Documentation/remeizu/U10_STOCK_RESOURCE_PORT.md
+@@ -0,0 +1,77 @@
++# U10 GT9XX resource port checkpoint — 2026-09-28
++
++Category: **PROPER-FIX**, source resource wiring only; default off.
++
++## Hypothesis and evidence
++
++FACT: existing GT9XX_MZ is the m681 port. Its OF table only accepts
++`mediatek,cap_touch`, and its GPIO/power macros use raw GPIO10/GPIO1 and MT6351
++registers 0x0aa2/0x0aa4. U10 needs its own resource profile. Adding just a
++compatible would bind a driver with the wrong PMIC implementation.
++
++FACT: exact stock U10 `kernel.decompressed` SHA256
++`adb5309dade5477ae11aeae58436ff234cdb88be590685af8d06d14c9ea51748`,
++boot SHA256 `03bde51ce54248ac380d47adf8f37bc8a3de374b480a5bc9ef2d536682538188`,
++DTB SHA256 `07e70460413b8be2bad6a0d0c3acb81017d7c2550cea9fed397cccd50df1d00f`.
++Recovered own kallsyms/ELF base is `ffffffc000080000`, checked against raw bytes.
++This is not a donor System.map and no runtime image was flashed.
++
++Real Ghidra MCP receipts, private durable directory
++`/home/n8n/cloud_oss_builds/kernel-reverse/20260928/`:
++
++| Receipt | Stock address and fact |
++|---|---|
++| u10-tpd-local-init-decompile-mcp.json | ffffffc000815c60: regulator_get(vtouch), set_voltage(2800000,3300000) before driver registration |
++| u10-tpd-power-on-decompile-mcp.json | ffffffc000817778: INT0, RST0, 20ms, pmic_ldo_vldo28_sw_en(1), reset20, I2C test; four attempts |
++| u10-gtp-reset-guitar-decompile-mcp.json | ffffffc0008168ac: logical RST0/INT1 pinctrl, address strap, 2ms/6ms/50ms waits |
++| u10-tpd-gpio-output-decompile-mcp.json | ffffffc00080a684: pinctrl state selection, not raw GPIO writes |
++| u10-force-reset-guitar-decompile-mcp.json | ffffffc000817e14: named VLDO28 off/on with 30ms waits |
++
++FACT: `gt9xx_dt_match` at ffffffc000c00900 has only
++`mediatek,cap_touch_gt`, matched to U10 DT i2c0@0x5d; FocalTech has its own
++`mediatek,cap_touch` at 0x38. DT touch IRQ=1 falling, reset pad10, INT pad1,
++vtouch resolves to ldo_vldo28. An attached unit's actual touch vendor is unknown.
++
++## Files and purpose
++
++- `drivers/input/touchscreen/mediatek/Kconfig`: explicit default-n U10 profile,
++  dependent on GT9XX_MZ, OF, regulator support and built-in MT6353.
++- `GT9XX_MZ/Makefile`: MT6353 API header path only for that profile.
++- `GT9XX_MZ/tpd_custom_gt9xx.h`: logical pinctrl and named PMIC API macros;
++  retains original CRLF and the old m681 resource branch.
++- `GT9XX_MZ/gt9xx_driver.c`: exact U10 OF identity, voltage preparation,
++  bounded stock first-probe ordering, error and resource cleanup.
++
++The API owner is `pmic/mt6353/pmic_api_ldo.c:820`: it writes the named
++VLDO28_EN_0/EN_1 fields. PMIC Makefiles select that object with MT6353.
++No regulator_enable call is substituted for the observed U10 API. U20 uses
++regulator_enable in its own stock and M3s uses legacy hwPowerOn; this profile
++must not be enabled for either board.
++
++## Validation, expected marker, rollback
++
++FACT: only source/preprocessor checks have run. Default profile produces the
++same preprocessed tokens as base `693b6a4d81e17e06545a4329064d5d01cd912060`.
++U10 preprocessing confirms its distinct OF table, no raw m681 register calls,
++four attempts, logical pins, named rail API and errno/cleanup branches.
++No C compilation, kernel build, DTB build, boot image, flash or runtime proof.
++
++Expected next marker after the remaining gates and an authorized test:
++I2C 0-005d bound to gt9xx, successful version read, own board configuration,
++then IRQ1 activity and calibrated input. This checkpoint alone does not assert
++those outcomes. Revert this checkpoint if default profile token equivalence
++breaks or a stock/reference comparison disproves the selected resource path.
++
++Verification from the fleet export directory:
++`PYTHONDONTWRITEBYTECODE=1 python3 tools/validate_u10_profile.py kernel-checkout`
++`git -C kernel-checkout -c core.whitespace=cr-at-eol diff --check`
++
++## Blocking gates before enabling
++
++FACT: no defconfig enables the new option. Own U10 DTS/DCT has not been wired
++into this source base. Existing donor `GTP_CUSTOM_CFG=1`, `GTP_AUTO_UPDATE=1`
++and selected firmware/config tables are not U10-proven. They must be resolved
++from own stock or verified source before enabling this resource profile.
++FT/Goodix dual-source linking, panel selection, regulator registration, callback
++configuration, gestures/suspend and input calibration remain separate gates.
++Do not turn this source checkpoint into a ready target or a flash candidate.
+diff --git a/drivers/input/touchscreen/mediatek/GT9XX_MZ/Makefile b/drivers/input/touchscreen/mediatek/GT9XX_MZ/Makefile
+index dbc339f6..4af3f495 100755
+--- a/drivers/input/touchscreen/mediatek/GT9XX_MZ/Makefile
++++ b/drivers/input/touchscreen/mediatek/GT9XX_MZ/Makefile
+@@ -9,6 +9,8 @@ ccflags-y += -I$(srctree)/drivers/input/touchscreen/mediatek/GT9XX_MZ/
+ ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/
+ ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/$(MTK_PLATFORM)/include/
+ 
++ccflags-$(CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES) += -I$(srctree)/drivers/misc/mediatek/pmic/include/mt6353
++
+ obj-y	+=  gt9xx_driver.o
+ obj-y	+=  goodix_tool.o
+ obj-y	+=  gt9xx_update.o
+diff --git a/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_driver.c b/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_driver.c
+index 66be528d..d02bf9ae 100755
+--- a/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_driver.c
++++ b/drivers/input/touchscreen/mediatek/GT9XX_MZ/gt9xx_driver.c
+@@ -39,6 +39,30 @@
+ #include "tpd.h"
+ #include "tpd_custom_gt9xx.h"
+ 
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++#include <mt_pmic_api_ldo.h>
++static struct regulator *gt9xx_u10_vtouch;
++static bool gt9xx_u10_powered;
++static int gt9xx_u10_probe_error;
++
++void gt9xx_u10_set_power(int enable)
++{
++    /* Stock U10 tpd_power_on uses this MT6353 API, not regulator_enable. */
++    pmic_ldo_vldo28_sw_en(enable);
++    gt9xx_u10_powered = !!enable;
++}
++
++static void gt9xx_u10_release_power(void)
++{
++    if (gt9xx_u10_powered)
++        gt9xx_u10_set_power(0);
++    if (gt9xx_u10_vtouch) {
++        regulator_put(gt9xx_u10_vtouch);
++        gt9xx_u10_vtouch = NULL;
++    }
++}
++#endif
++
+ /* m681 3.18 graft: cust_gpio_usage.h does not exist on this tree; the GTP GPIO
+  * port defines + macros are provided directly in tpd_custom_gt9xx.h above. */
+ #ifdef TPD_PROXIMITY
+@@ -201,7 +225,11 @@ static const struct i2c_device_id tpd_i2c_id[] = {{"gt9xx", 0}, {}};
+  * i2c client, so the legacy board_info + address_list auto-detect are dropped,
+  * exactly like the ft5436 port on this tree. */
+ static const struct of_device_id gt9xx_dt_match[] = {
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++    {.compatible = "mediatek,cap_touch_gt"},
++#else
+     {.compatible = "mediatek,cap_touch"},
++#endif
+     {}
+ };
+ MODULE_DEVICE_TABLE(of, gt9xx_dt_match);
+@@ -2003,6 +2031,21 @@ static int tpd_power_on(struct i2c_client *client)
+     int ret = 0;
+     int reset_count = 0;
+ 
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++    /* Exact U10 power-up ordering, four bounded stock attempts. */
++    for (reset_count = 0; reset_count < 4; reset_count++) {
++        tpd_gpio_output(GTP_INT_PORT, 0);
++        tpd_gpio_output(GTP_RST_PORT, 0);
++        msleep(20);
++        gt9xx_u10_set_power(1);
++        gtp_reset_guitar(client, 20);
++        ret = gtp_i2c_test(client);
++        if (ret >= 0)
++            return ret;
++    }
++    gt9xx_u10_set_power(0);
++    return -EIO;
++#else
+ reset_proc:
+     GTP_GPIO_OUTPUT(GTP_RST_PORT, 0);   
+     GTP_GPIO_OUTPUT(GTP_INT_PORT, 0);
+@@ -2080,6 +2123,7 @@ reset_proc:
+         }
+     }
+     return ret;
++#endif /* CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES */
+ }
+ 
+ 
+@@ -2624,7 +2668,12 @@ static s32 tpd_i2c_probe(struct i2c_client *client, const struct i2c_device_id *
+     if (ret < 0)
+     {
+         GTP_ERROR("I2C communication ERROR!");
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++        gt9xx_u10_probe_error = ret;
++        return ret;
++#else
+ 	 return -1;
++#endif
+     }
+     
+ //#ifdef VELOCITY_CUSTOM
+@@ -2837,7 +2886,16 @@ static int tpd_i2c_remove(struct i2c_client *client)
+ #endif
+ 
+ #if GTP_ESD_PROTECT
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++    cancel_delayed_work_sync(&gtp_esd_check_work);
++#endif
+     destroy_workqueue(gtp_esd_check_workqueue);
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++    gtp_esd_check_workqueue = NULL;
++#endif
++#endif
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++    gt9xx_u10_release_power();
+ #endif
+ 
+     return 0;
+@@ -3706,6 +3764,22 @@ exit_work_func:
+ 
+ static int tpd_local_init(void)
+ {
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++    int resource_err;
++
++    gt9xx_u10_probe_error = -ENODEV;
++    gt9xx_u10_vtouch = regulator_get(tpd->tpd_dev, "vtouch");
++    if (IS_ERR(gt9xx_u10_vtouch)) {
++        resource_err = PTR_ERR(gt9xx_u10_vtouch);
++        gt9xx_u10_vtouch = NULL;
++        return resource_err;
++    }
++    resource_err = regulator_set_voltage(gt9xx_u10_vtouch, 2800000, 3300000);
++    if (resource_err) {
++        gt9xx_u10_release_power();
++        return resource_err;
++    }
++#endif
+ 	
+ #ifdef TPD_POWER_SOURCE_CUSTOM
+ #ifdef CONFIG_OF_TOUCH
+@@ -3723,6 +3797,12 @@ static int tpd_local_init(void)
+     GTP_DEBUG("Clock ticks for an esd cycle: %d", clk_tick_cnt);
+     INIT_DELAYED_WORK(&gtp_esd_check_work, gtp_esd_check_func);
+     gtp_esd_check_workqueue = create_workqueue("gtp_esd_check");
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++    if (!gtp_esd_check_workqueue) {
++        gt9xx_u10_release_power();
++        return -ENOMEM;
++    }
++#endif
+     spin_lock_init(&esd_lock);          // 2.6.39 & later
+     // esd_lock = SPIN_LOCK_UNLOCKED;   // 2.6.39 & before
+ #endif
+@@ -3732,20 +3812,35 @@ static int tpd_local_init(void)
+     gpDMABuf_va = (u8 *)dma_alloc_coherent(&tpd->dev->dev, GTP_DMA_MAX_TRANSACTION_LENGTH, &gpDMABuf_pa, GFP_KERNEL);
+     if(!gpDMABuf_va){
+         GTP_INFO("[Error] Allocate DMA I2C Buffer failed!\n");
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++        resource_err = -ENOMEM;
++        goto u10_resource_error;
++#endif
+     }
+     memset(gpDMABuf_va, 0, GTP_DMA_MAX_TRANSACTION_LENGTH);
+ #endif
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++    resource_err = i2c_add_driver(&tpd_i2c_driver);
++    if (resource_err)
++        goto u10_resource_error;
++#else
+     if (i2c_add_driver(&tpd_i2c_driver) != 0)
+     {
+         GTP_INFO("unable to add i2c driver.\n");
+         return -1;
+     }
++#endif
+ 
+     if (tpd_load_status == 0) //if(tpd_load_status == 0) // disable auto load touch driver for linux3.0 porting
+     {
+         GTP_INFO("add error touch panel driver.\n");
+         i2c_del_driver(&tpd_i2c_driver);
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++        resource_err = gt9xx_u10_probe_error;
++        goto u10_resource_error;
++#else
+         return -1;
++#endif
+     }
+ 
+ #ifdef TPD_HAVE_BUTTON
+@@ -3772,6 +3867,26 @@ static int tpd_local_init(void)
+     tpd_type_cap = 1;
+ 
+     return 0;
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++u10_resource_error:
++#if GTP_SUPPORT_I2C_DMA
++    if (gpDMABuf_va) {
++        dma_free_coherent(&tpd->dev->dev, GTP_DMA_MAX_TRANSACTION_LENGTH,
++                          gpDMABuf_va, gpDMABuf_pa);
++        gpDMABuf_va = NULL;
++    }
++#endif
++#if GTP_ESD_PROTECT
++    if (gtp_esd_check_workqueue) {
++        cancel_delayed_work_sync(&gtp_esd_check_work);
++        destroy_workqueue(gtp_esd_check_workqueue);
++        gtp_esd_check_workqueue = NULL;
++    }
++#endif
++    gt9xx_u10_release_power();
++    return resource_err;
++#endif
++
+ }
+ 
+ #if(GTP_GESTURE_WAKEUP)
+diff --git a/drivers/input/touchscreen/mediatek/GT9XX_MZ/tpd_custom_gt9xx.h b/drivers/input/touchscreen/mediatek/GT9XX_MZ/tpd_custom_gt9xx.h
+index 4ea088ec..aa5949ec 100755
+--- a/drivers/input/touchscreen/mediatek/GT9XX_MZ/tpd_custom_gt9xx.h
++++ b/drivers/input/touchscreen/mediatek/GT9XX_MZ/tpd_custom_gt9xx.h
+@@ -364,6 +364,19 @@ extern s32 gtp_i2c_read_dbl_check(struct i2c_client *client, u16 addr, u8 *rxbuf
+ //#define TPD_POWER_SOURCE_CUSTOM     MT65XX_POWER_LDO_VGP4      // define your power source for tp if needed
+ #define TPD_POWER_SOURCE_CUSTOM    PMIC_APP_CAP_TOUCH_VDD
+ 
++#ifdef CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++/* U10 stock uses logical pinctrl selectors, not raw MTK GPIO numbers. */
++#undef GTP_RST_PORT
++#undef GTP_INT_PORT
++#define GTP_RST_PORT 0
++#define GTP_INT_PORT 1
++#define GTP_GPIO_AS_INT(pin) tpd_gpio_as_int(pin)
++#define GTP_IRQ_TAB {IRQ_TYPE_EDGE_RISING, IRQ_TYPE_EDGE_FALLING, IRQ_TYPE_LEVEL_LOW, IRQ_TYPE_LEVEL_HIGH}
++#define GTP_GPIO_OUTPUT(pin, level) tpd_gpio_output(pin, level)
++void gt9xx_u10_set_power(int enable);
++#define hwPowerOn(src, vol, name) gt9xx_u10_set_power(1)
++#define hwPowerDown(src, name) gt9xx_u10_set_power(0)
++#else
+ /* m681 3.18 graft: RST=GPIO10, INT=GPIO1 (DTS &touch node). The stock
+  * cust_gpio_usage.h (GPIO_CTP_* names / _M_EINT modes) is gone on this tree;
+  * drive the pads directly with the MTK gpio API in plain GPIO mode, exactly
+@@ -417,6 +430,8 @@ static inline void gt9xx_m681_power_off(void)
+ #define hwPowerOn(src, vol, name)       gt9xx_m681_power_on()
+ #define hwPowerDown(src, name)          gt9xx_m681_power_off()
+ 
++#endif /* CONFIG_TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES */
++
+ // STEP_3(optional):Custom set some config by themself,if need.
+ #if GTP_CUSTOM_CFG
+   #define GTP_MAX_HEIGHT   1920           
+diff --git a/drivers/input/touchscreen/mediatek/Kconfig b/drivers/input/touchscreen/mediatek/Kconfig
+index 3988bf71..0c52bfcb 100755
+--- a/drivers/input/touchscreen/mediatek/Kconfig
++++ b/drivers/input/touchscreen/mediatek/Kconfig
+@@ -219,6 +219,19 @@ config TOUCHSCREEN_MTK_GT9XX_MZ
+ 
+ 	  If unsure, say N.
+ 
++config TOUCHSCREEN_MTK_GT9XX_U10_STOCK_RESOURCES
++	bool "U10 stock DT and MT6353 resources for GT9XX_MZ"
++	depends on TOUCHSCREEN_MTK_GT9XX_MZ && OF && REGULATOR
++	depends on MTK_PMIC_CHIP_MT6353 = y
++	default n
++	help
++	  Use the U10 Goodix DT client (mediatek,cap_touch_gt), logical
++	  touch pinctrl states and the MT6353 VLDO28 API recovered from
++	  the U10 stock kernel. Requires the U10 touch DT and vtouch supply.
++	  This selects resource wiring only; panel configuration/firmware
++	  and the complete U10 board port require separate validation.
++	  Do not enable for M3s, U20, or the existing m681 resource profile.
++
+ config TOUCHSCREEN_UNIFIED_DRIVER_4
+ 	bool "LGE Unified driver Ver4.0"
+ 	depends on I2C
