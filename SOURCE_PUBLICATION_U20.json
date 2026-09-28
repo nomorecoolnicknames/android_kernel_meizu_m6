@@ -1,0 +1,44 @@
+{
+  "schema": "remeizu.kernel-source-publication.v1",
+  "device": "u20",
+  "publication_kind": "applied, inactive source resource fragments",
+  "public_parent": "49707bf9f5df46806b56de498615cd8082f2d206",
+  "original_private_base": "693b6a4d81e17e06545a4329064d5d01cd912060",
+  "original_source_head": "7bc05fb3a25c7dfd11bab02056b74f646f6cd660",
+  "mapping": [
+    {
+      "original": "3e882a29505a7f45677d07512a8978df0a0677a1",
+      "original_parent": "693b6a4d81e17e06545a4329064d5d01cd912060",
+      "published": "ee229a452ac99a59782a790f4321810cfe2c5e11",
+      "patch_sha256": "806deeca35c0ee6abe557ff757717b379b4c0986479a13c464e7b999b37a1ae1",
+      "applied": true,
+      "exact_files": [
+        "Documentation/remeizu/U20_PMIC_SOURCE_SELECTION.md",
+        "arch/arm64/configs/u20_pmic_legacy.config"
+      ]
+    },
+    {
+      "original": "7bc05fb3a25c7dfd11bab02056b74f646f6cd660",
+      "original_parent": "3e882a29505a7f45677d07512a8978df0a0677a1",
+      "published": "07f879449b2646f2d86e2ed007a4257b8cb3d73c",
+      "patch_sha256": "2c04bccf7f30d00fbdddcd29cc67aaabc929034f9d8d2cc92b87960d43e28772",
+      "applied": true,
+      "exact_files": [
+        "Documentation/remeizu/U20_CHARGER_RESOURCES.md",
+        "arch/arm64/boot/dts/u20-charger-stock-resources.dtsi",
+        "arch/arm64/configs/u20_charger_required.config"
+      ]
+    }
+  ],
+  "new_combination_compiled": false,
+  "boot_tested": false,
+  "flash_ready": false,
+  "private_history_imported": false,
+  "private_payload_published": false,
+  "audit_scope": "new commits only; existing public parent is not asserted blob-free",
+  "apply_check": {
+    "returncode": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+}
