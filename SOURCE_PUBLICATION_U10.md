@@ -1,9 +1,0 @@
-# U10 kernel source publication — 2026-09-29
-
-Publication kind: **unapplied source patch series**. Original source `8a0cf944c508b2ceb2599e636d3122eebbe26287`, original private base `693b6a4d81e17e06545a4329064d5d01cd912060`, existing public base `49707bf9f5df46806b56de498615cd8082f2d206`. The source bases differ; no artifact equivalence is asserted.
-
-The public M6 parent does not contain the GT9XX_MZ directory and the relevant Kconfig context. The exact two implemented source deltas are published as patches, not applied code. Apply is intentionally blocked until the missing GPL source baseline is separately audited and integrated. No guessed adaptation is included. U10 object-only cloud SUCCESS belongs to original source commit `8a0cf944c508b2ceb2599e636d3122eebbe26287` on the private base, with privately supplied own Goodix config/firmware; it is not a compile result for this public branch. The original U10 profile is default off and requires validated private payload headers without donor fallback.
-
-Only the already implemented, audited source deltas and this publication record are newly exposed. No private Goodix firmware/config headers, stock kernels/DTBs, object outputs, captures, private journals or full private ancestor history are published. Existing public-parent history/content is retained as-is; this publication does not declare that historical repository entirely blob-free or OSU-license-cleared. Linux GPL terms and existing per-file terms continue to apply.
-
-`SOURCE_PUBLICATION_U10.json` records original-to-public commit mapping, patch hashes and the exact apply result. Verification is source delta/hash inspection plus new-object privacy audit and anonymous branch/SHA access. No compiler, phone, cloud or charging action was executed for publication. Neither branch is a boot-ready kernel target.
